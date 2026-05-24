@@ -1,0 +1,281 @@
+{{define "content"}}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-8">
+        <h2 class="text-3xl font-bold text-white">Your Servers</h2>
+        <button onclick="openAddServerModal()"
+            class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg transition duration-300">
+            <i class="fas fa-plus mr-2"></i>Add Server
+        </button>
+    </div>
+
+    <!-- Server List -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="server-list">
+        <!-- Server cards will be injected here via JS -->
+        <div class="col-span-full text-center py-12 text-gray-400">
+            <i class="fas fa-spinner fa-spin text-3xl mb-4"></i>
+            <p>Loading servers...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Add Server Modal -->
+<div id="add-server-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg shadow-2xl p-8 w-full max-w-md border border-gray-700">
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-2xl font-bold text-white">Connect New VPS</h3>
+            <button onclick="closeAddServerModal()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        <form id="add-server-form" onsubmit="handleAddServer(event)">
+            <div class="mb-4">
+                <label class="block text-gray-300 text-sm font-bold mb-2" for="name">
+                    Server Name
+                </label>
+                <input
+                    class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
+                    id="name" type="text" placeholder="e.g. Production Web" required>
+            </div>
+            <div class="mb-4">
+                <label class="block text-gray-300 text-sm font-bold mb-2" for="host">
+                    Hostname / IP
+                </label>
+                <input
+                    class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
+                    id="host" type="text" placeholder="192.168.1.100" required>
+            </div>
+            <div class="mb-4">
+                <label class="block text-gray-300 text-sm font-bold mb-2" for="user">
+                    SSH User
+                </label>
+                <input
+                    class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
+                    id="user" type="text" placeholder="root" required>
+            </div>
+            <!-- Auth Method Selection -->
+            <div class="mb-4">
+                <label class="block text-gray-300 text-sm font-bold mb-2">Authentication</label>
+                <div class="flex space-x-4 mb-2">
+                    <label class="inline-flex items-center">
+                        <input type="radio" class="form-radio text-blue-500" name="auth-method" value="password" checked
+                            onclick="toggleAuthField('password')">
+                        <span class="ml-2 text-gray-300">Password</span>
+                    </label>
+                    <label class="inline-flex items-center">
+                        <input type="radio" class="form-radio text-blue-500" name="auth-method" value="key"
+                            onclick="toggleAuthField('key')">
+                        <span class="ml-2 text-gray-300">SSH Key</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="mb-6" id="password-field">
+                <label class="block text-gray-300 text-sm font-bold mb-2" for="password">
+                    Password
+                </label>
+                <input
+                    class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
+                    id="password" type="password" placeholder="********">
+            </div>
+
+            <div class="mb-6 hidden" id="key-field">
+                <label class="block text-gray-300 text-sm font-bold mb-2" for="key-file">
+                    Upload Private Key
+                </label>
+                <div class="relative">
+                    <input type="file" id="key-file" class="hidden" onchange="updateKeyFileName(this)">
+                    <div class="flex items-center space-x-3">
+                        <button type="button" onclick="document.getElementById('key-file').click()"
+                            class="bg-gray-600 hover:bg-gray-500 text-white font-medium py-2 px-4 rounded-lg transition duration-200 flex items-center">
+                            <i class="fas fa-key mr-2"></i>Browse...
+                        </button>
+                        <span id="key-file-name" class="text-gray-400 text-sm truncate">No file selected</span>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mt-2"><i class="fas fa-lock mr-1"></i>Key will be stored securely with
+                    restricted permissions</p>
+            </div>
+
+            <div class="flex items-center justify-end">
+                <button type="button" onclick="closeAddServerModal()"
+                    class="mr-4 text-gray-400 hover:text-white font-bold py-2 px-4 rounded-lg">
+                    Cancel
+                </button>
+                <button type="submit"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition duration-300">
+                    Connect
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    // Simple inline JS for the server list page (can be moved to app.js later)
+    document.addEventListener('DOMContentLoaded', loadServers);
+
+    function openAddServerModal() {
+        document.getElementById('add-server-modal').classList.remove('hidden');
+    }
+
+    function closeAddServerModal() {
+        document.getElementById('add-server-modal').classList.add('hidden');
+    }
+
+    function toggleAuthField(method) {
+        if (method === 'password') {
+            document.getElementById('password-field').classList.remove('hidden');
+            document.getElementById('key-field').classList.add('hidden');
+        } else {
+            document.getElementById('password-field').classList.add('hidden');
+            document.getElementById('key-field').classList.remove('hidden');
+        }
+    }
+
+    function updateKeyFileName(input) {
+        const label = document.getElementById('key-file-name');
+        if (input.files.length > 0) {
+            label.textContent = input.files[0].name;
+            label.classList.remove('text-gray-400');
+            label.classList.add('text-green-400');
+        } else {
+            label.textContent = 'No file selected';
+            label.classList.remove('text-green-400');
+            label.classList.add('text-gray-400');
+        }
+    }
+
+    async function loadServers() {
+        const list = document.getElementById('server-list');
+        try {
+            const response = await fetch('/api/servers');
+            const result = await response.json();
+
+            if (result.success && result.data && result.data.length > 0) {
+                list.innerHTML = result.data.map(server => `
+                    <div class="bg-gray-800 rounded-xl shadow-lg p-6 hover:bg-gray-750 transition duration-300 border border-gray-700 group cursor-pointer" onclick="window.location.href='/servers/${server.id}/dashboard'">
+                        <div class="flex justify-between items-start mb-4">
+                            <div class="flex items-center space-x-3">
+                                <div class="bg-blue-900 bg-opacity-50 p-3 rounded-lg">
+                                    <i class="fas fa-server text-blue-400 text-xl"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-xl font-bold text-white group-hover:text-blue-400 transition">${server.name}</h3>
+                                    <p class="text-sm text-gray-400">${server.host}:${server.port}</p>
+                                </div>
+                            </div>
+                            <button onclick="event.stopPropagation(); deleteServer('${server.id}')" class="text-gray-500 hover:text-red-500 transition p-2">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                        <div class="flex justify-between items-center text-sm text-gray-400 border-t border-gray-700 pt-4 mt-2">
+                            <span class="flex items-center"><i class="fas fa-user mr-2 text-gray-500"></i> ${server.user}</span>
+                            <span class="flex items-center"><i class="fas fa-network-wired mr-2 text-green-500"></i> Online</span>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                list.innerHTML = `
+                    <div class="col-span-full text-center py-12 text-gray-500 bg-gray-800 rounded-xl border border-gray-700 border-dashed">
+                        <i class="fas fa-server text-5xl mb-4 opacity-30"></i>
+                        <p class="text-xl font-medium mb-2">No servers connected</p>
+                        <p class="mb-6">Connect your first remote VPS to start monitoring</p>
+                        <button onclick="openAddServerModal()" class="text-blue-400 hover:text-blue-300 underline">Connect a server now</button>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Error loading servers:', error);
+            list.innerHTML = `<div class="col-span-full text-center text-red-500">Failed to load servers</div>`;
+        }
+    }
+
+    async function handleAddServer(e) {
+        e.preventDefault();
+        const btn = e.submitter;
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Connecting...';
+        btn.disabled = true;
+
+        const authMethod = document.querySelector('input[name="auth-method"]:checked').value;
+
+        try {
+            let keyPath = '';
+
+            // If key auth, upload the key file first
+            if (authMethod === 'key') {
+                const keyFile = document.getElementById('key-file').files[0];
+                if (!keyFile) {
+                    alert('Please select a private key file.');
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    return;
+                }
+
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading key...';
+                const formData = new FormData();
+                formData.append('key', keyFile);
+
+                const uploadRes = await fetch('/api/servers/upload-key', {
+                    method: 'POST',
+                    body: formData
+                });
+                const uploadResult = await uploadRes.json();
+
+                if (!uploadResult.success) {
+                    alert('Failed to upload key: ' + (uploadResult.error || 'Unknown error'));
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                    return;
+                }
+                keyPath = uploadResult.data.key_path;
+            }
+
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Connecting...';
+
+            const data = {
+                name: document.getElementById('name').value,
+                host: document.getElementById('host').value,
+                port: 22,
+                user: document.getElementById('user').value,
+                auth_type: authMethod,
+                password: authMethod === 'password' ? document.getElementById('password').value : '',
+                key_path: keyPath,
+            };
+
+            const response = await fetch('/api/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await response.json();
+
+            if (result.success) {
+                closeAddServerModal();
+                loadServers();
+                document.getElementById('add-server-form').reset();
+                document.getElementById('key-file-name').textContent = 'No file selected';
+            } else {
+                alert('Failed to connect: ' + result.error);
+            }
+        } catch (error) {
+            console.error('Error adding server:', error);
+            alert('An error occurred while connecting to the server.');
+        } finally {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    }
+
+    async function deleteServer(id) {
+        if (!confirm('Are you sure you want to remove this server?')) return;
+
+        try {
+            await fetch(`/api/servers/${id}`, { method: 'DELETE' });
+            loadServers();
+        } catch (error) {
+            console.error('Error deleting server:', error);
+        }
+    }
+</script>
+{{end}}

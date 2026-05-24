@@ -1,0 +1,643 @@
+/**
+ * GoPulse App - Projects Module
+ * Handles project management and creation
+ */
+
+App.Projects = {
+    init: function() {
+        console.log('Projects module initialized');
+        this.bindEvents();
+    },
+
+    bindEvents: function() {
+        // Event listeners for project creation will go here
+        const createBtn = document.getElementById('create-project-btn');
+        if (createBtn) {
+            createBtn.addEventListener('click', this.showCreateModal);
+        }
+    },
+
+    load: async function() {
+        console.log('Loading projects...');
+        const serverID = App.config.SERVER_ID;
+        try {
+            const data = await App.API.get(`/servers/${serverID}/projects`);
+            if (data.success) {
+                this.list = data.data; // Store list
+                this.renderList(data.data);
+            }
+        } catch (err) {
+            console.error('Failed to load projects:', err);
+            // Optionally show error in UI
+            const container = document.getElementById('projects-list');
+            if (container) {
+                container.innerHTML = `<div class="text-red-500 text-center py-8">Failed to load projects</div>`;
+            }
+        }
+    },
+
+    list: [], // Initialize list
+
+    renderList: function(projects) {
+        const container = document.getElementById('projects-list');
+        if (!container) return;
+
+        if (!projects || projects.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-12">
+                    <div class="bg-gray-800 rounded-full h-20 w-20 flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-project-diagram text-4xl text-gray-600"></i>
+                    </div>
+                    <h3 class="text-xl font-medium text-white mb-2">No Projects Yet</h3>
+                    <p class="text-gray-400 mb-6">Create your first project to get started.</p>
+                    <button onclick="App.Projects.showCreateModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">
+                        <i class="fas fa-plus mr-2"></i>New Project
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        let html = `
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        `;
+
+        projects.forEach(p => {
+            const statusColor = p.status === 'running' ? 'text-green-400' : 'text-gray-400';
+            const typeIcon = p.type === 'node' ? 'fab fa-node-js' : 'fas fa-code';
+            
+            // Check if built (basic check for zero time or null)
+            const isBuilt = p.last_build && !p.last_build.startsWith('0001');
+
+            let actionButtons = '';
+            if (isBuilt) {
+                 actionButtons += `
+                    <button onclick="App.Projects.action('${p.id}', 'start', this)" class="flex-1 bg-green-900/20 text-green-400 hover:bg-green-900/40 py-2 rounded text-sm font-medium transition-colors">
+                        <i class="fas fa-play mr-1"></i> Start
+                    </button>
+                    <button onclick="App.Projects.action('${p.id}', 'stop', this)" class="flex-1 bg-red-900/20 text-red-400 hover:bg-red-900/40 py-2 rounded text-sm font-medium transition-colors">
+                        <i class="fas fa-stop mr-1"></i> Stop
+                    </button>
+                `;
+            }
+
+            actionButtons += `
+                <button onclick="App.Projects.action('${p.id}', 'build', this)" class="flex-1 bg-blue-900/20 text-blue-400 hover:bg-blue-900/40 py-2 rounded text-sm font-medium transition-colors">
+                    <i class="fas fa-hammer mr-1"></i> Build
+                </button>
+                 <button onclick="App.Projects.editProject('${p.id}')" class="px-3 bg-gray-700 text-gray-400 hover:bg-gray-600 rounded text-sm transition-colors" title="Edit">
+                    <i class="fas fa-edit"></i>
+                </button>
+                 <button onclick="App.Projects.action('${p.id}', 'delete', this)" class="px-3 bg-gray-700 text-gray-400 hover:bg-gray-600 rounded text-sm transition-colors text-red-400 hover:text-red-300" title="Delete">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+
+            html += `
+                <div class="bg-gray-800 rounded-lg p-6 border border-gray-700 hover:border-blue-500 transition-colors">
+                    <div class="flex justify-between items-start mb-4">
+                        <div class="flex items-center space-x-3">
+                            <div class="bg-gray-700 p-2 rounded-lg">
+                                <i class="${typeIcon} text-2xl text-blue-400"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-medium text-white">${p.name}</h3>
+                                <div class="text-xs text-gray-400">${p.type} • Port ${p.port}</div>
+                            </div>
+                        </div>
+                        <div class="${statusColor} text-sm flex items-center">
+                            <i class="fas fa-circle text-[8px] mr-2"></i>
+                            ${p.status.toUpperCase()}
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-2 mb-6">
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-400">Build Type</span>
+                            <span class="text-gray-300">${p.build_type || 'N/A'}</span>
+                        </div>
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-400">Last Build</span>
+                            <span class="text-gray-300 font-mono text-xs">${isBuilt ? new Date(p.last_build).toLocaleString() : 'Never'}</span>
+                        </div>
+                    </div>
+
+                    <div class="flex space-x-2">
+                        ${actionButtons}
+                    </div>
+                </div>
+            `;
+        });
+
+        html += `
+                	<!-- Add New Card -->
+                <button onclick="App.Projects.showCreateModal()" class="bg-gray-800/50 border-2 border-dashed border-gray-700 rounded-lg p-6 flex flex-col items-center justify-center hover:border-gray-500 hover:bg-gray-800 transition-all group">
+                    <div class="bg-gray-800 p-4 rounded-full mb-3 group-hover:scale-110 transition-transform">
+                        <i class="fas fa-plus text-xl text-gray-400 group-hover:text-white"></i>
+                    </div>
+                    <span class="text-gray-400 font-medium group-hover:text-white">New Project</span>
+                </button>
+            </div>
+        `;
+
+        container.innerHTML = html;
+    },
+
+    action: async function(id, action, btn) {
+        const serverID = App.config.SERVER_ID;
+        const originalStates = [];
+        let buttons = [];
+        
+        if (btn) {
+            // Find parent container to get all buttons in this card
+            const container = btn.parentElement;
+            if (container) {
+                buttons = Array.from(container.querySelectorAll('button'));
+            } else {
+                buttons = [btn];
+            }
+
+            buttons.forEach(b => {
+                originalStates.push({ btn: b, html: b.innerHTML });
+                b.disabled = true;
+                b.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            });
+        }
+
+        try {
+            let endpoint = `/servers/${serverID}/projects/${id}`;
+             if (action === 'delete') {
+                if(!confirm('Are you sure you want to delete this project?')) {
+                    // Restore immediately if cancelled
+                    if (btn) {
+                         buttons.forEach((b, index) => {
+                            b.disabled = false;
+                            b.innerHTML = originalStates[index].html;
+                        });
+                    }
+                    return;
+                }
+                 const res = await App.API.delete(endpoint);
+                  if (res.success) {
+                    App.UI.toast('success', 'Project deleted');
+                    this.load();
+                }
+                return;
+             }
+
+            endpoint += `/${action}`;
+            const res = await App.API.post(endpoint, {});
+            if (res.success) {
+                App.UI.toast('success', `Project ${action} triggered`);
+                this.load();
+            }
+        } catch(err) {
+             console.error(err);
+             App.UI.toast('error', `Action failed: ${err.message}`);
+             // Restore buttons on error
+             if (btn) {
+                buttons.forEach((b, index) => {
+                    b.disabled = false;
+                    b.innerHTML = originalStates[index].html;
+                });
+            }
+        }
+    },
+
+    showCreateModal: function() {
+        // Show modal logic
+        const modal = document.getElementById('create-project-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('div').classList.remove('scale-95');
+                modal.querySelector('div').classList.add('scale-100');
+            }, 10);
+        }
+    },
+
+    closeCreateModal: function() {
+       const modal = document.getElementById('create-project-modal');
+        if (modal) {
+            modal.classList.add('opacity-0');
+            modal.querySelector('div').classList.remove('scale-100');
+            modal.querySelector('div').classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        } 
+    },
+
+    selectTech: function(tech) {
+        document.querySelectorAll('.tech-card').forEach(c => {
+            c.classList.remove('border-blue-500', 'bg-blue-900/20');
+            c.classList.add('border-gray-700', 'bg-gray-800');
+        });
+        
+        const selected = document.getElementById(`tech-${tech}`);
+        if (selected) {
+            selected.classList.remove('border-gray-700', 'bg-gray-800');
+            selected.classList.add('border-blue-500', 'bg-blue-900/20');
+        }
+        
+        const input = document.getElementById('selected-tech');
+        if (input) input.value = tech;
+
+        // Auto-fill commands
+        const buildCmdInput = document.getElementById('project-build-cmd');
+        const startCmdInput = document.getElementById('project-start-cmd');
+        
+        if (tech === 'nextjs') {
+            if (buildCmdInput) buildCmdInput.value = 'npm install && npm run build';
+            if (startCmdInput) startCmdInput.value = 'npm start';
+        } else if (tech === 'nodejs') {
+             if (buildCmdInput) buildCmdInput.value = 'npm install'; // Default
+             if (startCmdInput) startCmdInput.value = 'npm start';
+        } else if (tech === 'go') {
+            if (buildCmdInput) buildCmdInput.value = 'go build -o app';
+            if (startCmdInput) startCmdInput.value = './app';
+        }
+    },
+
+    handleFileSelect: function(input) {
+        const label = document.getElementById('project-file-label');
+        if (input.files && input.files[0]) {
+            label.textContent = input.files[0].name;
+            label.classList.add('text-blue-400');
+        } else {
+            label.textContent = 'Upload Zip';
+            label.classList.remove('text-blue-400');
+        }
+    },
+
+    // createProject moved to end of file to handle git source
+
+
+    editProject: function(id) {
+        console.log('editProject called for ID:', id);
+        // Find project from local list
+        console.log('Current list:', this.list);
+        const project = this.list ? this.list.find(p => p.id === id) : null;
+        if (!project) {
+            console.error('Project not found in list:', id);
+            App.UI.toast('error', 'Project not found');
+            return;
+        }
+        console.log('Project found:', project);
+
+        this.currentProject = project; // Store for update
+        
+        const idInput = document.getElementById('edit-project-id');
+        const nameInput = document.getElementById('edit-project-name');
+        const portInput = document.getElementById('edit-project-port');
+        const buildCmdInput = document.getElementById('edit-project-build-cmd');
+        const startCmdInput = document.getElementById('edit-project-start-cmd');
+
+        if(idInput) idInput.value = project.id;
+        if(nameInput) nameInput.value = project.name;
+        if(portInput) portInput.value = project.port;
+        if(buildCmdInput) buildCmdInput.value = project.build_command || '';
+        if(startCmdInput) startCmdInput.value = project.start_command || '';
+
+        this.openEditModal();
+    },
+
+    openEditModal: function() {
+        const modal = document.getElementById('edit-project-modal');
+        console.log('Opening edit modal, element:', modal);
+        if (modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('div').classList.remove('scale-95');
+                modal.querySelector('div').classList.add('scale-100');
+            }, 10);
+        } else {
+            console.error('Edit modal element not found!');
+        }
+    },
+
+    closeEditModal: function() {
+        const modal = document.getElementById('edit-project-modal');
+        if (modal) {
+            modal.classList.add('opacity-0');
+            modal.querySelector('div').classList.remove('scale-100');
+            modal.querySelector('div').classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+    },
+
+    updateProject: async function() {
+        const id = document.getElementById('edit-project-id').value;
+        const name = document.getElementById('edit-project-name').value;
+        const port = document.getElementById('edit-project-port').value;
+        const buildCmd = document.getElementById('edit-project-build-cmd').value;
+        const startCmd = document.getElementById('edit-project-start-cmd').value;
+        const serverID = App.config.SERVER_ID;
+
+        const payload = {
+            name: name,
+            port: parseInt(port) || 3000,
+            host_port: parseInt(port) || 3000,
+            build_command: buildCmd,
+            start_command: startCmd,
+        };
+
+        const submitBtn = document.getElementById('update-project-btn');
+        const originalBtnText = submitBtn ? submitBtn.innerText : 'Save Changes';
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Saving...';
+        }
+
+        try {
+            const response = await App.API.request(`/servers/${serverID}/projects/${id}`, {
+                method: 'PUT',
+                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.success) throw new Error(response.error || 'Failed to update project');
+
+            App.UI.toast('success', 'Project updated successfully');
+            this.closeEditModal();
+            this.load();
+        } catch (err) {
+            console.error(err);
+            App.UI.toast('error', 'Error: ' + (err.message || 'Unknown error'));
+        } finally {
+             if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerText = originalBtnText;
+            }
+        }
+    },
+
+    // GitHub Integration
+    githubLogin: function() {
+        window.location.href = '/auth/github/login';
+    },
+
+    openGitHubModal: function() {
+        const modal = document.getElementById('github-repos-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                modal.querySelector('div').classList.remove('scale-95');
+                modal.querySelector('div').classList.add('scale-100');
+            }, 10);
+            this.loadGitHubRepos();
+        }
+    },
+
+    closeGitHubModal: function() {
+        const modal = document.getElementById('github-repos-modal');
+        if (modal) {
+            modal.classList.add('opacity-0');
+            modal.querySelector('div').classList.remove('scale-100');
+            modal.querySelector('div').classList.add('scale-95');
+            setTimeout(() => modal.classList.add('hidden'), 300);
+        }
+    },
+
+    loadGitHubRepos: function() {
+        const list = document.getElementById('github-repo-list');
+        list.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Loading repositories...</p></div>';
+
+        // Clear search
+        const searchInput = document.getElementById('github-repo-search');
+        if(searchInput) searchInput.value = '';
+
+        App.API.get('/github/repos')
+            .then(response => {
+                const repos = response.data || response;
+                if (!repos || repos.length === 0) {
+                    list.innerHTML = '<div class="text-center text-gray-500 py-8"><p>No repositories found. Create one on GitHub!</p></div>';
+                    this.repos = [];
+                    return;
+                }
+                
+                // Store for filtering
+                this.repos = repos;
+                this.renderGitHubRepos(repos);
+            })
+            .catch(err => {
+                console.error('Failed to load repos:', err);
+                // Check if 404 (handler not found/configured) or 401 (not auth)
+                // App.API.get throws error. If response was 401, it throws "HTTP error! status: 401"
+                
+                 if (err.message.includes('401')) {
+                      list.innerHTML = `
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fab fa-github text-4xl mb-3 text-gray-600"></i>
+                            <p class="mb-4 text-lg">Connect GitHub to view repositories</p>
+                            <button onclick="App.Projects.githubLogin()" class="bg-gray-800 text-white px-6 py-2 rounded-lg hover:bg-gray-700 transition-colors border border-gray-700 hover:border-gray-500">
+                                <i class="fab fa-github mr-2"></i> Connect GitHub Account
+                            </button>
+                        </div>
+                      `;
+                 } else if (err.message.includes('404')) {
+                      list.innerHTML = `
+                        <div class="text-center text-red-400 py-8">
+                            <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+                            <p>GitHub integration not configured or endpoint not found.</p>
+                            <p class="text-sm text-gray-500 mt-2">Check config.yaml and restart server.</p>
+                        </div>
+                      `;
+                 } else {
+                    list.innerHTML = `<div class="text-center text-red-400 py-8"><p>Failed to load repositories: ${err.message}</p></div>`;
+                 }
+                // Don't toast for expected auth flow
+                if (!err.message.includes('401')) {
+                    App.UI.toast('error', 'Failed to load GitHub repositories');
+                }
+            });
+    },
+
+    renderGitHubRepos: function(repos) {
+        const list = document.getElementById('github-repo-list');
+        if (!repos || repos.length === 0) {
+            list.innerHTML = '<div class="text-center text-gray-500 py-8"><p>No repositories found matching your search.</p></div>';
+            return;
+        }
+
+        list.innerHTML = repos.map(repo => `
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-blue-500 transition-colors cursor-pointer group mb-3" onclick="App.Projects.selectRepo('${repo.clone_url}', '${repo.name}')">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3 overflow-hidden">
+                        <i class="fab fa-github text-xl text-gray-400 group-hover:text-white flex-shrink-0"></i>
+                        <div class="min-w-0">
+                            <h4 class="font-medium text-white group-hover:text-blue-400 transition-colors truncate">${repo.full_name}</h4>
+                            <p class="text-sm text-gray-500 truncate">${repo.description || 'No description'}</p>
+                        </div>
+                    </div>
+                    <i class="fas fa-chevron-right text-gray-600 group-hover:text-white flex-shrink-0 ml-2"></i>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    filterGitHubRepos: function() {
+        const query = document.getElementById('github-repo-search').value.toLowerCase();
+        if (!this.repos) return;
+
+        const filtered = this.repos.filter(repo => 
+            repo.full_name.toLowerCase().includes(query) || 
+            (repo.description && repo.description.toLowerCase().includes(query))
+        );
+        this.renderGitHubRepos(filtered);
+    },
+
+    selectRepo: function(cloneUrl, name) {
+        this.selectedRepo = { cloneUrl, name };
+        this.closeGitHubModal();
+        
+        // Open create modal
+        this.showCreateModal();
+        
+        // Populate fields
+        setTimeout(() => {
+            const nameInput = document.getElementById('project-name');
+            const repoInput = document.getElementById('project-repo-url');
+            
+            if (nameInput) {
+                nameInput.value = name;
+                 // Trigger change event if needed for validation
+                nameInput.dispatchEvent(new Event('change'));
+            }
+            
+            if (repoInput) {
+                repoInput.value = cloneUrl;
+            }
+            
+            // Show feedback that repo is selected
+            const fileLabel = document.getElementById('project-file-label');
+            if (fileLabel) {
+                 fileLabel.innerHTML = `<i class="fab fa-github mr-2"></i> ${name}`;
+                 fileLabel.classList.add('text-blue-400');
+            }
+            
+            // Maybe disable file input?
+            const fileInput = document.getElementById('project-file');
+            if (fileInput) fileInput.value = ''; // Clear file
+            
+        }, 100);
+    },
+    
+    // Updated createProject to handle git source
+    createProject: async function() {
+        const name = document.getElementById('project-name').value;
+        const port = document.getElementById('project-port').value;
+        const buildCmd = document.getElementById('project-build-cmd').value;
+        const startCmd = document.getElementById('project-start-cmd').value;
+        const tech = document.getElementById('selected-tech').value;
+        const repoUrl = document.getElementById('project-repo-url').value;
+        const serverID = App.config.SERVER_ID;
+
+        if (!name || !tech) {
+            App.UI.toast('error', 'Name and Technology are required');
+            return;
+        }
+
+        // Determine source type
+        // If repoUrl is set, use 'git'. But wait, backend needs to handle this.
+        // If we use the standard CreateProject endpoint, it might expect 'upload' or 'git'.
+        // If 'git', it presumably needs 'source_url'.
+        
+        // However, we implemented a specific /api/github/clone endpoint in GitHubHandler.
+        // Should we use that?
+        // The GitHubHandler.CloneRepo uses ProjectService.CreateProjectFromRepo.
+        // The standard ProjectHandler.CreateProject uses ProjectService.CreateProject.
+        
+        // If we use the standard endpoint, we need to ensure it calls CreateProjectFromRepo or setting SourceURL.
+        // Let's check ProjectHandler.CreateProject implementation.
+        // As I cannot check it right now inside this function, I will assume I need to use the Clone endpoint if repoUrl is present.
+        
+        const submitBtn = document.getElementById('create-project-btn-submit');
+        const originalBtnText = submitBtn ? submitBtn.innerText : 'Create Project';
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Creating...';
+        }
+
+        try {
+            if (repoUrl) {
+                // Use GitHub Clone Endpoint
+                const payload = {
+                    name: name,
+                    type: tech,
+                    port: parseInt(port) || 3000,
+                    build_cmd: buildCmd,
+                    start_cmd: startCmd,
+                    repo_url: repoUrl,
+                    server_id: serverID
+                };
+                
+                // Use 'github/clone' (no leading slash) so App.API doesn't prefix with /servers/{id}
+                const response = await App.API.post('/github/clone', payload);
+                if (!response.success) throw new Error(response.error || 'Failed to clone project');
+                
+                App.UI.toast('success', 'Project cloned successfully');
+            } else {
+                // Standard Upload Flow
+                const payload = {
+                    name: name,
+                    type: tech,
+                    port: parseInt(port) || 3000,
+                    host_port: parseInt(port) || 3000,
+                    build_command: buildCmd,
+                    start_command: startCmd,
+                    source_type: 'upload',
+                    build_type: 'process'
+                };
+                
+                // 1. Create Metadata
+                const response = await App.API.post(`/servers/${serverID}/projects`, payload);
+                if (!response.success) throw new Error(response.error || 'Failed to create project');
+
+                const project = response.data;
+                App.UI.toast('success', 'Project created, starting upload...');
+
+                // 2. Upload File
+                const fileInput = document.getElementById('project-file');
+                if (fileInput && fileInput.files.length > 0) {
+                     // ... upload logic ...
+                     // reusing existing logic structure
+                     const progressDiv = document.getElementById('project-upload-progress');
+                     const progressBar = document.getElementById('project-upload-bar');
+                     // ... setup vars
+                     if(progressDiv) progressDiv.classList.remove('hidden');
+                     
+                     const formData = new FormData();
+                     formData.append('project_id', project.id);
+                     formData.append('file', fileInput.files[0]);
+                     
+                     await App.API.upload(`/servers/${serverID}/projects/upload?project_id=${project.id}`, formData, (p) => {
+                         if(progressBar) progressBar.style.width = `${p}%`;
+                     });
+                     App.UI.toast('success', 'Project files uploaded successfully');
+                }
+            }
+
+            // Refresh and Close
+            this.closeCreateModal();
+            this.load();
+            
+            // Clean up
+            document.getElementById('project-repo-url').value = '';
+            
+        } catch (err) {
+            console.error(err);
+            App.UI.toast('error', 'Error: ' + (err.message || 'Unknown error'));
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerText = originalBtnText;
+            }
+        }
+    }
+};

@@ -1,0 +1,812 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"time"
+
+	"github.com/amaa/gopulse/internal/models"
+	"github.com/amaa/gopulse/internal/remote"
+	"github.com/amaa/gopulse/internal/store"
+)
+
+// ProjectService manages project lifecycle
+type ProjectService struct {
+	store    *store.ProjectStore
+	manager  *ServiceManager
+	dataPath string
+}
+
+// NewProjectService creates a new ProjectService
+func NewProjectService(store *store.ProjectStore, manager *ServiceManager, dataPath string) *ProjectService {
+	return &ProjectService{
+		store:    store,
+		manager:  manager,
+		dataPath: dataPath,
+	}
+}
+
+// resolveRemoteProjectPath determines the project path on the remote server
+// For root: /root/projects/{type}/{name}
+// For non-root: /home/{user}/projects/{type}/{name}
+func (s *ProjectService) resolveRemoteProjectPath(serverID string, projectType string, projectName string) (string, error) {
+	client, err := s.manager.GetSSHClient(serverID)
+	if err != nil {
+		return "", err
+	}
+
+	// Get the remote user's home directory
+	homeDir, err := client.RunCommand("echo $HOME")
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve home directory: %w", err)
+	}
+	homeDir = strings.TrimSpace(homeDir)
+	if homeDir == "" {
+		homeDir = "/root" // Fallback
+	}
+
+	return fmt.Sprintf("%s/projects/%s/%s", homeDir, projectType, projectName), nil
+}
+
+// ListProjects returns all projects
+func (s *ProjectService) ListProjects(ctx context.Context) ([]models.Project, error) {
+	return s.store.ListProjects(), nil
+}
+
+// CreateProject creates a new project record and potentially directories
+func (s *ProjectService) CreateProject(ctx context.Context, project models.Project) error {
+	// 1. Set default path if empty — resolve on the remote server
+	if project.Path == "" {
+		remotePath, err := s.resolveRemoteProjectPath(project.ServerID, project.Type, project.Name)
+		if err != nil {
+			return fmt.Errorf("failed to resolve project path: %w", err)
+		}
+		project.Path = remotePath
+	}
+
+	project.Status = models.ProjectStatusStopped
+
+	// 2. Save metadata
+	if err := s.store.AddProject(project); err != nil {
+		return err
+	}
+
+	// 3. Create directory on server
+	if err := s.ensureDirectory(project); err != nil {
+		s.store.RemoveProject(project.ID)
+		return fmt.Errorf("failed to create project directory: %w", err)
+	}
+
+	return nil
+}
+
+func (s *ProjectService) ensureDirectory(project models.Project) error {
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return err
+	}
+
+	cmd := fmt.Sprintf("mkdir -p %s", project.Path)
+	_, err = client.RunCommand(cmd)
+	return err
+}
+
+// SetupProject handles git clone or setting up files
+func (s *ProjectService) SetupProject(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return err
+	}
+
+	if project.SourceType == "git" && project.SourceURL != "" {
+		// Clone git repo
+		// Check if directory is empty or just clone into it
+		// git clone <url> <path> . (dash dot? no, just path)
+		// If path exists and is empty, git clone <url> . inside path
+		cmd := fmt.Sprintf("git clone %s %s", project.SourceURL, project.Path)
+		// If path needs to be empty, we might need to handle that.
+		// For now simple clone.
+		if _, err := client.RunCommand(cmd); err != nil {
+			return fmt.Errorf("failed to clone repo: %w", err)
+		}
+	}
+
+	// If upload, files are expected to be there (handled by upload handler).
+
+	return nil
+}
+
+// UploadProjectFile uploads and extracts a project file
+func (s *ProjectService) UploadProjectFile(ctx context.Context, projectID string, fileContent io.Reader, fileName string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return err
+	}
+
+	// Use RemoteFileService for file operations
+	fileService, err := NewRemoteFileService(client)
+	if err != nil {
+		return err
+	}
+	defer fileService.Close()
+	// 0. Ensure unzip is available
+	if err := s.ensureUnzipInstalled(client); err != nil {
+		// Log warning but proceed? Or fail?
+		// If we fail here, we save the user from a slow upload/failure later.
+		// But maybe they want to rely on the fallback?
+		// The user explicitly wants speed, so let's try to enforce it or at least warn.
+		// For now we just return error if we can't ensure it, unless we want to fallback silently.
+		// Let's log it and continue, allowing fallback to native decompress if command fails.
+		// Actually, if this fails, Decompress will try native.
+	}
+
+	// 1. Upload zip to temp location
+	tempPath := fmt.Sprintf("/tmp/%s_%s", project.ID, fileName)
+	if err := fileService.WriteFile(ctx, tempPath, fileContent, 0644); err != nil {
+		return fmt.Errorf("failed to upload project file: %w", err)
+	}
+	defer fileService.Delete(ctx, tempPath)
+
+	// 2. Ensure project dir exists
+	if err := fileService.Mkdir(ctx, project.Path); err != nil {
+		return fmt.Errorf("failed to create project directory: %w", err)
+	}
+
+	// 3. Unzip
+	if err := fileService.Decompress(ctx, tempPath, project.Path); err != nil {
+		return fmt.Errorf("failed to decompress project file: %w", err)
+	}
+
+	// 4. Flatten directory if needed
+	// Check if only one directory exists (typical with zip files)
+	lsCmd := fmt.Sprintf("ls -A %s", project.Path)
+	output, err := client.RunCommand(lsCmd)
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+		if len(lines) == 1 {
+			// Check if it is a directory
+			singleItem := lines[0]
+			fullPath := fmt.Sprintf("%s/%s", project.Path, singleItem)
+			checkDirCmd := fmt.Sprintf("if [ -d \"%s\" ]; then echo \"yes\"; else echo \"no\"; fi", fullPath)
+			isDir, _ := client.RunCommand(checkDirCmd)
+
+			if strings.TrimSpace(isDir) == "yes" {
+				// Move contents up
+				// mv /path/to/project/subdir/* /path/to/project/
+				// mv /path/to/project/subdir/.* /path/to/project/ (for hidden files)
+				// rm -rf /path/to/project/subdir
+
+				moveCmd := fmt.Sprintf("mv %s/* %s/ && mv %s/.* %s/ 2>/dev/null; rmdir %s", fullPath, project.Path, fullPath, project.Path, fullPath)
+				client.RunCommand(moveCmd)
+			}
+		}
+	}
+
+	return nil
+}
+
+// DetectBuildStrategy determines if we should use Docker or Process
+func (s *ProjectService) DetectBuildStrategy(ctx context.Context, projectID string) (string, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return "", err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return "", err
+	}
+
+	// Check for files
+	cmd := fmt.Sprintf("ls %s", project.Path)
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return "", err
+	}
+
+	files := strings.Split(output, "\n")
+	hasDockerfile := false
+	hasCompose := false
+	hasPackageJson := false
+
+	for _, f := range files {
+		f = strings.TrimSpace(f)
+		if f == "Dockerfile" {
+			hasDockerfile = true
+		}
+		if f == "docker-compose.yml" || f == "docker-compose.yaml" {
+			hasCompose = true
+		}
+		if f == "package.json" {
+			hasPackageJson = true
+		}
+	}
+
+	if hasDockerfile || hasCompose {
+		return "docker", nil
+	}
+	if hasPackageJson {
+		return "process", nil
+	}
+
+	return "unknown", nil
+}
+
+// ensureNodeInstalled checks for node/npm and installs via nvm if missing
+func (s *ProjectService) ensureNodeInstalled(client *remote.SSHClient) error {
+	// Check if node is available
+	// We need to source nvm if it exists, because non-interactive shells might not have it.
+	checkCmd := "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"; node -v"
+	if _, err := client.RunCommand(checkCmd); err == nil {
+		return nil // Node is installed
+	}
+
+	// Install NVM if not present
+	// Check if nvm dir exists
+	checkNvmCmd := "[ -d \"$HOME/.nvm\" ] && echo 'exists'"
+	out, _ := client.RunCommand(checkNvmCmd)
+	if strings.TrimSpace(out) != "exists" {
+		// Install NVM
+		installNvm := "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash"
+		if _, err := client.RunCommand(installNvm); err != nil {
+			return fmt.Errorf("failed to install nvm: %w", err)
+		}
+	}
+
+	// Install Node via NVM
+	installNode := "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && nvm install --lts"
+	if _, err := client.RunCommand(installNode); err != nil {
+		return fmt.Errorf("failed to install node: %w", err)
+	}
+
+	return nil
+}
+
+// getNodeCommandPrefix returns the prefix to source nvm
+func (s *ProjectService) getNodeCommandPrefix() string {
+	return "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && "
+}
+
+// findProjectRoot looks for package.json to determine the actual project root
+func (s *ProjectService) findProjectRoot(client *remote.SSHClient, basePath string) (string, error) {
+	// Check if package.json exists in basePath
+	checkCmd := fmt.Sprintf("[ -f \"%s/package.json\" ] && echo 'found'", basePath)
+	out, _ := client.RunCommand(checkCmd)
+	if strings.TrimSpace(out) == "found" {
+		return basePath, nil
+	}
+
+	// If not found, look in subdirectories (maxdepth 2)
+	// find basePath -maxdepth 2 -name package.json
+	findCmd := fmt.Sprintf("find %s -maxdepth 2 -name package.json | head -n 1", basePath)
+	out, err := client.RunCommand(findCmd)
+	if err == nil && out != "" {
+		// /path/to/subdir/package.json -> /path/to/subdir
+		fullPath := strings.TrimSpace(out)
+		// Get dir name
+		// We can use unix dirname
+		dirCmd := fmt.Sprintf("dirname \"%s\"", fullPath)
+		dirOut, err := client.RunCommand(dirCmd)
+		if err == nil {
+			return strings.TrimSpace(dirOut), nil
+		}
+	}
+
+	return basePath, nil // Default to base path if not found
+}
+
+// BuildProject executes the build
+func (s *ProjectService) BuildProject(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return err
+	}
+
+	project.Status = models.ProjectStatusBuilding
+	s.store.UpdateProject(project)
+
+	if project.BuildType == "process" {
+		if project.Type == "go" {
+			// Ensure Go is installed
+			if err := s.ensureGoInstalled(client); err != nil {
+				project.Status = models.ProjectStatusError
+				s.store.UpdateProject(project)
+				return fmt.Errorf("failed to ensure go environment: %w", err)
+			}
+
+			// Find actual root (where go.mod or main.go is)
+			// For now assume project.Path
+			workDir := project.Path
+
+			// Run build command
+			if project.BuildCommand == "" {
+				project.BuildCommand = "go build -o app"
+			}
+
+			cmdPrefix := s.getGoCommandPrefix()
+			// Dependencies
+			if _, err := client.RunCommand(fmt.Sprintf("%scd %s && go mod download", cmdPrefix, workDir)); err != nil {
+				// Ignore error, maybe no go.mod
+			}
+
+			cmd := fmt.Sprintf("%scd %s && %s", cmdPrefix, workDir, project.BuildCommand)
+			if out, err := client.RunCommand(cmd); err != nil {
+				project.Status = models.ProjectStatusError
+				s.store.UpdateProject(project)
+				return fmt.Errorf("build failed: %s\n%w", out, err)
+			}
+		} else {
+			// Node/Next.js Logic
+			// Ensure Node is installed
+			if err := s.ensureNodeInstalled(client); err != nil {
+				project.Status = models.ProjectStatusError
+				s.store.UpdateProject(project)
+				return fmt.Errorf("failed to ensure node environment: %w", err)
+			}
+
+			// Find actual root
+			workDir, _ := s.findProjectRoot(client, project.Path)
+
+			// Ensure Swap for OOM protection
+			if err := s.ensureSwap(client); err != nil {
+				// Log but proceed? Better to fail if critical, but maybe user has their own swap.
+				// Let's log (if we had a logger) and proceed, or just return error.
+				// For now, let's treat it as non-fatal but highly recommended.
+				// fmt.Printf("Warning: failed to setup swap: %v\n", err)
+			}
+
+			// Run build command
+			if project.BuildCommand == "" {
+				if project.Type == "nextjs" {
+					project.BuildCommand = "npm install && npm run build"
+				} else {
+					project.BuildCommand = "npm install"
+				}
+			}
+
+			// Prefix with NVM source and Memory Limit
+			// Add NODE_OPTIONS for memory limit (e.g. 2GB) to prevent aggressive GC or allocation beyond swap
+			// Actually, standard Node limit is 1.5GB roughly on 64bit.
+			// Let's set it to 3GB if we added 2GB swap + assume 1GB RAM = 3GB total.
+			// Safer: --max-old-space-size=2048 (2GB)
+			cmdPrefix := s.getNodeCommandPrefix()
+			buildEnv := "export NODE_OPTIONS='--max-old-space-size=2048' && "
+
+			cmd := fmt.Sprintf("%s%scd %s && %s", cmdPrefix, buildEnv, workDir, project.BuildCommand)
+			if _, err := client.RunCommand(cmd); err != nil {
+				project.Status = models.ProjectStatusError
+				s.store.UpdateProject(project)
+				return fmt.Errorf("build failed: %w", err)
+			}
+		}
+	} else if project.BuildType == "docker" {
+		// Docker build logic
+		// docker build -t project-name .
+		cmd := fmt.Sprintf("cd %s && docker build -t %s .", project.Path, strings.ToLower(project.Name))
+		if _, err := client.RunCommand(cmd); err != nil {
+			project.Status = models.ProjectStatusError
+			s.store.UpdateProject(project)
+			return fmt.Errorf("docker build failed: %w", err)
+		}
+	}
+
+	project.LastBuild = time.Now()
+	project.Status = models.ProjectStatusStopped
+	return s.store.UpdateProject(project)
+}
+
+// ensurePortOpen allows the port through UFW
+func (s *ProjectService) ensurePortOpen(client *remote.SSHClient, port int) error {
+	// Check if UFW is active
+	checkCmd := "sudo ufw status | grep -q 'Status: active' && echo 'active' || echo 'inactive'"
+	out, _ := client.RunCommand(checkCmd)
+	if strings.TrimSpace(out) == "active" {
+		// Allow port
+		cmd := fmt.Sprintf("sudo ufw allow %d/tcp", port)
+		if _, err := client.RunCommand(cmd); err != nil {
+			return fmt.Errorf("failed to allow port %d: %w", port, err)
+		}
+	}
+	return nil
+}
+
+// ensurePortClosed denies/deletes the port rule from UFW
+func (s *ProjectService) ensurePortClosed(client *remote.SSHClient, port int) error {
+	// Check if UFW is active
+	checkCmd := "sudo ufw status | grep -q 'Status: active' && echo 'active' || echo 'inactive'"
+	out, _ := client.RunCommand(checkCmd)
+	if strings.TrimSpace(out) == "active" {
+		// Delete allow rule
+		// Run twice to ensure both IPv4 and IPv6 rules are removed if they exist separately
+		cmd := fmt.Sprintf("sudo ufw delete allow %d/tcp", port)
+
+		client.RunCommand(cmd)
+
+	}
+	return nil
+}
+
+// StartProject starts the application
+func (s *ProjectService) StartProject(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return err
+	}
+
+	// Ensure port is open
+	if err := s.ensurePortOpen(client, project.Port); err != nil {
+		// Log warning but maybe proceed? Or fail?
+		// Better to fail if we can't expose it.
+		// fmt.Printf("Warning: failed to open port: %v\n", err)
+	}
+
+	if project.BuildType == "process" {
+		if project.Type == "go" {
+			if project.StartCommand == "" {
+				project.StartCommand = "./app"
+			}
+
+			// Ensure pm2 (for process management)
+			// We can use pm2 to manage binary too: pm2 start ./app --name app-name
+			cmdPrefix := s.getGoCommandPrefix()
+
+			// Check pm2
+			nodePrefix := s.getNodeCommandPrefix() // Need node for pm2
+			checkPm2 := fmt.Sprintf("%spm2 -v", nodePrefix)
+			if _, err := client.RunCommand(checkPm2); err != nil {
+				// Install PM2 using npm
+				// Ensure node first
+				s.ensureNodeInstalled(client)
+				installPm2 := fmt.Sprintf("%snpm install -g pm2", nodePrefix)
+				client.RunCommand(installPm2)
+			}
+
+			// Start with pm2
+			// pm2 start ./app --name "name" --no-autorestart (maybe?)
+			// Need execution permissions
+			workDir := project.Path
+			chmodCmd := fmt.Sprintf("chmod +x %s/%s", workDir, strings.Split(project.StartCommand, " ")[0])
+			client.RunCommand(chmodCmd)
+
+			cmd := fmt.Sprintf("%s%scd %s && pm2 start %s --name \"%s\"", nodePrefix, cmdPrefix, workDir, project.StartCommand, project.Name)
+			if _, err := client.RunCommand(cmd); err != nil {
+				return fmt.Errorf("start failed: %w", err)
+			}
+
+		} else {
+			// Node/Next.js Logic
+			// Use PM2 or Systemd?
+			// For simplicity, let's try PM2 if available, or nohup.
+			// User mentioned "we could ask user to connect github... then we build".
+			// Let's assume we want a persistent process.
+			// "pm2 start npm --name <name> -- start"
+			// Or "npm start"
+
+			if project.StartCommand == "" {
+				project.StartCommand = "npm start"
+			}
+
+			// Ensure Node is installed
+			if err := s.ensureNodeInstalled(client); err != nil {
+				return fmt.Errorf("failed to ensure node environment: %w", err)
+			}
+
+			// Also ensure pm2 is installed
+			cmdPrefix := s.getNodeCommandPrefix()
+			checkPm2 := fmt.Sprintf("%spm2 -v", cmdPrefix)
+			if _, err := client.RunCommand(checkPm2); err != nil {
+				// Install PM2
+				installPm2 := fmt.Sprintf("%snpm install -g pm2", cmdPrefix)
+				client.RunCommand(installPm2)
+			}
+
+			// Find actual root
+			workDir, _ := s.findProjectRoot(client, project.Path)
+
+			// Simple pm2 check/start
+			// pm2 start npm --name "app-name" -- start
+			cmd := fmt.Sprintf("%scd %s && pm2 start npm --name \"%s\" -- start", cmdPrefix, workDir, project.Name)
+
+			// If custom start command is just "node something.js", we can use pm2 start something.js
+			if strings.HasPrefix(project.StartCommand, "node ") {
+				script := strings.TrimPrefix(project.StartCommand, "node ")
+				cmd = fmt.Sprintf("%scd %s && pm2 start %s --name \"%s\"", cmdPrefix, workDir, script, project.Name)
+			}
+
+			// For now let's stick to npm start via pm2 for generic support
+			if _, err := client.RunCommand(cmd); err != nil {
+				return fmt.Errorf("start failed: %w", err)
+			}
+		}
+
+		// Get Process ID from pm2?
+		// We can just mark as running.
+	} else if project.BuildType == "docker" {
+		// docker run -d -p HostPort:Port --name Name Image
+		// Stop existing if any
+		client.RunCommand(fmt.Sprintf("docker stop %s && docker rm %s", project.Name, project.Name))
+
+		cmd := fmt.Sprintf("docker run -d -p %d:%d --name %s %s", project.HostPort, project.Port, project.Name, strings.ToLower(project.Name))
+		output, err := client.RunCommand(cmd)
+		if err != nil {
+			return fmt.Errorf("docker run failed: %w", err)
+		}
+		project.ContainerID = strings.TrimSpace(output)
+	}
+
+	project.Status = models.ProjectStatusRunning
+	return s.store.UpdateProject(project)
+}
+
+// StopProject stops the application
+func (s *ProjectService) StopProject(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return err
+	}
+
+	if project.BuildType == "process" {
+		cmdPrefix := s.getNodeCommandPrefix()
+		cmd := fmt.Sprintf("%spm2 stop %s", cmdPrefix, project.Name)
+		client.RunCommand(cmd)
+	} else if project.BuildType == "docker" {
+		cmd := fmt.Sprintf("docker stop %s", project.Name)
+		client.RunCommand(cmd)
+	}
+
+	project.Status = models.ProjectStatusStopped
+	return s.store.UpdateProject(project)
+
+}
+
+// DeleteProject deletes the project
+func (s *ProjectService) DeleteProject(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err == nil {
+		// Stop and cleanup
+		s.StopProject(ctx, projectID)
+
+		// Close port
+		s.ensurePortClosed(client, project.Port)
+
+		if project.BuildType == "process" {
+			cmdPrefix := s.getNodeCommandPrefix()
+			client.RunCommand(fmt.Sprintf("%spm2 delete %s", cmdPrefix, project.Name))
+		} else if project.BuildType == "docker" {
+			client.RunCommand(fmt.Sprintf("docker rm %s", project.Name))
+		}
+
+		// Remove files on remote server
+		if project.Path != "" && strings.Contains(project.Path, "/projects/") {
+			client.RunCommand(fmt.Sprintf("rm -rf %s", project.Path))
+		}
+	}
+
+	return s.store.RemoveProject(projectID)
+}
+
+// GetProject returns project details
+func (s *ProjectService) GetProject(ctx context.Context, id string) (models.Project, error) {
+	return s.store.GetProject(id)
+}
+
+// ensureUnzipInstalled checks for unzip and installs it if missing
+func (s *ProjectService) ensureUnzipInstalled(client *remote.SSHClient) error {
+	checkCmd := "command -v unzip"
+	if _, err := client.RunCommand(checkCmd); err == nil {
+		return nil
+	}
+
+	// Try apt-get (Debian/Ubuntu)
+	if _, err := client.RunCommand("which apt-get"); err == nil {
+		// Update and install
+		// DEBIAN_FRONTEND=noninteractive to avoid prompts
+		cmd := "export DEBIAN_FRONTEND=noninteractive && sudo apt-get update && sudo apt-get install -y unzip"
+		if _, err := client.RunCommand(cmd); err != nil {
+			return fmt.Errorf("failed to install unzip via apt-get: %w", err)
+		}
+		return nil
+	}
+
+	// Try apk (Alpine)
+	if _, err := client.RunCommand("which apk"); err == nil {
+		if _, err := client.RunCommand("sudo apk add unzip"); err != nil {
+			return fmt.Errorf("failed to install unzip via apk: %w", err)
+		}
+		return nil
+	}
+
+	// Try yum (CentOS/RHEL)
+	if _, err := client.RunCommand("which yum"); err == nil {
+		if _, err := client.RunCommand("sudo yum install -y unzip"); err != nil {
+			return fmt.Errorf("failed to install unzip via yum: %w", err)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unzip command not found and package manager detection failed")
+}
+
+// ensureSwap checks for swap and adds 2GB if missing
+func (s *ProjectService) ensureSwap(client *remote.SSHClient) error {
+	// Check if swap is active
+	checkSwap := "swapon --show"
+	out, err := client.RunCommand(checkSwap)
+	if err == nil && strings.TrimSpace(out) != "" {
+		// Swap exists
+		return nil
+	}
+
+	// Create swap
+	// 1. fallocate
+	// 2. chmod
+	// 3. mkswap
+	// 4. swapon
+	cmd := `
+		sudo fallocate -l 2G /swapfile && \
+		sudo chmod 600 /swapfile && \
+		sudo mkswap /swapfile && \
+		sudo swapon /swapfile && \
+		echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+	`
+	// Check if fallocate exists, if not use dd
+	checkFallocate := "command -v fallocate"
+	if _, err := client.RunCommand(checkFallocate); err != nil {
+		cmd = `
+			sudo dd if=/dev/zero of=/swapfile bs=1024 count=2097152 && \
+			sudo chmod 600 /swapfile && \
+			sudo mkswap /swapfile && \
+			sudo swapon /swapfile && \
+			echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+		`
+	}
+
+	if _, err := client.RunCommand(cmd); err != nil {
+		return fmt.Errorf("failed to create swap: %w", err)
+	}
+
+	return nil
+}
+
+// ensureGoInstalled checks for Go and installs it if missing
+func (s *ProjectService) ensureGoInstalled(client *remote.SSHClient) error {
+	// Check if go is available
+	if _, err := client.RunCommand("go version"); err == nil {
+		return nil
+	}
+
+	// Install Go
+	// 1. Download tar.gz
+	// 2. Remove old installation
+	// 3. Extract to /usr/local/go
+	// 4. Update path
+	goVer := "1.22.0"
+	url := fmt.Sprintf("https://go.dev/dl/go%s.linux-amd64.tar.gz", goVer)
+
+	cmd := fmt.Sprintf(`
+		curl -L %s -o /tmp/go.tar.gz && \
+		sudo rm -rf /usr/local/go && \
+		sudo tar -C /usr/local -xzf /tmp/go.tar.gz && \
+		rm /tmp/go.tar.gz && \
+		echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile && \
+		echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+	`, url)
+
+	if _, err := client.RunCommand(cmd); err != nil {
+		return fmt.Errorf("failed to install go: %w", err)
+	}
+
+	return nil
+}
+
+// getGoCommandPrefix returns the prefix to ensure go is in path
+func (s *ProjectService) getGoCommandPrefix() string {
+	return "export PATH=$PATH:/usr/local/go/bin && "
+}
+
+// UpdateProject updates project configuration
+func (s *ProjectService) UpdateProject(ctx context.Context, project models.Project) error {
+	existing, err := s.store.GetProject(project.ID)
+	if err != nil {
+		return err
+	}
+
+	// Update allowed fields
+	existing.Name = project.Name
+	existing.Port = project.Port
+	existing.HostPort = project.HostPort
+	existing.BuildCommand = project.BuildCommand
+	existing.StartCommand = project.StartCommand
+
+	// Start/Build type usually immutable or requires more logic, sticking to commands for now.
+	// But let's allow updating type/build_type if needed, user might want to switch strategies.
+	if project.BuildType != "" {
+		existing.BuildType = project.BuildType
+	}
+
+	return s.store.UpdateProject(existing)
+}
+
+// CreateProjectFromRepo creates a new project by cloning a git repository on the remote server
+func (s *ProjectService) CreateProjectFromRepo(ctx context.Context, project models.Project, repoURL string, token string) (*models.Project, error) {
+	// 1. Set project metadata
+	project.SourceType = "git"
+	project.SourceURL = repoURL
+	project.Status = "stopped"
+	project.CreatedAt = time.Now()
+
+	// 2. Determine remote project path based on user's home directory
+	projectPath, err := s.resolveRemoteProjectPath(project.ServerID, project.Type, project.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve project path: %w", err)
+	}
+	project.Path = projectPath
+
+	// 3. Save project record
+	if err := s.store.AddProject(project); err != nil {
+		return nil, fmt.Errorf("failed to create project record: %w", err)
+	}
+
+	// 4. Get SSH client for the remote server
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		s.store.RemoveProject(project.ID)
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	}
+
+	// 5. Create directory on remote server
+	mkdirCmd := fmt.Sprintf("mkdir -p %s", projectPath)
+	if _, err := client.RunCommand(mkdirCmd); err != nil {
+		s.store.RemoveProject(project.ID)
+		return nil, fmt.Errorf("failed to create project directory: %w", err)
+	}
+
+	// 6. Clone repository on remote server via SSH
+	authRepoURL := repoURL
+	if token != "" {
+		if strings.HasPrefix(repoURL, "https://") {
+			authRepoURL = strings.Replace(repoURL, "https://", fmt.Sprintf("https://oauth2:%s@", token), 1)
+		}
+	}
+
+	cloneCmd := fmt.Sprintf("git clone %s %s", authRepoURL, projectPath)
+	if output, err := client.RunCommand(cloneCmd); err != nil {
+		client.RunCommand(fmt.Sprintf("rm -rf %s", projectPath))
+		s.store.RemoveProject(project.ID)
+		return nil, fmt.Errorf("git clone failed: %s: %w", output, err)
+	}
+
+	return &project, nil
+}

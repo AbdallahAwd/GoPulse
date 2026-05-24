@@ -1,0 +1,43 @@
+# Example configuration file for GoPulse
+# Copy this file to config.yaml and modify as needed
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: "15s"
+  write_timeout: "15s"
+  idle_timeout: "60s"
+
+auth:
+  # IMPORTANT: Change this in production!
+  jwt_secret: "change-this-to-a-random-secret-key"
+  admin_username: "admin"
+  admin_password: "changeme"
+  token_duration: "24h"
+
+github:
+  client_id: "Ov23liocY6oaamvLoZdH"
+  client_secret: ""
+  callback_url: "http://localhost:8080/auth/github/callback"
+
+monitoring:
+  # How often to collect system stats
+  poll_interval: "5s"
+  enable_websocket: true
+  # Number of historical data points to keep
+  stats_history: 60
+
+docker:
+  # Docker socket location
+  host: "unix:///var/run/docker.sock"
+  # Docker API version
+  version: "1.41"
+
+database:
+  mongo_host: "localhost"
+  mongo_port: 27017
+  postgres_host: "localhost"
+  postgres_port: 5432
+  # Log file paths (must be readable by the application)
+  mongo_log_path: "/var/log/mongodb/mongod.log"
+  postgres_log_path: "/var/log/postgresql/postgresql.log"

@@ -1,0 +1,1318 @@
+{{define "content"}}
+<div class="container mx-auto px-4 py-8">
+    <input type="hidden" id="current-server-id" value="{{.ServerID}}">
+    <!-- breadcrumb -->
+    <nav class="flex mb-4 text-gray-400 text-sm" aria-label="Breadcrumb">
+        <ol class="inline-flex items-center space-x-1 md:space-x-3">
+            <li class="inline-flex items-center">
+                <a href="/" class="inline-flex items-center hover:text-white">
+                    <i class="fas fa-home mr-2"></i>
+                    Servers
+                </a>
+            </li>
+            <li>
+                <div class="flex items-center">
+                    <i class="fas fa-chevron-right mx-2"></i>
+                    <span class="text-white">{{.ServerName}}</span>
+                </div>
+            </li>
+        </ol>
+    </nav>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="stat-card rounded-lg shadow-lg p-6 text-white">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm opacity-80">CPU Usage</p>
+                    <p class="text-3xl font-bold mt-2" id="cpu-usage">0%</p>
+                </div>
+                <i class="fas fa-microchip text-4xl opacity-50"></i>
+            </div>
+            <div class="mt-4 bg-white bg-opacity-20 rounded-full h-2">
+                <div class="bg-white rounded-full h-2 transition-all duration-300" id="cpu-bar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <div class="stat-card-success rounded-lg shadow-lg p-6 text-white">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm opacity-80">Memory</p>
+                    <p class="text-3xl font-bold mt-2" id="memory-usage">0%</p>
+                </div>
+                <i class="fas fa-memory text-4xl opacity-50"></i>
+            </div>
+            <div class="mt-4 bg-white bg-opacity-20 rounded-full h-2">
+                <div class="bg-white rounded-full h-2 transition-all duration-300" id="memory-bar" style="width: 0%">
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card-warning rounded-lg shadow-lg p-6 text-white">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm opacity-80">Disk Usage</p>
+                    <p class="text-3xl font-bold mt-2" id="disk-usage">0%</p>
+                </div>
+                <i class="fas fa-hdd text-4xl opacity-50"></i>
+            </div>
+            <div class="mt-4 bg-white bg-opacity-20 rounded-full h-2">
+                <div class="bg-white rounded-full h-2 transition-all duration-300" id="disk-bar" style="width: 0%">
+                </div>
+            </div>
+        </div>
+
+        <div class="stat-card-danger rounded-lg shadow-lg p-6 text-white">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm opacity-80">Load Average</p>
+                    <p class="text-3xl font-bold mt-2" id="load-avg">0.00</p>
+                </div>
+                <i class="fas fa-chart-line text-4xl opacity-50"></i>
+            </div>
+            <p class="text-sm mt-4 opacity-80" id="load-details">1m: 0.00 | 5m: 0.00 | 15m: 0.00</p>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="mb-6">
+        <div class="flex space-x-4 border-b border-gray-700">
+            <button class="tab-btn px-4 py-2 font-medium border-b-2 border-blue-500 text-blue-500" data-tab="processes">
+                <i class="fas fa-list mr-2"></i>Processes
+            </button>
+            <button class="tab-btn px-4 py-2 font-medium border-b-2 border-transparent text-gray-400 hover:text-white"
+                data-tab="docker">
+                <i class="fab fa-docker mr-2"></i>Docker
+            </button>
+            <button class="tab-btn px-4 py-2 font-medium border-b-2 border-transparent text-gray-400 hover:text-white"
+                data-tab="files">
+                <i class="fas fa-folder mr-2"></i>Files
+            </button>
+            <button class="tab-btn px-4 py-2 font-medium border-b-2 border-transparent text-gray-400 hover:text-white"
+                data-tab="projects">
+                <i class="fas fa-project-diagram mr-2"></i>Projects
+            </button>
+            <button class="tab-btn px-4 py-2 font-medium border-b-2 border-transparent text-gray-400 hover:text-white"
+                data-tab="domains">
+                <i class="fas fa-globe mr-2"></i>Domains
+            </button>
+        </div>
+    </div>
+
+    <!-- Processes Tab -->
+    <div id="processes-tab" class="tab-content">
+        <div class="bg-gray-800 rounded-lg shadow-lg p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold">Running Processes</h2>
+                <div class="flex items-center space-x-4">
+                    <input type="text" id="process-search" placeholder="Search processes..."
+                        class="bg-gray-700 text-white px-4 py-2 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500">
+                    <button onclick="loadProcesses()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg">
+                        <i class="fas fa-sync-alt mr-2"></i>Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="px-4 py-3 text-left">PID</th>
+                            <th class="px-4 py-3 text-left">Name</th>
+                            <th class="px-4 py-3 text-left">Status</th>
+                            <th class="px-4 py-3 text-left">CPU %</th>
+                            <th class="px-4 py-3 text-left">Memory (MB)</th>
+                            <th class="px-4 py-3 text-left">User</th>
+                            <th class="px-4 py-3 text-left">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="processes-tbody" class="divide-y divide-gray-700">
+                        <tr>
+                            <td colspan="7" class="px-4 py-8 text-center text-gray-400">
+                                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                <p>Loading processes...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Docker Tab -->
+    <div id="docker-tab" class="tab-content hidden">
+        <!-- Docker Not Installed Overlay -->
+        <div id="docker-not-installed" class="hidden">
+            <div class="bg-gray-800 rounded-lg shadow-lg p-8 text-center">
+                <div class="max-w-md mx-auto">
+                    <div class="w-20 h-20 mx-auto mb-6 bg-blue-900/30 rounded-full flex items-center justify-center">
+                        <i class="fab fa-docker text-blue-400 text-4xl"></i>
+                    </div>
+                    <h2 class="text-2xl font-bold text-white mb-3">Docker Not Installed</h2>
+                    <p class="text-gray-400 mb-6">Docker is not installed on this server. Install it to manage
+                        containers, images, volumes, and networks.</p>
+                    <button id="install-docker-btn" onclick="App.Docker.installDocker()"
+                        class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-lg font-medium transition-all duration-200 shadow-lg shadow-blue-900/30 text-lg">
+                        <i class="fab fa-docker mr-2"></i>Install Docker
+                    </button>
+                    <div id="docker-install-terminal" class="hidden mt-6 text-left">
+                        <div class="bg-gray-900 rounded-lg border border-gray-700 p-4 max-h-64 overflow-y-auto font-mono text-xs text-green-400 whitespace-pre-wrap"
+                            id="docker-install-output"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Docker Content (shown when installed) -->
+        <div id="docker-content">
+            <div class="bg-gray-800 rounded-lg shadow-lg p-6">
+                <!-- Docker Sub-Navigation -->
+                <div class="flex items-center justify-between mb-6 border-b border-gray-700 pb-4">
+                    <div class="flex space-x-4">
+                        <button class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white"
+                            data-target="containers-view">
+                            <i class="fas fa-box-open mr-2"></i>Containers
+                        </button>
+                        <button
+                            class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700"
+                            data-target="images-view">
+                            <i class="fas fa-compact-disc mr-2"></i>Images
+                        </button>
+                        <button
+                            class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700"
+                            data-target="volumes-view">
+                            <i class="fas fa-hdd mr-2"></i>Volumes
+                        </button>
+                        <button
+                            class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700"
+                            data-target="networks-view">
+                            <i class="fas fa-network-wired mr-2"></i>Networks
+                        </button>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button id="docker-refresh-btn" onclick="App.Docker.refresh()"
+                            class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white">
+                            <i class="fas fa-sync-alt mr-2"></i>Refresh
+                        </button>
+                        <button onclick="App.Docker.showBuildModal()"
+                            class="bg-indigo-600 hover:bg-indigo-700 px-3 py-2 rounded-lg text-sm text-white model-trigger">
+                            <i class="fas fa-tools mr-2"></i>Build
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Containers View -->
+                <div id="containers-view" class="docker-view">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-white">Active Containers</h3>
+                        <!-- Filter/Search could go here -->
+                    </div>
+                    <div id="containers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div class="col-span-full text-center py-8 text-gray-400">
+                            <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                            <p>Loading containers...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Images View -->
+                <div id="images-view" class="docker-view hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-white">Local Images</h3>
+                        <button onclick="App.Docker.Images.showPullModal()"
+                            class="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm text-white">
+                            <i class="fas fa-download mr-2"></i>Pull Image
+                        </button>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                <tr>
+                                    <th class="px-4 py-3">ID</th>
+                                    <th class="px-4 py-3">Repository</th>
+                                    <th class="px-4 py-3">Tag</th>
+                                    <th class="px-4 py-3">Size</th>
+                                    <th class="px-4 py-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="images-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
+                                <tr>
+                                    <td colspan="5" class="text-center py-4">Loading images...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Volumes View -->
+                <div id="volumes-view" class="docker-view hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-white">Volumes</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                <tr>
+                                    <th class="px-4 py-3">Name</th>
+                                    <th class="px-4 py-3">Driver</th>
+                                    <th class="px-4 py-3">Mountpoint</th>
+                                    <th class="px-4 py-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="volumes-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
+                                <tr>
+                                    <td colspan="4" class="text-center py-4">Loading volumes...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Networks View -->
+                <div id="networks-view" class="docker-view hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-white">Networks</h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                <tr>
+                                    <th class="px-4 py-3">ID</th>
+                                    <th class="px-4 py-3">Name</th>
+                                    <th class="px-4 py-3">Driver</th>
+                                    <th class="px-4 py-3">Scope</th>
+                                    <th class="px-4 py-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="networks-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
+                                <tr>
+                                    <td colspan="5" class="text-center py-4">Loading networks...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div> <!-- end docker-content -->
+
+
+    <!-- Files Tab -->
+    <div id="files-tab" class="tab-content hidden">
+        <div class="bg-gray-800 rounded-lg shadow-lg p-6">
+            <!-- File Manager Header -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-4">
+                <div class="flex-1">
+                    <div id="file-breadcrumbs"
+                        class="flex items-center text-sm text-gray-400 bg-gray-900 rounded px-3 py-2 w-full">
+                        <form class="flex-1 flex items-center w-full"
+                            onsubmit="event.preventDefault(); window.loadFileBrowser(this.querySelector('input').value)">
+                            <span class="mr-2 text-gray-500"><i class="fas fa-folder"></i></span>
+                            <input type="text" value="/" id="file-path-input"
+                                class="bg-transparent border-none text-gray-300 hover:text-white focus:text-white focus:outline-none w-full font-mono text-sm placeholder-gray-600 transition-colors"
+                                placeholder="/path/to/directory" onfocus="this.select()">
+                        </form>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="createDirectory()"
+                        class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm" title="New Folder">
+                        <i class="fas fa-folder-plus"></i>
+                    </button>
+                    <button onclick="createFile()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm"
+                        title="New File">
+                        <i class="fas fa-file"></i>
+                    </button>
+                    <input type="file" id="file-upload-input" class="hidden"
+                        onchange="document.getElementById('file-upload-label').textContent = this.files[0]?.name || 'Choose File'">
+                    <label for="file-upload-input" id="file-upload-label"
+                        class="cursor-pointer bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm truncate max-w-[150px]">
+                        Choose File
+                    </label>
+                    <button id="upload-btn" onclick="uploadFile()"
+                        class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm">
+                        <i class="fas fa-cloud-upload-alt mr-2"></i>Upload
+                    </button>
+                    <button onclick="loadFileBrowser(App.state.currentPath)"
+                        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                    <button onclick="openTerminal()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm"
+                        title="Open Terminal">
+                        <i class="fas fa-terminal text-green-400"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- File List -->
+            <div class="overflow-x-auto relative" id="file-list-container">
+                <div id="file-loading-overlay"
+                    class="absolute inset-0 bg-white bg-opacity-10 backdrop-blur-sm flex items-center justify-center z-10 hidden transition-all duration-300">
+                    <div class="flex flex-col items-center p-4 rounded-lg  bg-opacity-75 shadow-xl ">
+                        <i class="fas fa-circle-notch fa-spin text-3xl mb-3 text-blue-500"></i>
+                        <p class="text-white font-medium text-sm">Loading contents...</p>
+                    </div>
+                </div>
+                <table class="w-full">
+                    <thead class="bg-gray-700">
+                        <tr>
+                            <th class="px-4 py-3 text-left w-1/2">Name</th>
+                            <th class="px-4 py-3 text-left">Size</th>
+                            <th class="px-4 py-3 text-left">Mode</th>
+                            <th class="px-4 py-3 text-left">Date</th>
+                            <th class="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="files-tbody" class="divide-y divide-gray-700">
+                        <tr>
+                            <td colspan="5" class="px-4 py-8 text-center text-gray-400">
+                                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                                <p>Loading files...</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Projects Tab -->
+    <div id="projects-tab" class="tab-content hidden">
+        <div class="bg-gray-800 rounded-lg shadow-lg p-6 min-h-[400px]">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-bold text-white">Projects</h2>
+                <button onclick="App.Projects.showCreateModal()"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                    <i class="fas fa-plus mr-2"></i>New Project
+                </button>
+            </div>
+
+            <div id="projects-list">
+                <!-- Project list content will be rendered here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Domains Tab -->
+    <div id="domains-tab" class="tab-content hidden">
+        <!-- Nginx Not Installed Overlay -->
+        <div id="nginx-not-installed" class="hidden">
+            <div class="bg-gray-800 rounded-lg shadow-lg p-8 text-center">
+                <div class="max-w-md mx-auto">
+                    <div class="w-20 h-20 mx-auto mb-6 bg-green-900/30 rounded-full flex items-center justify-center">
+                        <i class="fas fa-server text-green-400 text-4xl"></i>
+                    </div>
+                    <h2 class="text-2xl font-bold text-white mb-3">Nginx Not Installed</h2>
+                    <p class="text-gray-400 mb-6">Nginx is required to manage domain reverse proxies. Install it to
+                        start mapping domains to your applications.</p>
+                    <button id="install-nginx-btn" onclick="App.Domains.installNginx()"
+                        class="bg-green-600 hover:bg-green-500 text-white px-8 py-3 rounded-lg font-medium transition-all duration-200 shadow-lg shadow-green-900/30 text-lg">
+                        <i class="fas fa-download mr-2"></i>Install Nginx
+                    </button>
+                    <div id="nginx-install-terminal" class="hidden mt-6 text-left">
+                        <div class="bg-gray-900 rounded-lg border border-gray-700 p-4 max-h-64 overflow-y-auto font-mono text-xs text-green-400 whitespace-pre-wrap"
+                            id="nginx-install-output"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Domains Content (shown when Nginx is installed) -->
+        <div id="domains-content">
+            <div class="bg-gray-800 rounded-lg shadow-lg p-6 min-h-[400px]">
+                <!-- Header -->
+                <div class="flex items-center justify-between mb-6">
+                    <div class="flex items-center space-x-4">
+                        <h2 class="text-xl font-bold text-white">Domains</h2>
+                        <div id="nginx-status-badge"
+                            class="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium bg-gray-700 text-gray-400">
+                            <span class="h-2 w-2 rounded-full bg-gray-500" id="nginx-status-dot"></span>
+                            <span id="nginx-status-text">Checking Nginx...</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="App.Domains.checkNginx()"
+                            class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white transition-colors">
+                            <i class="fas fa-sync-alt mr-2"></i>Refresh
+                        </button>
+                        <button onclick="App.Domains.showAddModal()"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20">
+                            <i class="fas fa-plus mr-2"></i>Add Domain
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Domain List -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="px-4 py-3">Domain</th>
+                                <th class="px-4 py-3">Target Port</th>
+                                <th class="px-4 py-3">SSL</th>
+                                <th class="px-4 py-3">Created</th>
+                                <th class="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="domains-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
+                            <tr>
+                                <td colspan="5" class="px-4 py-12 text-center text-gray-500">
+                                    <i class="fas fa-globe text-4xl mb-3 block opacity-30"></i>
+                                    <p>No domains configured yet</p>
+                                    <p class="text-xs mt-1 text-gray-600">Click "Add Domain" to map a domain to a port
+                                    </p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div> <!-- end domains-content -->
+    </div>
+
+    <!-- Add Domain Modal -->
+    <div id="add-domain-modal"
+        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        <div
+            class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg transform transition-all duration-300 scale-95 border border-gray-700">
+            <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-blue-900/30 rounded-lg">
+                        <i class="fas fa-globe text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white">Add Domain</h3>
+                </div>
+                <button onclick="App.Domains.closeAddModal()"
+                    class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-6 space-y-5">
+                <div>
+                    <label class="block text-gray-400 text-sm font-bold mb-2">Domain Name</label>
+                    <input type="text" id="add-domain-name"
+                        class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors font-mono text-sm"
+                        placeholder="app.example.com">
+                    <p class="text-xs text-gray-500 mt-1">Your domain or subdomain (must point to this server's IP
+                        via
+                        DNS)</p>
+                </div>
+
+                <div>
+                    <label class="block text-gray-400 text-sm font-bold mb-2">Target Port</label>
+                    <input type="number" id="add-domain-port"
+                        class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                        placeholder="3000">
+                    <p class="text-xs text-gray-500 mt-1">The local port your application is running on</p>
+                </div>
+
+                <div class="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg border border-gray-600">
+                    <div>
+                        <label class="block text-white text-sm font-bold">Enable SSL</label>
+                        <p class="text-xs text-gray-400 mt-0.5">HTTPS via Let's Encrypt (requires certbot)</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="add-domain-ssl" class="sr-only peer">
+                        <div
+                            class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600">
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+                <button onclick="App.Domains.closeAddModal()"
+                    class="px-6 py-2.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">Cancel</button>
+                <button id="add-domain-submit-btn" onclick="App.Domains.addDomain()"
+                    class="px-8 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 active:bg-blue-700 transition-all duration-200 font-medium shadow-lg shadow-blue-500/20">
+                    <i class="fas fa-plus mr-2"></i>Add Domain
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Project Modal -->
+    <div id="create-project-modal"
+        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        <div
+            class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-4xl transform transition-all duration-300 scale-95 border border-gray-700 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-blue-900/30 rounded-lg">
+                        <i class="fas fa-rocket text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white">Create New Project</h3>
+                </div>
+                <button onclick="App.Projects.closeCreateModal()"
+                    class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-8">
+                <!-- Step 1: Technology Selection -->
+                <div class="mb-8">
+                    <h4 class="text-lg font-medium text-white mb-4">1. Choose Technology</h4>
+                    <input type="hidden" id="selected-tech">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div id="tech-nextjs" onclick="App.Projects.selectTech('nextjs')"
+                            class="tech-card cursor-pointer border border-gray-700 bg-gray-800 p-6 rounded-xl hover:border-blue-500 hover:bg-blue-900/10 transition-all group">
+                            <div class="flex items-center justify-between mb-4">
+                                <i
+                                    class="fab fa-react text-4xl text-gray-400 group-hover:text-blue-400 transition-colors"></i>
+                                <div
+                                    class="h-6 w-6 rounded-full border-2 border-gray-600 group-hover:border-blue-500 flex items-center justify-center">
+                                    <div
+                                        class="h-3 w-3 rounded-full bg-blue-500 opacity-0 transition-opacity check-indicator">
+                                    </div>
+                                </div>
+                            </div>
+                            <h5 class="text-white font-bold mb-1">Next.js</h5>
+                            <p class="text-sm text-gray-400">The React Framework for the Web</p>
+                        </div>
+
+                        <!-- Node.js -->
+                        <div id="tech-nodejs" onclick="App.Projects.selectTech('nodejs')"
+                            class="tech-card cursor-pointer border border-gray-700 bg-gray-800 p-6 rounded-xl hover:border-blue-500 hover:bg-blue-900/10 transition-all group">
+                            <div class="flex items-center justify-between mb-4">
+                                <i
+                                    class="fab fa-node text-4xl text-gray-400 group-hover:text-green-500 transition-colors"></i>
+                                <div
+                                    class="h-6 w-6 rounded-full border-2 border-gray-600 group-hover:border-blue-500 flex items-center justify-center">
+                                    <div
+                                        class="h-3 w-3 rounded-full bg-blue-500 opacity-0 transition-opacity check-indicator">
+                                    </div>
+                                </div>
+                            </div>
+                            <h5 class="text-white font-bold mb-1">Node.js</h5>
+                            <p class="text-sm text-gray-400">JavaScript Runtime</p>
+                        </div>
+
+                        <!-- Go -->
+                        <div id="tech-go" onclick="App.Projects.selectTech('go')"
+                            class="tech-card cursor-pointer border border-gray-700 bg-gray-800 p-6 rounded-xl hover:border-blue-500 hover:bg-blue-900/10 transition-all group">
+                            <div class="flex items-center justify-between mb-4">
+                                <i
+                                    class="fab fa-golang text-4xl text-gray-400 group-hover:text-blue-400 transition-colors"></i>
+                                <div
+                                    class="h-6 w-6 rounded-full border-2 border-gray-600 group-hover:border-blue-500 flex items-center justify-center">
+                                    <div
+                                        class="h-3 w-3 rounded-full bg-blue-500 opacity-0 transition-opacity check-indicator">
+                                    </div>
+                                </div>
+                            </div>
+                            <h5 class="text-white font-bold mb-1">Go</h5>
+                            <p class="text-sm text-gray-400">Simple, reliable, efficient</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: Project Details (Hidden for now until tech selected, or just visible) -->
+                <div class="space-y-6">
+                    <h4 class="text-lg font-medium text-white mb-4">2. Project Details</h4>
+
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Project Name</label>
+                        <input type="text" id="project-name"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                            placeholder="my-awesome-project">
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-gray-400 text-sm font-bold mb-2">Port (Optional)</label>
+                            <input type="number" id="project-port"
+                                class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                                placeholder="3000">
+                        </div>
+                        <div>
+                            <label class="block text-gray-400 text-sm font-bold mb-2">Build Command
+                                (Optional)</label>
+                            <input type="text" id="project-build-cmd"
+                                class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                                placeholder="npm run build">
+                        </div>
+                        <input type="hidden" id="project-start-cmd" value="npm start">
+                    </div>
+
+                    <!-- GitHub Connect Placeholder -->
+                    <div class="border-t border-gray-700 pt-6 mt-6">
+                        <h4 class="text-lg font-medium text-white mb-4">3. Source Code</h4>
+                        <input type="hidden" id="project-repo-url">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <button onclick="App.Projects.openGitHubModal()"
+                                class="flex items-center justify-center space-x-3 bg-gray-700 hover:bg-gray-600 text-white p-4 rounded-lg border border-gray-600 hover:border-gray-500 transition-all">
+                                <i class="fab fa-github text-xl"></i>
+                                <span>Connect / Select from GitHub</span>
+                            </button>
+                            <div class="relative">
+                                <input type="file" id="project-file" class="hidden" accept=".zip,.tar.gz"
+                                    onchange="App.Projects.handleFileSelect(this)">
+                                <button onclick="document.getElementById('project-file').click()"
+                                    class="w-full flex items-center justify-center space-x-3 bg-gray-700 hover:bg-gray-600 text-white p-4 rounded-lg border border-gray-600 hover:border-gray-500 transition-all">
+                                    <i class="fas fa-upload text-xl"></i>
+                                    <span id="project-file-label">Upload Zip</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="px-6 pb-2">
+                <div id="project-upload-progress" class="hidden">
+                    <div class="flex justify-between mb-1">
+                        <span class="text-sm font-medium text-blue-400">Uploading...</span>
+                        <span class="text-sm font-medium text-blue-400" id="project-upload-percent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-700 rounded-full h-2.5">
+                        <div class="bg-blue-600 h-2.5 rounded-full" id="project-upload-bar" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+                <button onclick="App.Projects.closeCreateModal()"
+                    class="px-6 py-2.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">Cancel</button>
+                <button id="create-project-btn-submit" onclick="App.Projects.createProject()"
+                    class="px-8 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 active:bg-blue-700 transition-all duration-200 font-medium shadow-lg shadow-blue-500/20">
+                    Create Project
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- File Editor Modal -->
+<!-- File Editor Modal -->
+<style>
+    .modal-enter {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    .modal-enter-active {
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+    }
+
+    .modal-exit {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    .modal-exit-active {
+        opacity: 0;
+        transform: scale(0.95);
+        transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .animate-spin-slow {
+        animation: spin 3s linear infinite;
+    }
+</style>
+<div id="file-editor-modal"
+    class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-gray-800 rounded-lg shadow-2xl w-11/12 max-w-4xl h-5/6 flex flex-col transform transition-all duration-300 scale-95 border border-gray-700">
+        <div class="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+            <h3 class="text-xl font-bold text-white flex items-center">
+                <span class="p-2 bg-blue-900 bg-opacity-50 rounded-lg mr-3">
+                    <i class="fas fa-code text-blue-400"></i>
+                </span>
+                <span id="editor-filename" class="font-mono tracking-tight">filename.txt</span>
+            </h3>
+            <button onclick="closeFileEditor()"
+                class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <div class="flex-1 p-0 relative group">
+            <!-- Loading Skeleton -->
+            <div id="editor-skeleton" class="absolute inset-0 p-4 space-y-4 hidden z-20 bg-gray-800">
+                <div class="h-4 bg-gray-700 rounded w-3/4 animate-pulse"></div>
+                <div class="h-4 bg-gray-700 rounded w-1/2 animate-pulse"></div>
+                <div class="h-4 bg-gray-700 rounded w-5/6 animate-pulse"></div>
+                <div class="h-4 bg-gray-700 rounded w-2/3 animate-pulse"></div>
+            </div>
+
+
+
+            <!-- Toast Notifications -->
+            <!-- Text Editor -->
+            <textarea id="file-editor-content"
+                class="w-full h-full bg-gray-900 text-gray-300 p-6 font-mono text-sm resize-none focus:outline-none focus:bg-gray-850 transition-colors duration-200 border-none leading-relaxed hidden"
+                spellcheck="false" placeholder="Start typing..."></textarea>
+
+            <!-- Image Preview -->
+            <div id="file-editor-image" class="w-full h-full flex items-center justify-center bg-gray-900 hidden">
+                <img src="" alt="Preview" class="max-w-full max-h-full object-contain shadow-lg rounded">
+            </div>
+
+            <!-- Audio Preview -->
+            <div id="file-editor-audio"
+                class="w-full h-full flex items-center justify-center bg-gray-900 hidden flex-col">
+                <i class="fas fa-music text-6xl text-gray-600 mb-4"></i>
+                <audio controls class="w-2/3 outline-none"></audio>
+            </div>
+        </div>
+
+        <div class="p-4 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+            <button onclick="closeFileEditor()"
+                class="px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">
+                Cancel
+            </button>
+            <button id="editor-save-btn" onclick="saveFileEditor()"
+                class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 active:bg-blue-700 transition-all duration-200 flex items-center font-medium shadow-lg hover:shadow-blue-500/30">
+                <i class="fas fa-save mr-2"></i> Save Changes
+            </button>
+        </div>
+    </div>
+</div>
+<!-- Edit Project Modal -->
+<div id="edit-project-modal"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+    <div
+        class="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]">
+        <div class="flex items-center justify-between p-6 border-b border-gray-800">
+            <h3 class="text-xl font-bold text-white">Edit Project</h3>
+            <button onclick="App.Projects.closeEditModal()" class="text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <input type="hidden" id="edit-project-id">
+
+        <div class="p-8 overflow-y-auto">
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Project Name</label>
+                    <input type="text" id="edit-project-name"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors"
+                        placeholder="my-awesome-app">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Port</label>
+                    <input type="number" id="edit-project-port"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors overflow-hidden appearance-none m-0"
+                        placeholder="3000">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Build Command</label>
+                    <input type="text" id="edit-project-build-cmd"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
+                        placeholder="npm install && npm run build">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Start Command</label>
+                    <input type="text" id="edit-project-start-cmd"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
+                        placeholder="npm start">
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-800 flex justify-end space-x-3 bg-gray-900/50 rounded-b-xl">
+            <button onclick="App.Projects.closeEditModal()"
+                class="px-6 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
+                Cancel
+            </button>
+            <button onclick="App.Projects.updateProject()" id="update-project-btn"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20 flex items-center">
+                <span>Save Changes</span>
+            </button>
+        </div>
+    </div>
+</div>
+<!-- GitHub Repositories Modal -->
+<div id="github-repos-modal"
+    class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl transform scale-95 transition-transform duration-300 border border-gray-800 flex flex-col max-h-[80vh]">
+        <div class="p-6 border-b border-gray-800 flex justify-between items-center">
+            <h3 class="text-xl font-semibold text-white">Select Repository</h3>
+            <button onclick="App.Projects.closeGitHubModal()" class="text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <div class="px-6 py-4 border-b border-gray-800 bg-gray-900">
+            <div class="relative">
+                <i class="fas fa-search absolute left-4 top-3.5 text-gray-500"></i>
+                <input type="text" id="github-repo-search" onkeyup="App.Projects.filterGitHubRepos()"
+                    class="w-full bg-gray-800 text-white pl-10 pr-4 py-3 rounded-lg border border-gray-700 focus:outline-none focus:border-blue-500 transition-colors"
+                    placeholder="Search repositories...">
+            </div>
+        </div>
+
+        <div class="p-6 overflow-y-auto custom-scrollbar flex-1" id="github-repo-list">
+            <!-- Repositories will be loaded here -->
+            <div class="text-center text-gray-500 py-8">
+                <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                <p>Loading repositories...</p>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-800 flex justify-between items-center bg-gray-900/50 rounded-b-xl">
+            <div class="text-sm text-gray-500">
+                Don't see your repo? <a href="#" onclick="App.Projects.loadGitHubRepos()"
+                    class="text-blue-400 hover:text-blue-300">Refresh</a>
+            </div>
+            <button onclick="App.Projects.closeGitHubModal()"
+                class="px-6 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
+                Cancel
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Create Item Modal -->
+<div id="create-item-modal"
+    class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 border border-gray-700">
+        <div class="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+            <h3 class="text-xl font-bold text-white flex items-center">
+                <span id="create-item-icon-wrapper" class="p-2 bg-blue-900 bg-opacity-50 rounded-lg mr-3">
+                    <i id="create-item-icon" class="fas fa-file-plus text-blue-400"></i>
+                </span>
+                <span id="create-item-title">Create New File</span>
+            </h3>
+            <button onclick="App.Files.closeCreateModal()"
+                class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        <div class="p-6">
+            <label class="block text-gray-400 text-sm font-bold mb-2" for="create-item-name">Name</label>
+            <input type="text" id="create-item-name"
+                class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
+                placeholder="Enter name...">
+            <input type="hidden" id="create-item-type">
+        </div>
+        <div class="p-4 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+            <button onclick="App.Files.closeCreateModal()"
+                class="px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">Cancel</button>
+            <button onclick="App.Files.submitCreate()"
+                class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-500 active:bg-blue-700 transition-all duration-200 font-medium">Create</button>
+        </div>
+    </div>
+</div>
+<!-- Context Menu -->
+<div id="file-context-menu"
+    class="hidden fixed bg-gray-800 border border-gray-700 shadow-xl rounded-lg py-1 z-50 w-48 text-sm">
+    <a href="#" class="block px-4 py-2 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+        data-action="edit">
+        <i class="fas fa-edit w-5 text-blue-400"></i> Edit
+    </a>
+    <a href="#" class="block px-4 py-2 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+        data-action="download">
+        <i class="fas fa-download w-5 text-green-400"></i> Download
+    </a>
+    <a href="#" class="block px-4 py-2 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+        data-action="compress">
+        <i class="fas fa-file-archive w-5 text-yellow-400"></i> Compress (Zip)
+    </a>
+    <div class="border-t border-gray-700 my-1"></div>
+    <a href="#" class="block px-4 py-2 hover:bg-red-900/50 text-red-400 hover:text-red-300 transition-colors"
+        data-action="delete">
+        <i class="fas fa-trash-alt w-5"></i> Delete
+    </a>
+</div>
+</div>
+<!-- Docker Logs Modal -->
+<div id="docker-logs-modal"
+    class="fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-black rounded-lg shadow-2xl w-full max-w-5xl h-3/4 flex flex-col transform transition-all duration-300 scale-95 border border-gray-800 font-mono text-sm overflow-hidden ring-1 ring-gray-800">
+        <!-- Header -->
+        <div class="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-gray-800">
+            <div class="flex items-center space-x-3">
+                <div class="flex space-x-1.5 mr-2">
+                    <div onclick="App.Docker.Containers.closeLogs()"
+                        class="w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 cursor-pointer"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-600 cursor-not-allowed"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500 hover:bg-green-600 cursor-not-allowed"></div>
+                </div>
+                <div class="flex items-center text-gray-400 text-xs">
+                    <i class="fas fa-box mr-2"></i>
+                    <span>container:</span>
+                    <span id="docker-logs-title" class="text-blue-400 ml-1"></span>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button onclick="App.Docker.Containers.refreshLogs()"
+                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
+                    <i class="fas fa-sync-alt mr-1"></i>Refresh
+                </button>
+                <button onclick="App.Docker.Containers.closeLogs()"
+                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
+                    <i class="fas fa-times mr-1"></i>Close
+                </button>
+            </div>
+        </div>
+
+        <!-- Output Area -->
+        <div id="docker-logs-output"
+            class="flex-1 p-4 overflow-y-auto text-gray-300 font-mono bg-black scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
+            <div class="text-gray-500 mb-1 opacity-50"># Fetching logs...</div>
+        </div>
+    </div>
+</div>
+<!-- Terminal Modal -->
+<div id="terminal-modal"
+    class="fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-black rounded-lg shadow-2xl w-full max-w-4xl h-3/4 flex flex-col transform transition-all duration-300 scale-95 border border-gray-800 font-mono text-sm overflow-hidden ring-1 ring-gray-800">
+        <!-- Header -->
+        <div class="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-gray-800">
+            <div class="flex items-center space-x-3">
+                <div class="flex space-x-1.5 mr-2">
+                    <div onclick="closeTerminal()"
+                        class="w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 cursor-pointer"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-600 cursor-not-allowed"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500 hover:bg-green-600 cursor-not-allowed"></div>
+                </div>
+                <div class="flex items-center text-gray-400 text-xs">
+                    <i class="fas fa-terminal mr-2"></i>
+                    <span>user@gopulse:</span>
+                    <span id="terminal-path" class="text-blue-400 ml-1"></span>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button onclick="clearTerminal()"
+                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
+                    <i class="fas fa-eraser mr-1"></i>Clear
+                </button>
+            </div>
+        </div>
+
+        <!-- Output Area -->
+        <div id="terminal-output"
+            class="flex-1 p-4 overflow-y-auto text-green-400 font-mono bg-black scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
+            <div class="text-gray-500 mb-1 opacity-50"># GoPulse Remote Terminal</div>
+            <div class="text-gray-500 mb-4 opacity-50"># Connected to remote server</div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="p-3 bg-black border-t border-gray-800 flex items-center">
+            <span class="text-green-500 mr-2 font-bold select-none">➜</span>
+            <input type="text" id="terminal-input"
+                class="flex-1 bg-transparent border-none text-white focus:outline-none focus:ring-0 placeholder-gray-700 font-mono caret-green-500"
+                placeholder="Type command..." autocomplete="off">
+        </div>
+    </div>
+</div>
+<!-- Run Image Modal -->
+<div id="run-image-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-play mr-2 text-green-500"></i>Run Image</h3>
+            <button onclick="App.Docker.Run.closeModal()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="p-6 space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-2">Image</label>
+                <input type="text" id="run-image-name"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white font-mono" readonly>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-2">Container Name (Optional)</label>
+                <input type="text" id="run-container-name"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="my-container">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-2">Ports (Optional)</label>
+                <input type="text" id="run-container-ports"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                    placeholder="8080:80">
+                <p class="text-xs text-gray-500 mt-1">Format: hostPort:containerPort</p>
+            </div>
+        </div>
+        <div class="px-6 py-4 border-t border-gray-700 flex justify-end space-x-3">
+            <button onclick="App.Docker.Run.closeModal()"
+                class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">Cancel</button>
+            <button onclick="App.Docker.Run.submit()"
+                class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded transition-colors font-bold">
+                <i class="fas fa-play mr-2"></i> Run
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Build Modal -->
+<div id="build-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-hammer mr-2 text-yellow-500"></i>Build Image</h3>
+            <button onclick="App.Docker.Build.closeModal()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <div class="p-6 flex-1 flex flex-col min-h-0">
+            <div class="flex flex-col space-y-4 mb-6">
+                <div class="flex space-x-4">
+                    <div class="w-1/4">
+                        <label class="block text-sm font-medium text-gray-400 mb-2">Build Type</label>
+                        <select id="build-type"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                            onchange="App.Docker.Build.toggleType()">
+                            <option value="dockerfile">Dockerfile</option>
+                            <option value="compose">Docker Compose</option>
+                        </select>
+                    </div>
+                    <div class="w-1/4">
+                        <label class="block text-sm font-medium text-gray-400 mb-2">Source</label>
+                        <select id="build-source"
+                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                            onchange="App.Docker.Build.toggleType()">
+                            <option value="path">Project Directory</option>
+                            <option value="content">Direct Content</option>
+                        </select>
+                    </div>
+                    <div class="flex-1" id="build-path-wrapper">
+                        <div id="build-path-group">
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Project Directory</label>
+                            <input type="hidden" id="build-path">
+                            <div
+                                class="flex items-center space-x-2 bg-gray-700 border border-gray-600 rounded px-3 py-2">
+                                <span id="build-path-display" class="flex-1 text-gray-400 italic text-sm truncate">No
+                                    directory selected</span>
+                                <button onclick="App.Docker.FilePicker.open('build-path', 'directory')"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs transition-colors whitespace-nowrap">
+                                    <i class="fas fa-folder-open mr-1"></i> Choose Directory
+                                </button>
+                            </div>
+                        </div>
+                        <div id="compose-file-group" class="hidden">
+                            <label class="block text-sm font-medium text-gray-400 mb-2">Compose File</label>
+                            <input type="hidden" id="compose-file">
+                            <div
+                                class="flex items-center space-x-2 bg-gray-700 border border-gray-600 rounded px-3 py-2">
+                                <span id="compose-file-display" class="flex-1 text-gray-400 italic text-sm truncate">No
+                                    file
+                                    selected</span>
+                                <button onclick="App.Docker.FilePicker.open('compose-file', 'file')"
+                                    class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs transition-colors whitespace-nowrap">
+                                    <i class="fas fa-file-code mr-1"></i> Choose File
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="w-1/4" id="build-tag-group">
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Image Tag</label>
+                    <input type="text" id="build-tag"
+                        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                        placeholder="my-image:latest">
+                </div>
+            </div>
+
+            <!-- Content Area -->
+            <div id="build-content-group" class="hidden">
+                <div class="flex justify-between items-center mb-2">
+                    <label class="block text-sm font-medium text-gray-400">Content</label>
+                    <div>
+                        <input type="file" id="build-file-upload" class="hidden"
+                            onchange="App.Docker.Build.loadFromFile(this)">
+                        <button onclick="document.getElementById('build-file-upload').click()"
+                            class="text-xs bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded transition-colors">
+                            <i class="fas fa-file-upload mr-1"></i> Load from File
+                        </button>
+                    </div>
+                </div>
+                <p class="text-xs text-gray-500 mb-2">
+                    Paste your Dockerfile or Docker Compose content directly here. This is useful for quick builds
+                    without
+                    creating files on the server.
+                </p>
+                <textarea id="build-content"
+                    class="w-full h-64 bg-gray-900 border border-gray-700 rounded p-4 text-gray-300 font-mono text-sm focus:outline-none focus:border-blue-500 resize-y leading-relaxed"
+                    spellcheck="false" placeholder="# Example Dockerfile
+FROM alpine:latest
+RUN apk add --no-cache python3
+CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
+            </div>
+
+            <div class="flex justify-end pt-2">
+                <button onclick="App.Docker.Build.start()"
+                    class="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2 rounded font-medium transition-colors shadow-lg">
+                    <i class="fas fa-play mr-2"></i>Start Build
+                </button>
+            </div>
+        </div>
+
+        <div id="build-terminal-container"
+            class="flex-1 bg-black rounded p-4 overflow-hidden flex flex-col hidden transition-all duration-300">
+            <div class="flex justify-between items-center mb-2 text-xs text-gray-500 font-mono">
+                <span>Terminal Output</span>
+                <button onclick="App.Docker.Build.clearTerminal()" class="hover:text-white">Clear</button>
+            </div>
+            <pre id="build-terminal"
+                class="flex-1 overflow-auto font-mono text-xs text-green-400 whitespace-pre-wrap leading-relaxed"></pre>
+        </div>
+    </div>
+</div>
+</div>
+<!-- Pull Image Modal -->
+<div id="pull-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+            <h3 class="text-xl font-bold text-white"><i class="fas fa-cloud-download-alt mr-2 text-blue-500"></i>Pull
+                Image</h3>
+            <button onclick="App.Docker.Images.closePullModal()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <div class="p-6 flex flex-col h-full bg-gray-900 rounded-b-lg">
+            <!-- Terminal at the top -->
+            <div class="bg-black rounded border border-gray-700 p-4 mb-6 overflow-hidden flex flex-col h-96">
+                <div
+                    class="flex justify-between items-center mb-2 text-xs text-gray-500 font-mono border-b border-gray-800 pb-2">
+                    <span class="uppercase tracking-wider">Terminal Output</span>
+                    <button onclick="App.Docker.Images.clearPullTerminal()"
+                        class="hover:text-white transition-colors text-gray-400 text-[10px] uppercase tracking-wide">Clear</button>
+                </div>
+                <pre id="pull-terminal"
+                    class="flex-1 overflow-auto font-mono text-xs text-green-400 whitespace-pre-wrap leading-relaxed scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent"></pre>
+            </div>
+
+            <!-- Input at the bottom -->
+            <div class="flex space-x-4">
+                <div class="flex-1">
+                    <label class="block text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">Image
+                        Name</label>
+                    <input type="text" id="pull-image-name"
+                        class="w-full bg-gray-800 border border-gray-700 rounded px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-mono text-sm placeholder-gray-600"
+                        placeholder="e.g. nginx:latest or redis:alpine">
+                </div>
+                <div class="flex items-end">
+                    <button onclick="App.Docker.Images.startPull()"
+                        class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-medium transition-all shadow-lg hover:shadow-blue-500/20 active:transform active:scale-95 flex items-center">
+                        <i class="fas fa-download mr-2"></i>Pull
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Project Modal -->
+<div id="edit-project-modal"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+    <div
+        class="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]">
+        <div class="flex items-center justify-between p-6 border-b border-gray-800">
+            <h3 class="text-xl font-bold text-white">Edit Project</h3>
+            <button onclick="App.Projects.closeEditModal()" class="text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <input type="hidden" id="edit-project-id">
+
+        <div class="p-8 overflow-y-auto">
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Project Name</label>
+                    <input type="text" id="edit-project-name"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors"
+                        placeholder="my-awesome-app">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Port</label>
+                    <input type="number" id="edit-project-port"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors overflow-hidden appearance-none m-0"
+                        placeholder="3000">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Build Command</label>
+                    <input type="text" id="edit-project-build-cmd"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
+                        placeholder="npm install && npm run build">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Start Command</label>
+                    <input type="text" id="edit-project-start-cmd"
+                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
+                        placeholder="npm start">
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-800 flex justify-end space-x-3 bg-gray-900/50 rounded-b-xl">
+            <button onclick="App.Projects.closeEditModal()"
+                class="px-6 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
+                Cancel
+            </button>
+            <button onclick="App.Projects.updateProject()" id="update-project-btn"
+                class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20 flex items-center">
+                <span>Save Changes</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- File Picker Modal -->
+<div id="file-picker-modal"
+    class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-[60] transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl h-[70vh] flex flex-col transform transition-all duration-300 scale-95 border border-gray-700">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+            <h3 class="text-xl font-bold text-white flex items-center">
+                <i class="fas fa-search mr-2 text-blue-400"></i>
+                <span id="file-picker-title">Select File</span>
+            </h3>
+            <button onclick="App.Docker.FilePicker.close()"
+                class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+
+        <div class="p-4 bg-gray-800 border-b border-gray-700 flex items-center space-x-2">
+            <button onclick="App.Docker.FilePicker.up()" class="text-gray-400 hover:text-white p-2">
+                <i class="fas fa-level-up-alt"></i>
+            </button>
+            <div class="flex-1 bg-gray-900 rounded px-3 py-2 text-sm text-gray-300 font-mono" id="file-picker-path">
+                /
+            </div>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-0 relative" id="file-picker-list-container">
+            <div id="file-picker-loading"
+                class="absolute inset-0 bg-gray-800 bg-opacity-90 flex items-center justify-center z-10 hidden">
+                <i class="fas fa-circle-notch fa-spin text-3xl text-blue-500"></i>
+            </div>
+            <table class="w-full text-left">
+                <tbody id="file-picker-tbody" class="divide-y divide-gray-700 text-sm">
+                    <!-- Files will be injected here -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="p-4 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end">
+            <button onclick="App.Docker.FilePicker.close()"
+                class="px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">
+                Cancel
+            </button>
+        </div>
+    </div>
+</div>
+{{end}}
