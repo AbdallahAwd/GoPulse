@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -68,8 +69,8 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	containerName := fmt.Sprintf("gopulse-%s", dbID)
 	volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", dbID)
 
-	// Create directories on host
-	_, err = client.RunCommand(fmt.Sprintf("mkdir -p %s", volumePath))
+	// Create directories on host with sudo and assign ownership to the SSH user
+	_, err = client.RunCommand(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", volumePath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create persistent database directory: %w", err)
 	}
@@ -104,6 +105,143 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 			"docker run -d --name %s --entrypoint /usr/local/bin/pocketbase -p %d:8090 -v %s/pb_data:/pb_data --restart unless-stopped spectado/pocketbase:latest serve --http=0.0.0.0:8090 --dir=/pb_data",
 			containerName, hostPort, volumePath,
 		)
+	case "appwrite":
+		// Database user & root passwords
+		dbPass := password
+		dbRootPass := fmt.Sprintf("root-%s-%s", dbID, password)
+		if len(dbRootPass) > 32 {
+			dbRootPass = dbRootPass[:32]
+		}
+
+		// Generate an encryption key for Appwrite (needs to be exactly or at least 32-64 chars)
+		opensslKey := fmt.Sprintf("gopulse-appw-%s-%s", dbID, password)
+		if len(opensslKey) > 64 {
+			opensslKey = opensslKey[:64]
+		} else {
+			opensslKey = opensslKey + strings.Repeat("x", 64-len(opensslKey))
+		}
+
+		// Resolve the server's public host for Appwrite domain routing checks
+		serverHost := "localhost"
+		if srv, srvErr := s.manager.store.GetServer(serverID); srvErr == nil {
+			serverHost = srv.Host
+		}
+
+		composeContent := fmt.Sprintf(`services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: %s-mariadb
+    environment:
+      MYSQL_ROOT_PASSWORD: "%s"
+      MYSQL_DATABASE: appwrite
+      MYSQL_USER: appwrite
+      MYSQL_PASSWORD: "%s"
+    volumes:
+      - %s/mariadb:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p%s >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7.0-alpine
+    container_name: %s-redis
+    volumes:
+      - %s/redis:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  appwrite:
+    image: appwrite/appwrite:1.5.4
+    container_name: %s-appwrite
+    ports:
+      - "%d:80"
+    environment:
+      _APP_ENV: production
+      _APP_OPENSSL_KEY_V1: "%s"
+      _APP_DOMAIN: "%s"
+      _APP_DOMAIN_FUNCTIONS: "%s"
+      _APP_DOMAIN_TARGET: "%s"
+      _APP_CONSOLE_HOSTNAMES: "%s,localhost"
+      _APP_DB_ADAPTER: mariadb
+      _APP_DB_HOST: mariadb
+      _APP_DB_PORT: 3306
+      _APP_DB_SCHEMA: appwrite
+      _APP_DB_USER: appwrite
+      _APP_DB_PASS: "%s"
+      _APP_REDIS_HOST: redis
+      _APP_REDIS_PORT: 6379
+      _APP_OPTIONS_ABUSE: disabled
+      _APP_SYSTEM_RESPONSE_FORMAT: ""
+      _APP_STORAGE_LIMIT: 5000000000
+      _APP_STORAGE_PREVIEW_LIMIT: 20000000
+      _APP_STORAGE_DEVICE: local
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - %s/uploads:/storage/uploads:rw
+      - %s/cache:/storage/cache:rw
+      - %s/config:/storage/config:rw
+      - %s/certificates:/storage/certificates:rw
+    restart: unless-stopped
+
+  worker-databases:
+    image: appwrite/appwrite:1.5.4
+    container_name: %s-worker-databases
+    entrypoint: worker-databases
+    environment:
+      _APP_ENV: production
+      _APP_OPENSSL_KEY_V1: "%s"
+      _APP_DOMAIN: "%s"
+      _APP_DOMAIN_FUNCTIONS: "%s"
+      _APP_DOMAIN_TARGET: "%s"
+      _APP_CONSOLE_HOSTNAMES: "%s,localhost"
+      _APP_DB_ADAPTER: mariadb
+      _APP_DB_HOST: mariadb
+      _APP_DB_PORT: 3306
+      _APP_DB_SCHEMA: appwrite
+      _APP_DB_USER: appwrite
+      _APP_DB_PASS: "%s"
+      _APP_REDIS_HOST: redis
+      _APP_REDIS_PORT: 6379
+      _APP_SYSTEM_RESPONSE_FORMAT: ""
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - %s/uploads:/storage/uploads:rw
+      - %s/cache:/storage/cache:rw
+      - %s/config:/storage/config:rw
+    restart: unless-stopped
+`,
+			containerName, dbRootPass, dbPass, volumePath, dbRootPass,
+			containerName, volumePath,
+			containerName, hostPort, opensslKey, serverHost, serverHost, serverHost, serverHost, dbPass, volumePath, volumePath, volumePath, volumePath,
+			containerName, opensslKey, serverHost, serverHost, serverHost, serverHost, dbPass, volumePath, volumePath, volumePath,
+		)
+
+		composeB64 := base64.StdEncoding.EncodeToString([]byte(composeContent))
+		writeComposeCmd := fmt.Sprintf(
+			`echo '%s' | base64 -d > %s/docker-compose.yml`,
+			composeB64, volumePath,
+		)
+		_, err = client.RunCommand(writeComposeCmd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write docker-compose.yml on host: %w", err)
+		}
+
+		runCmd = fmt.Sprintf("docker compose -f %s/docker-compose.yml up -d 2>&1", volumePath)
 	default:
 		return nil, fmt.Errorf("unsupported database engine type: %s", dbType)
 	}
@@ -115,6 +253,12 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 			return nil, fmt.Errorf("failed to initialize sqlite database file: %w", err)
 		}
 		containerID = "sqlite-local"
+	} else if dbType == "appwrite" {
+		composeOut, runErr := client.RunCommand(runCmd)
+		if runErr != nil {
+			return nil, fmt.Errorf("failed to start appwrite stack: %s", strings.TrimSpace(composeOut))
+		}
+		containerID = "appwrite-compose"
 	} else {
 		containerIDOut, err := client.RunCommand(runCmd)
 		if err != nil {
@@ -123,6 +267,24 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 		containerID = strings.TrimSpace(containerIDOut)
 		if len(containerID) > 12 {
 			containerID = containerID[:12]
+		}
+
+		// Bootstrap PocketBase admin superuser if provided
+		if dbType == "pocketbase" && username != "" && password != "" && password != "none" {
+			time.Sleep(1500 * time.Millisecond)
+			
+			// Try new version "superuser upsert" first (PocketBase 0.22+)
+			adminCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase superuser upsert %s %s --dir=/pb_data", containerName, username, password)
+			_, err = client.RunCommand(adminCmd)
+			if err != nil {
+				// Fallback to older version "admin create" (PocketBase <0.22)
+				fallbackCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase admin create %s %s --dir=/pb_data", containerName, username, password)
+				_, errFallback := client.RunCommand(fallbackCmd)
+				if errFallback != nil {
+					// Print warning but do not fail provisioning since the service is already running
+					fmt.Printf("Warning: failed to bootstrap pocketbase superuser: %v (fallback error: %v)\n", err, errFallback)
+				}
+			}
 		}
 	}
 
@@ -184,6 +346,10 @@ func (s *DatabaseService) UpdateStatus(ctx context.Context, id string) (models.D
 
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
 	inspectCmd := fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s 2>/dev/null", containerName)
+	if db.Type == "appwrite" {
+		// Check the appwrite server container
+		inspectCmd = fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s-appwrite 2>/dev/null", containerName)
+	}
 	runningOut, err := client.RunCommand(inspectCmd)
 	if err != nil || strings.TrimSpace(runningOut) != "true" {
 		db.Status = models.DatabaseStatusStopped
@@ -201,9 +367,13 @@ func (s *DatabaseService) UpdateStatus(ctx context.Context, id string) (models.D
 	case "mongodb":
 		healthCmd = fmt.Sprintf("docker exec %s mongosh --quiet --eval \"db.adminCommand('ping')\" 2>/dev/null | grep -q 'ok' && echo 'healthy' || echo 'starting'", containerName)
 	case "redis":
-		healthCmd = fmt.Sprintf("docker exec %s redis-cli -a %s ping 2>/dev/null | grep -q 'PONG' && echo 'healthy' || echo 'starting'", containerName, db.Password)
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		healthCmd = fmt.Sprintf("docker exec -e REDISCLI_AUTH=%s %s redis-cli ping 2>/dev/null | grep -q 'PONG' && echo 'healthy' || echo 'starting'", escapedPassword, containerName)
 	case "pocketbase":
 		healthCmd = fmt.Sprintf("docker exec %s nc -z 127.0.0.1 8090 && echo 'healthy' || echo 'starting'", containerName)
+	case "appwrite":
+		// Check the appwrite API server
+		healthCmd = fmt.Sprintf("docker exec %s-appwrite nc -z 127.0.0.1 80 && echo 'healthy' || echo 'starting'", containerName)
 	}
 
 	healthOut, _ := client.RunCommand(healthCmd)
@@ -232,6 +402,21 @@ func (s *DatabaseService) StartDatabase(ctx context.Context, id string) error {
 	client, err := s.manager.GetSSHClient(db.ServerID)
 	if err != nil {
 		return err
+	}
+
+	if db.Type == "appwrite" {
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		_, err = client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml start", volumePath))
+		if err != nil {
+			return err
+		}
+		db.Status = models.DatabaseStatusStarting
+		s.store.UpdateDatabase(db)
+		go func() {
+			time.Sleep(3 * time.Second)
+			s.UpdateStatus(context.Background(), id)
+		}()
+		return nil
 	}
 
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
@@ -267,6 +452,17 @@ func (s *DatabaseService) StopDatabase(ctx context.Context, id string) error {
 		return err
 	}
 
+	if db.Type == "appwrite" {
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		_, err = client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml stop", volumePath))
+		if err != nil {
+			return err
+		}
+		db.Status = models.DatabaseStatusStopped
+		s.store.UpdateDatabase(db)
+		return nil
+	}
+
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
 	_, err = client.RunCommand(fmt.Sprintf("docker stop %s", containerName))
 	if err != nil {
@@ -292,6 +488,21 @@ func (s *DatabaseService) RestartDatabase(ctx context.Context, id string) error 
 	client, err := s.manager.GetSSHClient(db.ServerID)
 	if err != nil {
 		return err
+	}
+
+	if db.Type == "appwrite" {
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		_, err = client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml restart", volumePath))
+		if err != nil {
+			return err
+		}
+		db.Status = models.DatabaseStatusStarting
+		s.store.UpdateDatabase(db)
+		go func() {
+			time.Sleep(8 * time.Second)
+			s.UpdateStatus(context.Background(), id)
+		}()
+		return nil
 	}
 
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
@@ -327,7 +538,21 @@ func (s *DatabaseService) DeleteDatabase(ctx context.Context, id string, deleteV
 		if deleteVolume {
 			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
 			backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
-			client.RunCommand(fmt.Sprintf("rm -rf %s %s", volumePath, backupPath))
+			client.RunCommand(fmt.Sprintf("sudo rm -rf %s %s", volumePath, backupPath))
+		}
+		return s.store.RemoveDatabase(id)
+	}
+
+	if db.Type == "appwrite" {
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		if deleteVolume {
+			// Tear down containers + named volumes, then purge files
+			client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml down -v --remove-orphans", volumePath))
+			backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+			client.RunCommand(fmt.Sprintf("sudo rm -rf %s %s", volumePath, backupPath))
+		} else {
+			// Just stop & remove containers, keep data volumes
+			client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml down --remove-orphans", volumePath))
 		}
 		return s.store.RemoveDatabase(id)
 	}
@@ -339,7 +564,7 @@ func (s *DatabaseService) DeleteDatabase(ctx context.Context, id string, deleteV
 	if deleteVolume {
 		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
 		backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
-		client.RunCommand(fmt.Sprintf("rm -rf %s %s", volumePath, backupPath))
+		client.RunCommand(fmt.Sprintf("sudo rm -rf %s %s", volumePath, backupPath))
 	}
 
 	return s.store.RemoveDatabase(id)
@@ -421,9 +646,10 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, id string, schema st
 			)
 		}
 	case "mongodb":
+		escapedEval := "'" + strings.ReplaceAll(query, "'", "'\\''") + "'"
 		execCmd = fmt.Sprintf(
-			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "%s" 2>&1`,
-			containerName, db.Username, db.Password, targetSchema, safeQuery,
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval %s 2>&1`,
+			containerName, db.Username, db.Password, targetSchema, escapedEval,
 		)
 	case "redis":
 		dbNum := "0"
@@ -431,9 +657,10 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, id string, schema st
 			dbNum = strings.TrimPrefix(targetSchema, "db")
 		}
 		// Run command using redis-cli
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
 		execCmd = fmt.Sprintf(
-			`docker exec %s redis-cli -n %s -a %s %s 2>&1`,
-			containerName, dbNum, db.Password, safeQuery,
+			`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s %s 2>&1`,
+			escapedPassword, containerName, dbNum, query,
 		)
 	default:
 		return nil, fmt.Errorf("unsupported database engine: %s", db.Type)
@@ -543,7 +770,8 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
 	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
 
-	_, err = client.RunCommand(fmt.Sprintf("mkdir -p %s", backupDir))
+	// Create backup folder on host with sudo and assign ownership to the SSH user
+	_, err = client.RunCommand(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", backupDir))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create host backup folder: %w", err)
 	}
@@ -577,9 +805,10 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.
 				containerName, db.Username, db.Password, backupDir, backupName,
 			)
 		case "redis":
+			escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
 			dumpCmd = fmt.Sprintf(
-				"docker exec %s redis-cli -a %s SAVE && gzip -c /var/lib/gopulse/databases/%s/dump.rdb > %s/%s",
-				containerName, db.Password, db.ID, backupDir, backupName,
+				"docker exec -e REDISCLI_AUTH=%s %s redis-cli SAVE && gzip -c /var/lib/gopulse/databases/%s/dump.rdb > %s/%s",
+				escapedPassword, containerName, db.ID, backupDir, backupName,
 			)
 		case "sqlite":
 			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
@@ -592,6 +821,11 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.
 			dumpCmd = fmt.Sprintf(
 				"tar -czf %s/%s -C %s pb_data",
 				backupDir, backupName, volumePath,
+			)
+		case "appwrite":
+			dumpCmd = fmt.Sprintf(
+				"docker exec %s-mariadb mysqldump -uappwrite -p%s appwrite | gzip > %s/%s",
+				containerName, db.Password, backupDir, backupName,
 			)
 		}
 
@@ -630,8 +864,8 @@ func (s *DatabaseService) ListBackups(ctx context.Context, id string) ([]models.
 
 	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
 
-	// Ensure folder exists
-	client.RunCommand(fmt.Sprintf("mkdir -p %s", backupDir))
+	// Ensure folder exists, created with sudo and assigned ownership
+	client.RunCommand(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", backupDir))
 
 	// Search file listing using tabular output format (Filename, Size, Timestamp)
 	findCmd := fmt.Sprintf("find %s -type f -name 'backup-*' -printf '%%f\\t%%s\\t%%T@\\n' 2>/dev/null", backupDir)
@@ -726,12 +960,12 @@ func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename
 	case "mongodb":
 		if isGzipped {
 			restoreCmd = fmt.Sprintf(
-				"gzip -d -c %s | docker exec -i %s mongorestore --username %s --password %s --authenticationDatabase admin --archive --drop 2>&1",
+				"gzip -d -c %s | docker exec -i %s mongorestore --username %s --password %s --authenticationDatabase admin --archive --nsExclude=\"admin.system.*\" --drop 2>&1",
 				backupPath, containerName, db.Username, db.Password,
 			)
 		} else {
 			restoreCmd = fmt.Sprintf(
-				"cat %s | docker exec -i %s mongorestore --username %s --password %s --authenticationDatabase admin --archive --drop 2>&1",
+				"cat %s | docker exec -i %s mongorestore --username %s --password %s --authenticationDatabase admin --archive --nsExclude=\"admin.system.*\" --drop 2>&1",
 				backupPath, containerName, db.Username, db.Password,
 			)
 		}
@@ -771,6 +1005,18 @@ func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename
 			restoreCmd = fmt.Sprintf(
 				"docker stop %s && rm -rf %s/pb_data && tar -xf %s -C %s && docker start %s 2>&1",
 				containerName, volumePath, backupPath, volumePath, containerName,
+			)
+		}
+	case "appwrite":
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"gzip -d -c %s | docker exec -i %s-mariadb mysql -uappwrite -p%s appwrite 2>&1",
+				backupPath, containerName, db.Password,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"cat %s | docker exec -i %s-mariadb mysql -uappwrite -p%s appwrite 2>&1",
+				backupPath, containerName, db.Password,
 			)
 		}
 	}
@@ -1092,7 +1338,8 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 		offset := (page - 1) * limit
 
 		// 1. Get total list of keys
-		keysListCmd := fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s KEYS "*" 2>/dev/null`, containerName, dbNum, db.Password)
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		keysListCmd := fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s KEYS "*" 2>/dev/null`, escapedPassword, containerName, dbNum)
 		keysListOut, err := client.RunCommand(keysListCmd)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch keys: %w", err)
@@ -1131,18 +1378,18 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 			for _, k := range pageKeys {
 				// Construct a shell-safe command slice for this key
 				cmdPart := fmt.Sprintf(
-					`t=$(redis-cli -n %[1]s -a %[2]s TYPE "%[3]s" 2>/dev/null); `+
-						`ttl=$(redis-cli -n %[1]s -a %[2]s TTL "%[3]s" 2>/dev/null); `+
-						`if [ "$t" = "string" ]; then v=$(redis-cli -n %[1]s -a %[2]s GET "%[3]s" 2>/dev/null); `+
-						`elif [ "$t" = "hash" ]; then v=$(redis-cli -n %[1]s -a %[2]s HGETALL "%[3]s" 2>/dev/null | paste -sd " " -); `+
-						`else v=$(redis-cli -n %[1]s -a %[2]s LRANGE "%[3]s" 0 -1 2>/dev/null | paste -sd "," -); fi; `+
-						`echo -e "%[3]s\t\$t\t\$v\t\$ttl"`,
-					dbNum, db.Password, k,
+					`t=$(redis-cli -n %[1]s TYPE "%[2]s" 2>/dev/null); `+
+						`ttl=$(redis-cli -n %[1]s TTL "%[2]s" 2>/dev/null); `+
+						`if [ "$t" = "string" ]; then v=$(redis-cli -n %[1]s GET "%[2]s" 2>/dev/null); `+
+						`elif [ "$t" = "hash" ]; then v=$(redis-cli -n %[1]s HGETALL "%[2]s" 2>/dev/null | paste -sd " " -); `+
+						`else v=$(redis-cli -n %[1]s LRANGE "%[2]s" 0 -1 2>/dev/null | paste -sd "," -); fi; `+
+						`printf "%%s\t%%s\t%%s\t%%s\n" "%[2]s" "$t" "$v" "$ttl"`,
+					dbNum, k,
 				)
 				keyCmds = append(keyCmds, cmdPart)
 			}
 
-			dataCmd := fmt.Sprintf(`docker exec %s bash -c '%s'`, containerName, strings.Join(keyCmds, "; "))
+			dataCmd := fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s sh -c '%s'`, escapedPassword, containerName, strings.Join(keyCmds, "; "))
 			dataOut, err := client.RunCommand(dataCmd)
 			if err == nil {
 				for _, line := range strings.Split(strings.TrimSpace(dataOut), "\n") {
@@ -1401,7 +1648,8 @@ func (s *DatabaseService) DeleteSchema(ctx context.Context, id string, name stri
 		if strings.HasPrefix(name, "db") {
 			dbNum = strings.TrimPrefix(name, "db")
 		}
-		cmd = fmt.Sprintf("docker exec %s redis-cli -n %s -a %s FLUSHDB 2>&1", containerName, dbNum, db.Password)
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		cmd = fmt.Sprintf("docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s FLUSHDB 2>&1", escapedPassword, containerName, dbNum)
 	case "sqlite", "pocketbase":
 		// Static schemas, no active dynamic dropping
 		return nil
@@ -1545,7 +1793,8 @@ func (s *DatabaseService) DeleteTable(ctx context.Context, id string, schema str
 		if strings.HasPrefix(schema, "db") {
 			dbNum = strings.TrimPrefix(schema, "db")
 		}
-		cmd = fmt.Sprintf("docker exec %s redis-cli -n %s -a %s FLUSHDB 2>&1", containerName, dbNum, db.Password)
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		cmd = fmt.Sprintf("docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s FLUSHDB 2>&1", escapedPassword, containerName, dbNum)
 	default:
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
@@ -1625,8 +1874,10 @@ func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema strin
 			return fmt.Errorf("failed to marshal document data: %w", err)
 		}
 		jsonStr := string(jsonBytes)
-		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "db.getCollection('%s').insertOne(%s)" 2>&1`,
-			containerName, db.Username, db.Password, schema, table, jsonStr,
+		evalQuery := fmt.Sprintf(`db.getCollection('%s').insertOne(%s)`, table, jsonStr)
+		escapedEval := "'" + strings.ReplaceAll(evalQuery, "'", "'\\''") + "'"
+		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval %s 2>&1`,
+			containerName, db.Username, db.Password, schema, escapedEval,
 		)
 	case "redis":
 		dbNum := "0"
@@ -1657,14 +1908,15 @@ func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema strin
 			redisCmd = fmt.Sprintf(`SET "%s" "%s"`, keyVal, valueVal)
 		}
 
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
 		if ttlVal > 0 {
-			cmd = fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s %s && docker exec %s redis-cli -n %s -a %s EXPIRE "%s" %d 2>&1`,
-				containerName, dbNum, db.Password, redisCmd,
-				containerName, dbNum, db.Password, keyVal, ttlVal,
+			cmd = fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s %s && docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s EXPIRE "%s" %d 2>&1`,
+				escapedPassword, containerName, dbNum, redisCmd,
+				escapedPassword, containerName, dbNum, keyVal, ttlVal,
 			)
 		} else {
-			cmd = fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s %s 2>&1`,
-				containerName, dbNum, db.Password, redisCmd,
+			cmd = fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s %s 2>&1`,
+				escapedPassword, containerName, dbNum, redisCmd,
 			)
 		}
 	default:
@@ -1674,6 +1926,13 @@ func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema strin
 	output, err := client.RunCommand(cmd)
 	if err != nil {
 		return fmt.Errorf("insert failed: %s (err: %w)", output, err)
+	}
+
+	if db.Type == "redis" {
+		trimmedOut := strings.TrimSpace(output)
+		if strings.Contains(trimmedOut, "ERR ") || strings.Contains(trimmedOut, "NOAUTH") || strings.Contains(trimmedOut, "WRONGPASS") {
+			return fmt.Errorf("redis execution error: %s", trimmedOut)
+		}
 	}
 
 	return nil
@@ -1710,7 +1969,7 @@ func (s *DatabaseService) DeleteRow(ctx context.Context, id string, schema strin
 		query := fmt.Sprintf("DELETE FROM \"%s\" WHERE \"%s\" = '%s';", table, pkCol, escapedPkVal)
 		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`, db.ID, query)
 	case "mongodb":
-		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "
+		evalQuery := fmt.Sprintf(`
 			let idVal = '%s';
 			try {
 				if (idVal.length === 24) {
@@ -1721,13 +1980,18 @@ func (s *DatabaseService) DeleteRow(ctx context.Context, id string, schema strin
 			} catch(e) {
 				db.getCollection('%s').deleteOne({_id: idVal});
 			}
-		" 2>&1`, containerName, db.Username, db.Password, schema, escapedPkVal, table, table, table)
+		`, escapedPkVal, table, table, table)
+		escapedEval := "'" + strings.ReplaceAll(evalQuery, "'", "'\\''") + "'"
+		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval %s 2>&1`,
+			containerName, db.Username, db.Password, schema, escapedEval,
+		)
 	case "redis":
 		dbNum := "0"
 		if strings.HasPrefix(schema, "db") {
 			dbNum = strings.TrimPrefix(schema, "db")
 		}
-		cmd = fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s DEL "%s" 2>&1`, containerName, dbNum, db.Password, pkVal)
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		cmd = fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s DEL "%s" 2>&1`, escapedPassword, containerName, dbNum, pkVal)
 	default:
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
@@ -1735,6 +1999,146 @@ func (s *DatabaseService) DeleteRow(ctx context.Context, id string, schema strin
 	output, err := client.RunCommand(cmd)
 	if err != nil {
 		return fmt.Errorf("delete failed: %s (err: %w)", output, err)
+	}
+
+	if db.Type == "redis" {
+		trimmedOut := strings.TrimSpace(output)
+		if strings.Contains(trimmedOut, "ERR ") || strings.Contains(trimmedOut, "NOAUTH") || strings.Contains(trimmedOut, "WRONGPASS") {
+			return fmt.Errorf("redis execution error: %s", trimmedOut)
+		}
+	}
+
+	return nil
+}
+
+// UpdateRow updates an existing row or document in a table or collection
+func (s *DatabaseService) UpdateRow(ctx context.Context, id string, schema string, table string, pkCol string, pkVal string, data map[string]interface{}) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql", "postgres", "sqlite", "pocketbase":
+		var sets []string
+		for k, v := range data {
+			if k == pkCol {
+				continue // Skip primary key column updates
+			}
+			colName := fmt.Sprintf("`%s`", k)
+			if db.Type == "postgres" || db.Type == "sqlite" || db.Type == "pocketbase" {
+				colName = fmt.Sprintf("\"%s\"", k)
+			}
+
+			valStr := fmt.Sprintf("%v", v)
+			escapedVal := strings.ReplaceAll(valStr, "'", "''")
+			sets = append(sets, fmt.Sprintf("%s = '%s'", colName, escapedVal))
+		}
+
+		if len(sets) == 0 {
+			return fmt.Errorf("no columns provided for update")
+		}
+
+		if db.Type == "mysql" {
+			query := fmt.Sprintf("UPDATE `%s`.`%s` SET %s WHERE `%s` = '%s';", schema, table, strings.Join(sets, ", "), pkCol, strings.ReplaceAll(pkVal, "'", "''"))
+			cmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, query)
+		} else if db.Type == "postgres" {
+			query := fmt.Sprintf("UPDATE \"%s\" SET %s WHERE \"%s\" = '%s';", table, strings.Join(sets, ", "), pkCol, strings.ReplaceAll(pkVal, "'", "''"))
+			cmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, schema, query)
+		} else if db.Type == "sqlite" {
+			query := fmt.Sprintf("UPDATE \"%s\" SET %s WHERE \"%s\" = '%s';", table, strings.Join(sets, ", "), pkCol, strings.ReplaceAll(pkVal, "'", "''"))
+			cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "%s" 2>&1`, db.ID, query)
+		} else { // pocketbase
+			query := fmt.Sprintf("UPDATE \"%s\" SET %s WHERE \"%s\" = '%s';", table, strings.Join(sets, ", "), pkCol, strings.ReplaceAll(pkVal, "'", "''"))
+			cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`, db.ID, query)
+		}
+
+	case "mongodb":
+		jsonBytes, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("failed to marshal document data: %w", err)
+		}
+		jsonStr := string(jsonBytes)
+		evalQuery := fmt.Sprintf(`
+			let idVal = '%s';
+			let setObj = %s;
+			try {
+				if (idVal.length === 24) {
+					db.getCollection('%s').updateOne({_id: new ObjectId(idVal)}, {$set: setObj});
+				} else {
+					db.getCollection('%s').updateOne({_id: idVal}, {$set: setObj});
+				}
+			} catch(e) {
+				db.getCollection('%s').updateOne({_id: idVal}, {$set: setObj});
+			}
+		`, strings.ReplaceAll(pkVal, "'", "\\'"), jsonStr, table, table, table)
+		escapedEval := "'" + strings.ReplaceAll(evalQuery, "'", "'\\''") + "'"
+		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval %s 2>&1`,
+			containerName, db.Username, db.Password, schema, escapedEval,
+		)
+
+	case "redis":
+		dbNum := "0"
+		if strings.HasPrefix(schema, "db") {
+			dbNum = strings.TrimPrefix(schema, "db")
+		}
+		typeVal := fmt.Sprintf("%v", data["type"])
+		valueVal := fmt.Sprintf("%v", data["value"])
+		ttlVal := 0
+		if t, ok := data["ttl"]; ok && t != nil && fmt.Sprintf("%v", t) != "" {
+			if tInt, err := strconv.Atoi(fmt.Sprintf("%v", t)); err == nil {
+				ttlVal = tInt
+			}
+		}
+
+		var redisCmd string
+		switch strings.ToLower(typeVal) {
+		case "hash":
+			redisCmd = fmt.Sprintf(`HSET "%s" "data" "%s"`, pkVal, valueVal)
+		case "list":
+			redisCmd = fmt.Sprintf(`RPUSH "%s" "%s"`, pkVal, valueVal)
+		case "set":
+			redisCmd = fmt.Sprintf(`SADD "%s" "%s"`, pkVal, valueVal)
+		case "zset":
+			redisCmd = fmt.Sprintf(`ZADD "%s" 0 "%s"`, pkVal, valueVal)
+		default: // string
+			redisCmd = fmt.Sprintf(`SET "%s" "%s"`, pkVal, valueVal)
+		}
+
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		if ttlVal > 0 {
+			cmd = fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s %s && docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s EXPIRE "%s" %d 2>&1`,
+				escapedPassword, containerName, dbNum, redisCmd,
+				escapedPassword, containerName, dbNum, pkVal, ttlVal,
+			)
+		} else {
+			cmd = fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s %s 2>&1`,
+				escapedPassword, containerName, dbNum, redisCmd,
+			)
+		}
+
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("update failed: %s (err: %w)", output, err)
+	}
+
+	if db.Type == "redis" {
+		trimmedOut := strings.TrimSpace(output)
+		if strings.Contains(trimmedOut, "ERR ") || strings.Contains(trimmedOut, "NOAUTH") || strings.Contains(trimmedOut, "WRONGPASS") {
+			return fmt.Errorf("redis execution error: %s", trimmedOut)
+		}
 	}
 
 	return nil
@@ -1791,9 +2195,10 @@ func (s *DatabaseService) GetDatabaseTelemetry(ctx context.Context, id string) (
 			containerName, db.Username, db.Password,
 		)
 	case "redis":
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
 		connCmd = fmt.Sprintf(
-			`docker exec %s redis-cli -a %s INFO clients 2>/dev/null | grep connected_clients | cut -d: -f2`,
-			containerName, db.Password,
+			`docker exec -e REDISCLI_AUTH=%s %s redis-cli INFO clients 2>/dev/null | grep connected_clients | cut -d: -f2`,
+			escapedPassword, containerName,
 		)
 	case "sqlite", "pocketbase":
 		// SQLite/PocketBase is a file-based database with no direct TCP connections tracked on the CLI

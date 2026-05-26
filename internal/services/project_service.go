@@ -519,6 +519,7 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 			chmodCmd := fmt.Sprintf("chmod +x %s/%s", workDir, strings.Split(project.StartCommand, " ")[0])
 			client.RunCommand(chmodCmd)
 
+			client.RunCommand(fmt.Sprintf("%spm2 delete \"%s\"", nodePrefix, project.Name))
 			cmd := fmt.Sprintf("%s%scd %s && pm2 start %s --name \"%s\"", nodePrefix, cmdPrefix, workDir, project.StartCommand, project.Name)
 			if _, err := client.RunCommand(cmd); err != nil {
 				return fmt.Errorf("start failed: %w", err)
@@ -539,6 +540,7 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 			}
 
 			workDir := project.Path
+			client.RunCommand(fmt.Sprintf("%spm2 delete \"%s\"", nodePrefix, project.Name))
 			cmd := fmt.Sprintf("cd %s && pm2 start --name \"%s\" -- php artisan serve --port=%d --host=0.0.0.0", workDir, project.Name, project.Port)
 			if _, err := client.RunCommand(cmd); err != nil {
 				return fmt.Errorf("start failed: %w", err)
@@ -573,6 +575,7 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 			// Find actual root
 			workDir, _ := s.findProjectRoot(client, project.Path)
 
+			client.RunCommand(fmt.Sprintf("%spm2 delete \"%s\"", cmdPrefix, project.Name))
 			// Simple pm2 check/start
 			// pm2 start npm --name "app-name" -- start
 			cmd := fmt.Sprintf("%scd %s && pm2 start npm --name \"%s\" -- start", cmdPrefix, workDir, project.Name)
@@ -596,7 +599,12 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 		// Stop existing if any
 		client.RunCommand(fmt.Sprintf("docker stop %s && docker rm %s", project.Name, project.Name))
 
-		cmd := fmt.Sprintf("docker run -d -p %d:%d --name %s %s", project.HostPort, project.Port, project.Name, strings.ToLower(project.Name))
+		restartPolicy := ""
+		if project.RestartOnBoot {
+			restartPolicy = "--restart unless-stopped "
+		}
+
+		cmd := fmt.Sprintf("docker run -d %s-p %d:%d --name %s %s", restartPolicy, project.HostPort, project.Port, project.Name, strings.ToLower(project.Name))
 		output, err := client.RunCommand(cmd)
 		if err != nil {
 			return fmt.Errorf("docker run failed: %w", err)
@@ -822,6 +830,7 @@ func (s *ProjectService) UpdateProject(ctx context.Context, project models.Proje
 	existing.HostPort = project.HostPort
 	existing.BuildCommand = project.BuildCommand
 	existing.StartCommand = project.StartCommand
+	existing.RestartOnBoot = project.RestartOnBoot
 
 	// Start/Build type usually immutable or requires more logic, sticking to commands for now.
 	// But let's allow updating type/build_type if needed, user might want to switch strategies.
@@ -1114,4 +1123,22 @@ func (s *ProjectService) SyncEnvFile(ctx context.Context, projectID string) erro
 	}
 
 	return nil
+}
+
+// AutoStartProjects checks for projects with RestartOnBoot enabled and starts them automatically in the background
+func (s *ProjectService) AutoStartProjects(ctx context.Context) {
+	projects := s.store.ListProjects()
+	for _, project := range projects {
+		if project.RestartOnBoot {
+			go func(proj models.Project) {
+				fmt.Printf("[GoPulse] Auto-starting project '%s' (ID: %s) on remote server...\n", proj.Name, proj.ID)
+				err := s.StartProject(ctx, proj.ID)
+				if err != nil {
+					fmt.Printf("[GoPulse] Failed to auto-start project '%s': %v\n", proj.Name, err)
+				} else {
+					fmt.Printf("[GoPulse] Successfully auto-started project '%s'\n", proj.Name)
+				}
+			}(project)
+		}
+	}
 }

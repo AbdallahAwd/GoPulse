@@ -328,6 +328,9 @@ App.Projects = {
         if(buildCmdInput) buildCmdInput.value = project.build_command || '';
         if(startCmdInput) startCmdInput.value = project.start_command || '';
 
+        const restartOnBootInput = document.getElementById('edit-project-restart-on-boot');
+        if(restartOnBootInput) restartOnBootInput.checked = !!project.restart_on_boot;
+
         this.openEditModal();
     },
 
@@ -364,6 +367,7 @@ App.Projects = {
         const port = document.getElementById('edit-project-port').value;
         const buildCmd = document.getElementById('edit-project-build-cmd').value;
         const startCmd = document.getElementById('edit-project-start-cmd').value;
+        const restartOnBoot = document.getElementById('edit-project-restart-on-boot').checked;
         const serverID = App.config.SERVER_ID;
 
         const payload = {
@@ -372,6 +376,7 @@ App.Projects = {
             host_port: parseInt(port) || 3000,
             build_command: buildCmd,
             start_command: startCmd,
+            restart_on_boot: restartOnBoot
         };
 
         const submitBtn = document.getElementById('update-project-btn');
@@ -564,6 +569,7 @@ App.Projects = {
         const startCmd = document.getElementById('project-start-cmd').value;
         const tech = document.getElementById('selected-tech').value;
         const repoUrl = document.getElementById('project-repo-url').value;
+        const restartOnBoot = document.getElementById('project-restart-on-boot').checked;
         const serverID = App.config.SERVER_ID;
 
         if (!name || !tech) {
@@ -602,7 +608,8 @@ App.Projects = {
                     build_cmd: buildCmd,
                     start_cmd: startCmd,
                     repo_url: repoUrl,
-                    server_id: serverID
+                    server_id: serverID,
+                    restart_on_boot: restartOnBoot
                 };
                 
                 // Use 'github/clone' (no leading slash) so App.API doesn't prefix with /servers/{id}
@@ -620,7 +627,8 @@ App.Projects = {
                     build_command: buildCmd,
                     start_command: startCmd,
                     source_type: 'upload',
-                    build_type: 'process'
+                    build_type: 'process',
+                    restart_on_boot: restartOnBoot
                 };
                 
                 // 1. Create Metadata

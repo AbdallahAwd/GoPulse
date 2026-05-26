@@ -6,6 +6,10 @@
 App.Databases = (function() {
     let currentDb = null;
     let activeManageTab = 'overview';
+    let activeBaaSTab = 'overview';
+    let activeSubTab = 'clusters';
+    let activeBaaSGuideTopic = 'init';
+    let baasTelemetryInterval = null;
 
     // Engine Icons & Color Mapping
     const engines = {
@@ -56,108 +60,200 @@ App.Databases = (function() {
             badgeClass: "bg-orange-950/60 text-orange-400 border border-orange-500/20",
             defaultPort: 8090,
             defaultUser: "admin"
+        },
+        appwrite: {
+            name: "Appwrite",
+            icon: "fas fa-rocket",
+            logoClass: "bg-pink-950/40 text-pink-500 border border-pink-500/30",
+            badgeClass: "bg-pink-950/60 text-pink-400 border border-pink-500/20",
+            defaultPort: 8080,
+            defaultUser: "owner@appwrite.local"
         }
     };
+
+    // Helper to generate a database card element
+    function createCardElement(db) {
+        const config = engines[db.type] || engines.mysql;
+        const statusColor = getStatusColor(db.status);
+        
+        const card = document.createElement('div');
+        card.className = "bg-gray-800/60 backdrop-blur-md rounded-xl p-6 border border-gray-700/60 shadow-lg hover:border-gray-600 transition-all flex flex-col justify-between space-y-4";
+        card.innerHTML = `
+            <div class="flex justify-between items-start">
+                <div class="flex items-center space-x-3.5">
+                    <div class="p-3.5 rounded-xl ${config.logoClass} text-xl">
+                        <i class="${config.icon}"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-white tracking-tight">${escapeHTML(db.name)}</h3>
+                        <div class="flex items-center space-x-2 mt-1">
+                            <span class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase ${config.badgeClass}">${db.type}</span>
+                            <span class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase ${statusColor} flex items-center">
+                                <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-current ${db.status === 'Running' ? 'animate-pulse' : ''}"></span>
+                                <span>${db.status}</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="flex items-center space-x-1.5">
+                    <button onclick="App.Databases.quickCheckHealth('${db.id}', this)" class="p-2 bg-gray-700/50 hover:bg-gray-700 text-gray-400 hover:text-white rounded-lg transition-all text-xs" title="Verify Connection Ping">
+                        <i class="fas fa-plug"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-700/50 pt-4 flex flex-col space-y-2 text-sm text-gray-300 font-mono">
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Host Port:</span>
+                    <span class="text-white font-semibold">${db.host_port}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Database:</span>
+                    <span class="text-white font-semibold">${escapeHTML(db.database_name)}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-400">Username:</span>
+                    <span class="text-white font-semibold">${escapeHTML(db.username)}</span>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-700/50 pt-4 flex justify-between items-center gap-3">
+                <div class="flex space-x-2">
+                    ${db.status === 'Running' 
+                        ? `<button onclick="App.Databases.togglePower('${db.id}', 'stop')" class="px-3.5 py-2 bg-red-950/30 hover:bg-red-950/60 border border-red-500/20 text-red-400 text-xs font-bold rounded-lg transition-all"><i class="fas fa-stop mr-1.5"></i>Stop</button>`
+                        : `<button onclick="App.Databases.togglePower('${db.id}', 'start')" class="px-3.5 py-2 bg-green-950/30 hover:bg-green-950/60 border border-green-500/20 text-green-400 text-xs font-bold rounded-lg transition-all"><i class="fas fa-play mr-1.5"></i>Start</button>`
+                    }
+                    <button onclick="App.Databases.togglePower('${db.id}', 'restart')" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg transition-all" title="Reboot Container"><i class="fas fa-sync-alt"></i></button>
+                </div>
+
+                <button onclick="App.Databases.showManageView('${db.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all shadow-md flex items-center space-x-1.5">
+                    <span>Manage ${(db.type === 'pocketbase' || db.type === 'appwrite') ? 'BaaS' : 'Cluster'}</span>
+                    <i class="fas fa-chevron-right text-[10px]"></i>
+                </button>
+            </div>
+        `;
+        return card;
+    }
+
+    function switchSubTab(tab) {
+        activeSubTab = tab;
+        const subtabClusters = document.getElementById('db-subtab-clusters');
+        const subtabBaas = document.getElementById('db-subtab-baas');
+        const clustersSection = document.getElementById('db-clusters-section');
+        const baasSection = document.getElementById('baas-section');
+        const provisionBtn = document.getElementById('db-provision-btn');
+        const provisionBtnText = document.getElementById('db-provision-btn-text');
+
+        if (tab === 'clusters') {
+            if (subtabClusters) {
+                subtabClusters.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
+                subtabClusters.classList.add('border-blue-500', 'text-blue-400');
+            }
+            if (subtabBaas) {
+                subtabBaas.classList.remove('border-blue-500', 'text-blue-400');
+                subtabBaas.classList.add('border-transparent', 'text-gray-400', 'hover:text-white');
+            }
+            if (clustersSection) clustersSection.classList.remove('hidden');
+            if (baasSection) baasSection.classList.add('hidden');
+
+            if (provisionBtnText) provisionBtnText.textContent = "Provision Database";
+            if (provisionBtn) provisionBtn.setAttribute('onclick', "App.Databases.openProvisionModal('clusters')");
+        } else {
+            if (subtabClusters) {
+                subtabClusters.classList.remove('border-blue-500', 'text-blue-400');
+                subtabClusters.classList.add('border-transparent', 'text-gray-400', 'hover:text-white');
+            }
+            if (subtabBaas) {
+                subtabBaas.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
+                subtabBaas.classList.add('border-blue-500', 'text-blue-400');
+            }
+            if (clustersSection) clustersSection.classList.add('hidden');
+            if (baasSection) baasSection.classList.remove('hidden');
+
+            if (provisionBtnText) provisionBtnText.textContent = "Provision BaaS Engine";
+            if (provisionBtn) provisionBtn.setAttribute('onclick', "App.Databases.openProvisionModal('baas')");
+        }
+    }
 
     // Load and render all databases for the active server
     async function load() {
         const grid = document.getElementById('databases-grid');
-        const emptyState = document.getElementById('db-empty-state');
+        const baasGrid = document.getElementById('baas-grid');
+        const clustersEmpty = document.getElementById('db-clusters-empty');
+        const baasEmpty = document.getElementById('baas-empty');
+        const clustersSection = document.getElementById('db-clusters-section');
+        const baasSection = document.getElementById('baas-section');
+        const subtabsContainer = document.getElementById('db-subtabs-container');
+        
         if (!grid) return;
 
+        // Reset visibility & Show Loading Spinners
         grid.innerHTML = '<div class="col-span-2 text-center py-12"><i class="fas fa-spinner fa-spin text-3xl text-gray-500"></i></div>';
-        emptyState.classList.add('hidden');
+        if (baasGrid) {
+            baasGrid.innerHTML = '<div class="col-span-2 text-center py-12"><i class="fas fa-spinner fa-spin text-3xl text-gray-500"></i></div>';
+        }
+        
+        if (subtabsContainer) subtabsContainer.classList.remove('hidden');
+        if (clustersEmpty) clustersEmpty.classList.add('hidden');
+        if (baasEmpty) baasEmpty.classList.add('hidden');
+        
+        // Ensure standard visibilities are applied based on sub-tab
+        switchSubTab(activeSubTab);
 
         try {
             const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases`);
-            if (!res.success || !res.data || res.data.length === 0) {
-                grid.innerHTML = '';
-                emptyState.classList.remove('hidden');
-                updateStatsRibbon([]);
-                return;
+            
+            let dbs = [];
+            if (res.success && res.data) {
+                dbs = res.data;
             }
-
-            const dbs = res.data;
             updateStatsRibbon(dbs);
+            
             grid.innerHTML = '';
+            if (baasGrid) baasGrid.innerHTML = '';
 
             const focusedDiags = document.getElementById('db-focused-diagnostics');
             if (focusedDiags && !focusedDiags.classList.contains('hidden')) {
                 fetchFocusedDiagnostics(dbs);
             }
 
-            dbs.forEach(db => {
-                const config = engines[db.type] || engines.mysql;
-                const statusColor = getStatusColor(db.status);
-                
-                const card = document.createElement('div');
-                card.className = "bg-gray-800/60 backdrop-blur-md rounded-xl p-6 border border-gray-700/60 shadow-lg hover:border-gray-600 transition-all flex flex-col justify-between space-y-4";
-                card.innerHTML = `
-                    <div class="flex justify-between items-start">
-                        <div class="flex items-center space-x-3.5">
-                            <div class="p-3.5 rounded-xl ${config.logoClass} text-xl">
-                                <i class="${config.icon}"></i>
-                            </div>
-                            <div>
-                                <h3 class="text-lg font-bold text-white tracking-tight">${escapeHTML(db.name)}</h3>
-                                <div class="flex items-center space-x-2 mt-1">
-                                    <span class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase ${config.badgeClass}">${db.type}</span>
-                                    <span class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase ${statusColor} flex items-center">
-                                        <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-current ${db.status === 'Running' ? 'animate-pulse' : ''}"></span>
-                                        <span>${db.status}</span>
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
+            const dbClusters = dbs.filter(db => db.type !== 'pocketbase' && db.type !== 'appwrite');
+            const baasInstances = dbs.filter(db => db.type === 'pocketbase' || db.type === 'appwrite');
 
-                        <!-- Quick Actions -->
-                        <div class="flex items-center space-x-1.5">
-                            <button onclick="App.Databases.quickCheckHealth('${db.id}', this)" class="p-2 bg-gray-700/50 hover:bg-gray-700 text-gray-400 hover:text-white rounded-lg transition-all text-xs" title="Verify Connection Ping">
-                                <i class="fas fa-plug"></i>
-                            </button>
-                        </div>
-                    </div>
+            // Render Standard Clusters
+            if (dbClusters.length === 0) {
+                if (clustersEmpty) clustersEmpty.classList.remove('hidden');
+            } else {
+                if (clustersEmpty) clustersEmpty.classList.add('hidden');
+                dbClusters.forEach(db => {
+                    grid.appendChild(createCardElement(db));
+                });
+            }
 
-                    <div class="border-t border-gray-700/50 pt-4 flex flex-col space-y-2 text-sm text-gray-300 font-mono">
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Host Port:</span>
-                            <span class="text-white font-semibold">${db.host_port}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Database:</span>
-                            <span class="text-white font-semibold">${escapeHTML(db.database_name)}</span>
-                        </div>
-                        <div class="flex justify-between">
-                            <span class="text-gray-400">Username:</span>
-                            <span class="text-white font-semibold">${escapeHTML(db.username)}</span>
-                        </div>
-                    </div>
-
-                    <div class="border-t border-gray-700/50 pt-4 flex justify-between items-center gap-3">
-                        <div class="flex space-x-2">
-                            ${db.status === 'Running' 
-                                ? `<button onclick="App.Databases.togglePower('${db.id}', 'stop')" class="px-3.5 py-2 bg-red-950/30 hover:bg-red-950/60 border border-red-500/20 text-red-400 text-xs font-bold rounded-lg transition-all"><i class="fas fa-stop mr-1.5"></i>Stop</button>`
-                                : `<button onclick="App.Databases.togglePower('${db.id}', 'start')" class="px-3.5 py-2 bg-green-950/30 hover:bg-green-950/60 border border-green-500/20 text-green-400 text-xs font-bold rounded-lg transition-all"><i class="fas fa-play mr-1.5"></i>Start</button>`
-                            }
-                            <button onclick="App.Databases.togglePower('${db.id}', 'restart')" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg transition-all" title="Reboot Container"><i class="fas fa-sync-alt"></i></button>
-                        </div>
-
-                        <button onclick="App.Databases.showManageView('${db.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all shadow-md flex items-center space-x-1.5">
-                            <span>Manage Cluster</span>
-                            <i class="fas fa-chevron-right text-[10px]"></i>
-                        </button>
-                    </div>
-                `;
-                grid.appendChild(card);
-            });
+            // Render BaaS Instances
+            if (baasInstances.length === 0) {
+                if (baasEmpty) baasEmpty.classList.remove('hidden');
+            } else {
+                if (baasEmpty) baasEmpty.classList.add('hidden');
+                baasInstances.forEach(db => {
+                    if (baasGrid) {
+                        baasGrid.appendChild(createCardElement(db));
+                    }
+                });
+            }
 
         } catch (e) {
             grid.innerHTML = '<div class="col-span-2 text-center text-red-400 py-12">Failed to load databases catalog.</div>';
+            if (baasGrid) {
+                baasGrid.innerHTML = '<div class="col-span-2 text-center text-red-400 py-12">Failed to load BaaS catalog.</div>';
+            }
         }
     }
 
     function updateStatsRibbon(dbs) {
-        let mysql = 0, postgres = 0, mongodb = 0, redis = 0, sqlite = 0, pocketbase = 0;
+        let mysql = 0, postgres = 0, mongodb = 0, redis = 0, sqlite = 0, pocketbase = 0, appwrite = 0;
         dbs.forEach(db => {
             if (db.type === 'mysql') mysql++;
             if (db.type === 'postgres') postgres++;
@@ -165,6 +261,7 @@ App.Databases = (function() {
             if (db.type === 'redis') redis++;
             if (db.type === 'sqlite') sqlite++;
             if (db.type === 'pocketbase') pocketbase++;
+            if (db.type === 'appwrite') appwrite++;
         });
         const elMysql = App.UI.el('db-stat-mysql');
         const elPostgres = App.UI.el('db-stat-postgres');
@@ -172,12 +269,14 @@ App.Databases = (function() {
         const elRedis = App.UI.el('db-stat-redis');
         const elSqlite = App.UI.el('db-stat-sqlite');
         const elPocketbase = App.UI.el('db-stat-pocketbase');
+        const elAppwrite = App.UI.el('db-stat-appwrite');
         if (elMysql) elMysql.innerText = mysql;
         if (elPostgres) elPostgres.innerText = postgres;
         if (elMongodb) elMongodb.innerText = mongodb;
         if (elRedis) elRedis.innerText = redis;
         if (elSqlite) elSqlite.innerText = sqlite;
         if (elPocketbase) elPocketbase.innerText = pocketbase;
+        if (elAppwrite) elAppwrite.innerText = appwrite;
     }
 
     async function fetchFocusedDiagnostics(dbs) {
@@ -289,13 +388,37 @@ App.Databases = (function() {
 
     // ---- Provision Modal ----
 
-    function openProvisionModal() {
+    function openProvisionModal(mode = 'clusters') {
         const modal = document.getElementById('provision-db-modal');
         if (!modal) return;
         
         // Reset form fields
         const nameEl = App.UI.el('db-prov-name');
         if (nameEl) nameEl.value = '';
+
+        const typeSelect = App.UI.el('db-prov-type');
+        const titleEl = modal.querySelector('h3');
+
+        if (typeSelect) {
+            if (mode === 'baas') {
+                typeSelect.innerHTML = `
+                    <option value="pocketbase">PocketBase (BaaS Engine)</option>
+                    <option value="appwrite">Appwrite (Full BaaS Stack)</option>
+                `;
+                typeSelect.value = 'pocketbase';
+                if (titleEl) titleEl.textContent = 'Provision Backend-As-A-Service (BaaS)';
+            } else {
+                typeSelect.innerHTML = `
+                    <option value="mysql">MySQL 8.0</option>
+                    <option value="postgres">PostgreSQL 15</option>
+                    <option value="mongodb">MongoDB 6.0</option>
+                    <option value="redis">Redis 7.0 (Key-Value)</option>
+                    <option value="sqlite">SQLite 3 (Embedded)</option>
+                `;
+                typeSelect.value = 'mysql';
+                if (titleEl) titleEl.textContent = 'Provision Database Cluster';
+            }
+        }
 
         modal.classList.remove('hidden');
         setTimeout(() => {
@@ -324,47 +447,100 @@ App.Databases = (function() {
         const userEl = App.UI.el('db-prov-user');
         const dbNameEl = App.UI.el('db-prov-dbname');
         const passEl = App.UI.el('db-prov-pass');
+        const userLabel = document.getElementById('db-prov-user-label');
+        const passLabel = document.getElementById('db-prov-pass-label');
+        const dbnameWrapper = document.getElementById('db-prov-dbname-wrapper');
+        const portWrapper = document.getElementById('db-prov-port-wrapper');
         if (!typeEl) return;
 
         const type = typeEl.value;
         const config = engines[type] || engines.mysql;
         const isSQLite = (type === 'sqlite');
         const isPocketBase = (type === 'pocketbase');
-        const hasIgnoredCredentials = isSQLite || isPocketBase;
+        const isAppwrite = (type === 'appwrite');
+        const isBaaS = isPocketBase || isAppwrite;
+        
+        // SQLite has ignored credentials, PocketBase/Appwrite use them for the bootstrap Admin
+        const hasIgnoredCredentials = isSQLite;
 
-        // Toggle field availability for SQLite & PocketBase
+        // Toggle field availability for SQLite
         if (portEl) {
             portEl.value = isSQLite ? '' : config.defaultPort;
             portEl.disabled = isSQLite;
             portEl.style.opacity = isSQLite ? '0.4' : '1';
-            portEl.placeholder = isSQLite ? 'N/A (File-based)' : '';
+            portEl.placeholder = isSQLite ? 'N/A (File-based)' : (isAppwrite ? 'Console base port (e.g. 8080)' : '');
         }
+        
+        if (userLabel) {
+            userLabel.textContent = isBaaS ? 'Default Admin Email' : 'Admin Username';
+        }
+        if (passLabel) {
+            passLabel.textContent = isBaaS ? 'Default Admin Password' : 'Admin Password';
+        }
+
+        if (dbnameWrapper && portWrapper) {
+            if (isBaaS) {
+                dbnameWrapper.classList.add('hidden');
+                portWrapper.className = "col-span-2";
+            } else {
+                dbnameWrapper.classList.remove('hidden');
+                portWrapper.className = "col-span-1";
+            }
+        }
+
         if (userEl) {
-            userEl.value = hasIgnoredCredentials ? '' : config.defaultUser;
-            userEl.disabled = hasIgnoredCredentials;
-            userEl.style.opacity = hasIgnoredCredentials ? '0.4' : '1';
-            userEl.placeholder = hasIgnoredCredentials ? 'N/A (GUI managed)' : '';
+            if (isSQLite) {
+                userEl.value = '';
+                userEl.disabled = true;
+                userEl.style.opacity = '0.4';
+                userEl.placeholder = 'N/A (File-based)';
+            } else {
+                userEl.disabled = false;
+                userEl.style.opacity = '1';
+                userEl.placeholder = isBaaS ? 'e.g. admin@example.com' : '';
+                if (isBaaS) {
+                    if (userEl.value === 'root' || userEl.value === '' || userEl.value === config.defaultUser ||
+                        userEl.value === 'admin@gopulse.local') {
+                        userEl.value = 'admin@example.com';
+                    }
+                } else {
+                    if (userEl.value === 'admin@example.com' || userEl.value === 'admin@gopulse.local') {
+                        userEl.value = config.defaultUser;
+                    }
+                }
+            }
         }
+        
         if (passEl) {
-            passEl.disabled = hasIgnoredCredentials;
-            passEl.style.opacity = hasIgnoredCredentials ? '0.4' : '1';
-            if (hasIgnoredCredentials) passEl.value = 'none';
+            if (isSQLite) {
+                passEl.value = 'none';
+                passEl.disabled = true;
+                passEl.style.opacity = '0.4';
+            } else {
+                passEl.disabled = false;
+                passEl.style.opacity = '1';
+                if (passEl.value === 'none') {
+                    generatePass();
+                }
+            }
         }
         
         if (dbNameEl) {
             if (isSQLite) {
                 dbNameEl.value = 'sqlite';
-            } else if (isPocketBase) {
-                dbNameEl.value = 'pocketbase';
+            } else if (isBaaS) {
+                dbNameEl.value = type; // 'pocketbase' or 'appwrite'
             } else {
-                dbNameEl.value = (type === 'mongodb') ? 'admin' : ((type === 'redis') ? 'db0' : 'gopulse');
+                if (dbNameEl.value === 'sqlite' || dbNameEl.value === 'pocketbase' || dbNameEl.value === 'appwrite') {
+                    dbNameEl.value = (type === 'mongodb') ? 'admin' : ((type === 'redis') ? 'db0' : 'gopulse');
+                }
             }
         }
     }
 
     function generatePass() {
-        // Shell-safe charset only — no quotes, backslashes, pipes, or ampersands
-        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-+=.~";
+        // Alphanumeric charset — avoids any shell/YAML/DSN connection parsing issues
+        const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         let pass = "";
         for (let i = 0; i < 20; i++) {
             pass += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -386,18 +562,29 @@ App.Databases = (function() {
             return;
         }
 
-        // SQLite and PocketBase have different credentials requirements
+        // SQLite has ignored credentials, BaaS require them for bootstrapping
         const isSQLite = (type === 'sqlite');
         const isPocketBase = (type === 'pocketbase');
-        const skipCreds = isSQLite || isPocketBase;
-
-        if (skipCreds) {
+        const isAppwrite = (type === 'appwrite');
+        const isBaaS = isPocketBase || isAppwrite;
+        
+        if (isSQLite) {
             if (!name) {
-                App.UI.toast('error', 'Please enter a cluster name.');
+                App.UI.toast('error', 'Please enter a database name.');
                 return;
             }
-            if (isPocketBase && !port) {
-                App.UI.toast('error', 'Please specify a host port.');
+        } else if (isBaaS) {
+            if (!name || !username || !password || !port) {
+                App.UI.toast('error', 'Please fill in all required fields (including admin credentials).');
+                return;
+            }
+            // BaaS engines require a valid email for the admin
+            if (!username.includes('@')) {
+                App.UI.toast('error', `${engines[type].name} admin username must be a valid email address.`);
+                return;
+            }
+            if (password.length < 8) {
+                App.UI.toast('error', 'Admin password must be at least 8 characters long.');
                 return;
             }
         } else {
@@ -420,7 +607,7 @@ App.Databases = (function() {
 
             if (res.success) {
                 closeProvisionModal();
-                App.UI.toast('success', 'Database cluster deployed successfully!');
+                App.UI.toast('success', isBaaS ? 'BaaS instance deployed successfully!' : 'Database cluster deployed successfully!');
                 load();
             } else {
                 App.UI.toast('error', `Provisioning failed: ${res.error || res.message}`);
@@ -477,7 +664,12 @@ App.Databases = (function() {
     // ---- Panel View Switching ----
 
     function showListView() {
+        if (baasTelemetryInterval) {
+            clearInterval(baasTelemetryInterval);
+            baasTelemetryInterval = null;
+        }
         document.getElementById('db-manage-view').classList.add('hidden');
+        document.getElementById('baas-manage-view').classList.add('hidden');
         document.getElementById('db-list-view').classList.remove('hidden');
         currentDb = null;
         load();
@@ -485,7 +677,6 @@ App.Databases = (function() {
 
     async function showManageView(dbID) {
         document.getElementById('db-list-view').classList.add('hidden');
-        document.getElementById('db-manage-view').classList.remove('hidden');
 
         try {
             const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${dbID}`);
@@ -498,23 +689,75 @@ App.Databases = (function() {
             currentDb = res.data;
             const config = engines[currentDb.type] || engines.mysql;
             
-            // Populate Header
-            const logoEl = document.getElementById('db-manage-logo');
-            logoEl.className = `p-4 rounded-xl text-3xl ${config.logoClass}`;
-            logoEl.innerHTML = `<i class="${config.icon}"></i>`;
-            document.getElementById('db-manage-name').innerText = currentDb.name;
+            const isBaaS = (currentDb.type === 'pocketbase' || currentDb.type === 'appwrite');
             
-            const typeBadge = document.getElementById('db-manage-type-badge');
-            typeBadge.className = `px-2.5 py-0.5 text-xs font-bold rounded-full uppercase ${config.badgeClass}`;
-            typeBadge.innerText = currentDb.type;
+            if (isBaaS) {
+                document.getElementById('db-manage-view').classList.add('hidden');
+                document.getElementById('baas-manage-view').classList.remove('hidden');
+                
+                // Populate Header
+                const logoEl = document.getElementById('baas-manage-logo');
+                logoEl.className = `p-4 rounded-xl text-3xl ${config.logoClass}`;
+                logoEl.innerHTML = `<i class="${config.icon}"></i>`;
+                document.getElementById('baas-manage-name').innerText = currentDb.name;
+                
+                const typeBadge = document.getElementById('baas-manage-type-badge');
+                typeBadge.className = `px-2.5 py-0.5 text-xs font-bold rounded-full uppercase ${config.badgeClass}`;
+                typeBadge.innerText = currentDb.type;
 
-            const statusBadge = document.getElementById('db-manage-status-badge');
-            const statusColor = getStatusColor(currentDb.status);
-            statusBadge.className = `px-2.5 py-0.5 text-xs font-bold rounded-full uppercase flex items-center ${statusColor}`;
-            statusBadge.innerHTML = `
-                <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-current ${currentDb.status === 'Running' ? 'animate-pulse' : ''}"></span>
-                <span>${currentDb.status}</span>
-            `;
+                const statusBadge = document.getElementById('baas-manage-status-badge');
+                const statusColor = getStatusColor(currentDb.status);
+                statusBadge.className = `px-2.5 py-0.5 text-xs font-bold rounded-full uppercase flex items-center ${statusColor}`;
+                statusBadge.innerHTML = `
+                    <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-current ${currentDb.status === 'Running' ? 'animate-pulse' : ''}"></span>
+                    <span>${currentDb.status}</span>
+                `;
+
+                // Lifecycle Actions in Header
+                const actionsWrapper = document.getElementById('baas-manage-actions');
+                actionsWrapper.innerHTML = `
+                    ${currentDb.status === 'Running'
+                        ? `<button onclick="App.Databases.togglePower('${currentDb.id}', 'stop')" class="px-4 py-2 bg-red-950/30 hover:bg-red-950/60 border border-red-500/20 text-red-400 text-sm font-bold rounded-lg transition-colors flex items-center space-x-1.5"><i class="fas fa-stop"></i><span>Stop</span></button>`
+                        : `<button onclick="App.Databases.togglePower('${currentDb.id}', 'start')" class="px-4 py-2 bg-green-950/30 hover:bg-green-950/60 border border-green-500/20 text-green-400 text-sm font-bold rounded-lg transition-colors flex items-center space-x-1.5"><i class="fas fa-play"></i><span>Start</span></button>`
+                    }
+                    <button onclick="App.Databases.togglePower('${currentDb.id}', 'restart')" class="px-3.5 py-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600/30 text-gray-300 text-sm font-bold rounded-lg transition-colors" title="Reboot Engine"><i class="fas fa-sync-alt"></i></button>
+                `;
+
+                // Populate Settings credentials
+                document.getElementById('baas-settings-port').innerText = currentDb.host_port;
+                document.getElementById('baas-settings-user').innerText = currentDb.username;
+                document.getElementById('baas-settings-pass').innerText = "••••••••";
+                
+                // Eyeball reset
+                const passEye = document.getElementById('baas-settings-pass-eye');
+                if (passEye) passEye.className = "far fa-eye";
+
+                // Setup Log service selectors based on container stack
+                setupBaaSLogServices();
+
+                // Switch to default Overview tab
+                switchBaaSTab(activeBaaSTab);
+            } else {
+                document.getElementById('baas-manage-view').classList.add('hidden');
+                document.getElementById('db-manage-view').classList.remove('hidden');
+                
+                // Populate Header
+                const logoEl = document.getElementById('db-manage-logo');
+                logoEl.className = `p-4 rounded-xl text-3xl ${config.logoClass}`;
+                logoEl.innerHTML = `<i class="${config.icon}"></i>`;
+                document.getElementById('db-manage-name').innerText = currentDb.name;
+                
+                const typeBadge = document.getElementById('db-manage-type-badge');
+                typeBadge.className = `px-2.5 py-0.5 text-xs font-bold rounded-full uppercase ${config.badgeClass}`;
+                typeBadge.innerText = currentDb.type;
+
+                const statusBadge = document.getElementById('db-manage-status-badge');
+                const statusColor = getStatusColor(currentDb.status);
+                statusBadge.className = `px-2.5 py-0.5 text-xs font-bold rounded-full uppercase flex items-center ${statusColor}`;
+                statusBadge.innerHTML = `
+                    <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-current ${currentDb.status === 'Running' ? 'animate-pulse' : ''}"></span>
+                    <span>${currentDb.status}</span>
+                `;
 
             // Lifecycle Actions in Header
             const actionsWrapper = document.getElementById('db-manage-actions');
@@ -550,11 +793,13 @@ App.Databases = (function() {
                 uri = volumePath;
             } else if (currentDb.type === 'pocketbase') {
                 uri = `http://${hostIP}:${currentDb.host_port}`;
+            } else if (currentDb.type === 'appwrite') {
+                uri = `http://${hostIP}:${currentDb.host_port}`;
             }
             const uriEl = document.getElementById('db-conn-uri');
             if (uriEl) uriEl.value = uri;
 
-            // Render PocketBase admin panel shortcut banner if pocketbase type
+            // Render PocketBase admin panel shortcut banner / Appwrite Console banner if baas type
             const pbBanner = document.getElementById('db-conn-pocketbase-banner');
             if (pbBanner) {
                 if (currentDb.type === 'pocketbase') {
@@ -571,6 +816,25 @@ App.Databases = (function() {
                             </div>
                             <a href="http://${hostIP}:${currentDb.host_port}/_/" target="_blank" class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-all text-xs font-bold shadow-lg shadow-orange-600/30 flex items-center space-x-1.5 flex-shrink-0">
                                 <span>Open Admin GUI</span>
+                                <i class="fas fa-external-link-alt text-[10px]"></i>
+                            </a>
+                        </div>
+                    `;
+                    pbBanner.classList.remove('hidden');
+                } else if (currentDb.type === 'appwrite') {
+                    pbBanner.innerHTML = `
+                        <div class="p-4 bg-pink-500/10 border border-pink-500/30 rounded-xl text-pink-400 text-xs flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg shadow-pink-500/5 backdrop-blur-md">
+                            <div class="flex items-start space-x-3 text-left">
+                                <div class="p-1.5 bg-pink-500/20 rounded-lg text-pink-300 mt-0.5">
+                                    <i class="fas fa-rocket text-base"></i>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold text-sm text-white mb-0.5">Appwrite Console</h4>
+                                    <p class="text-pink-300/80 leading-relaxed">Launch the Appwrite Console inside a new tab. <strong class="text-white underline">Important: On fresh open, you must click "Sign Up" (not Sign In) to register and create your admin account</strong> using the email and password shown in Settings.</p>
+                                </div>
+                            </div>
+                            <a href="http://${hostIP}:${currentDb.host_port}" target="_blank" class="px-4 py-2 bg-pink-600 hover:bg-pink-500 text-white rounded-lg transition-all text-xs font-bold shadow-lg shadow-pink-600/30 flex items-center space-x-1.5 flex-shrink-0">
+                                <span>Open Console</span>
                                 <i class="fas fa-external-link-alt text-[10px]"></i>
                             </a>
                         </div>
@@ -608,7 +872,7 @@ App.Databases = (function() {
             if (resultsCard) resultsCard.classList.add('hidden');
 
             switchManageTab(activeManageTab);
-
+        }
         } catch (e) {
             App.UI.toast('error', 'Failed to connect to cluster dashboard.');
             showListView();
@@ -1229,8 +1493,17 @@ App.Databases = (function() {
                         const display = (val === null || val === 'NULL' || val === '') ? '<span class="text-gray-600 italic">NULL</span>' : escapeHTML(val);
                         html += `<td class="px-4 py-2 text-gray-300 border-r border-gray-800/40 whitespace-nowrap max-w-xs truncate" title="${escapeHTML(val)}">${display}</td>`;
                     });
+                    const rowDataEscaped = encodeURIComponent(JSON.stringify({
+                        columns: data.columns,
+                        values: row,
+                        pkCol: pkCol,
+                        pkVal: row[pkIdx]
+                    }));
                     html += `
-                        <td class="px-4 py-2 text-center border-r border-gray-800/40 w-12">
+                        <td class="px-4 py-2 text-center border-r border-gray-800/40 whitespace-nowrap space-x-1.5 w-16">
+                            <button onclick="App.Databases.openEditRowModal('${rowDataEscaped}')" class="p-1 text-blue-400 hover:text-blue-300 rounded hover:bg-gray-800 transition-colors" title="Edit Record">
+                                <i class="fas fa-edit text-[10px]"></i>
+                            </button>
                             <button onclick="App.Databases.deleteRow('${escapeHTML(schema)}', '${escapeHTML(table)}', '${escapeHTML(pkCol)}', '${escapeHTML(row[pkIdx])}')" class="p-1 text-red-400 hover:text-red-300 rounded hover:bg-gray-800 transition-colors" title="Delete Record">
                                 <i class="fas fa-trash text-[10px]"></i>
                             </button>
@@ -1651,6 +1924,117 @@ App.Databases = (function() {
         }
     }
 
+    let activeEditRowState = null; // Store state of the row currently being edited
+
+    function openEditRowModal(rowDataEscaped) {
+        const schema = explorerState.activeSchema;
+        const table = explorerState.activeTable;
+        if (!currentDb || !schema || !table) return;
+
+        const rowData = JSON.parse(decodeURIComponent(rowDataEscaped));
+        activeEditRowState = rowData;
+
+        const isNoSQL = currentDb.type === 'mongodb' || currentDb.type === 'redis';
+        const container = document.getElementById('db-edit-row-fields-container');
+        container.innerHTML = '<div class="text-center py-6 text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Loading record...</div>';
+
+        document.getElementById('db-edit-row-modal-title').textContent = (currentDb.type === 'redis') ? 'Edit Key-Value' : (isNoSQL ? 'Edit Document' : 'Edit Row');
+        openModal('db-edit-row-modal');
+
+        if (isNoSQL) {
+            // MongoDB or Redis: populate JSON
+            let preJson = {};
+            if (currentDb.type === 'redis') {
+                const typeIdx = rowData.columns.indexOf('type');
+                const valueIdx = rowData.columns.indexOf('value');
+                const ttlIdx = rowData.columns.indexOf('ttl');
+                preJson = {
+                    key: rowData.pkVal,
+                    type: typeIdx !== -1 ? rowData.values[typeIdx] : 'string',
+                    value: valueIdx !== -1 ? rowData.values[valueIdx] : '',
+                    ttl: ttlIdx !== -1 ? parseInt(rowData.values[ttlIdx]) || 0 : 0
+                };
+            } else {
+                rowData.columns.forEach((col, idx) => {
+                    preJson[col] = rowData.values[idx];
+                });
+            }
+            container.innerHTML = `
+                <div class="space-y-2">
+                    <label class="block text-gray-400 text-sm font-semibold">Document JSON</label>
+                    <textarea id="db-edit-row-json" rows="8" class="w-full bg-gray-950/80 text-green-400 font-mono p-4 rounded-lg border border-gray-700 focus:outline-none focus:border-indigo-500 text-sm">${escapeHTML(JSON.stringify(preJson, null, 2))}</textarea>
+                </div>
+            `;
+            return;
+        }
+
+        // SQL / SQLite / PocketBase: generate pre-populated input fields
+        let html = '<div class="grid grid-cols-1 gap-4">';
+        rowData.columns.forEach((colName, idx) => {
+            const isPrimaryKey = colName === rowData.pkCol;
+            const currentVal = rowData.values[idx] !== null && rowData.values[idx] !== undefined && rowData.values[idx] !== 'NULL' ? rowData.values[idx] : '';
+            html += `
+                <div class="space-y-1.5">
+                    <label class="block text-gray-300 text-xs font-semibold uppercase tracking-wider">${escapeHTML(colName)} ${isPrimaryKey ? '<span class="text-[10px] text-indigo-400">(PRIMARY KEY)</span>' : ''}</label>
+                    <input type="text" data-col-name="${escapeHTML(colName)}" value="${escapeHTML(currentVal)}" ${isPrimaryKey ? 'disabled style="opacity: 0.5"' : ''} class="db-edit-row-field w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 font-mono">
+                </div>
+            `;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function closeEditRowModal() {
+        closeModal('db-edit-row-modal');
+        activeEditRowState = null;
+    }
+
+    async function submitEditRow() {
+        if (!currentDb || !explorerState.activeSchema || !explorerState.activeTable || !activeEditRowState) return;
+
+        const schema = explorerState.activeSchema;
+        const table = explorerState.activeTable;
+        const isNoSQL = currentDb.type === 'mongodb' || currentDb.type === 'redis';
+
+        let data = {};
+
+        if (isNoSQL) {
+            const jsonText = document.getElementById('db-edit-row-json').value;
+            try {
+                data = JSON.parse(jsonText);
+            } catch (e) {
+                App.UI.toast('error', 'Invalid JSON syntax.');
+                return;
+            }
+        } else {
+            // Read from SQL inputs
+            const inputs = document.querySelectorAll('.db-edit-row-field');
+            inputs.forEach(input => {
+                const colName = input.dataset.colName;
+                const val = input.value.trim();
+                if (colName !== activeEditRowState.pkCol) {
+                    data[colName] = val;
+                }
+            });
+        }
+
+        try {
+            const res = await App.API.put(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/rows?pk_col=${encodeURIComponent(activeEditRowState.pkCol)}&pk_val=${encodeURIComponent(activeEditRowState.pkVal)}`, {
+                data
+            });
+
+            if (res.success) {
+                App.UI.toast('success', 'Record successfully updated.');
+                closeEditRowModal();
+                loadTableData(schema, table, explorerState.page);
+            } else {
+                App.UI.toast('error', `Update failed: ${res.message}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Connection error while updating record.');
+        }
+    }
+
     async function deleteRow(schema, table, pkCol, pkVal) {
         if (!currentDb) return;
         if (!confirm('Are you sure you want to delete this record?')) {
@@ -1980,8 +2364,876 @@ App.Databases = (function() {
         }
     }
 
+    // =========================================================================
+    // Dedicated Backend-As-A-Service (BaaS) Dashboards
+    // =========================================================================
+
+    function setupBaaSLogServices() {
+        const select = document.getElementById('baas-log-service-select');
+        if (!select || !currentDb) return;
+        select.innerHTML = '';
+        
+        if (currentDb.type === 'pocketbase') {
+            select.innerHTML = `<option value="gopulse-${currentDb.id}">PocketBase Core Engine</option>`;
+        } else if (currentDb.type === 'appwrite') {
+            select.innerHTML = `
+                <option value="gopulse-${currentDb.id}-appwrite">Appwrite API Server</option>
+                <option value="gopulse-${currentDb.id}-mariadb">MariaDB Database</option>
+                <option value="gopulse-${currentDb.id}-redis">Redis Cache Engine</option>
+            `;
+        }
+    }
+
+    function switchBaaSTab(tab) {
+        activeBaaSTab = tab;
+        
+        document.querySelectorAll('.baas-tab-btn').forEach(btn => {
+            if (btn.dataset.baasTab === tab) {
+                btn.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
+                btn.classList.add('border-orange-500', 'text-orange-400');
+            } else {
+                btn.classList.remove('border-orange-500', 'text-orange-400');
+                btn.classList.add('border-transparent', 'text-gray-400', 'hover:text-white');
+            }
+        });
+
+        document.querySelectorAll('.baas-panel-content').forEach(p => p.classList.add('hidden'));
+        const panel = document.getElementById(`baas-panel-${tab}`);
+        if (panel) panel.classList.remove('hidden');
+
+        if (baasTelemetryInterval) {
+            clearInterval(baasTelemetryInterval);
+            baasTelemetryInterval = null;
+        }
+
+        if (tab === 'overview') {
+            renderBaaSOverview();
+            startBaaSTelemetry();
+        } else if (tab === 'guides') {
+            refreshBaaSGuides();
+        } else if (tab === 'env') {
+            renderBaaSEnv();
+        } else if (tab === 'logs') {
+            refreshBaaSLogs();
+        } else if (tab === 'backups') {
+            loadBackupsBaaS();
+        }
+    }
+
+    function renderBaaSOverview() {
+        if (!currentDb) return;
+        const banner = document.getElementById('baas-launch-banner');
+        const hostIP = (App.System && App.System.currentServer && App.System.currentServer.host) 
+            || window.location.hostname 
+            || "127.0.0.1";
+            
+        if (!banner) return;
+        
+        if (currentDb.type === 'pocketbase') {
+            banner.innerHTML = `
+                <div class="p-5 bg-gradient-to-r from-orange-500/10 to-amber-500/5 border border-orange-500/30 rounded-xl text-orange-400 text-xs flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg shadow-orange-500/5 backdrop-blur-md">
+                    <div class="flex items-start space-x-3.5 text-left">
+                        <div class="p-2.5 bg-orange-500/20 rounded-xl text-orange-300 mt-0.5">
+                            <i class="fas fa-server text-xl animate-pulse"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-sm text-white mb-0.5">PocketBase Admin GUI Ready</h4>
+                            <p class="text-orange-300/80 leading-relaxed max-w-xl">Visually build collections, define security rules, browse user tables, manage logs, and configure SMTP mailers directly from your browser console.</p>
+                        </div>
+                    </div>
+                    <a href="http://${hostIP}:${currentDb.host_port}/_/" target="_blank" class="px-5 py-3 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg transition-all text-xs font-bold shadow-lg shadow-orange-600/30 flex items-center space-x-2 flex-shrink-0">
+                        <span>Launch Admin Console</span>
+                        <i class="fas fa-external-link-alt text-[10px]"></i>
+                    </a>
+                </div>
+            `;
+        } else if (currentDb.type === 'appwrite') {
+            banner.innerHTML = `
+                <div class="p-5 bg-gradient-to-r from-pink-500/10 to-rose-500/5 border border-pink-500/30 rounded-xl text-pink-400 text-xs flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg shadow-pink-500/5 backdrop-blur-md">
+                    <div class="flex items-start space-x-3.5 text-left">
+                        <div class="p-2.5 bg-pink-500/20 rounded-xl text-pink-300 mt-0.5">
+                            <i class="fas fa-rocket text-xl animate-pulse"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-sm text-white mb-0.5">Appwrite Central Console</h4>
+                            <p class="text-pink-300/80 leading-relaxed max-w-xl">Configure Appwrite services. Note: On a fresh launch, click "Sign Up" rather than "Sign In" to bootstrap your root admin credential set.</p>
+                        </div>
+                    </div>
+                    <a href="http://${hostIP}:${currentDb.host_port}" target="_blank" class="px-5 py-3 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white rounded-lg transition-all text-xs font-bold shadow-lg shadow-pink-600/30 flex items-center space-x-2 flex-shrink-0">
+                        <span>Launch Appwrite Console</span>
+                        <i class="fas fa-external-link-alt text-[10px]"></i>
+                    </a>
+                </div>
+            `;
+        }
+
+        const endpointsContainer = document.getElementById('baas-endpoints-container');
+        if (endpointsContainer) {
+            endpointsContainer.innerHTML = '';
+            
+            const createEndpointRow = (label, url) => {
+                const div = document.createElement('div');
+                div.className = "p-4 bg-gray-900 border border-gray-700/60 rounded-xl space-y-2 flex flex-col justify-between";
+                div.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">${label}</span>
+                        <button onclick="App.Databases.copyEndpoint('${url}', this)" class="text-gray-500 hover:text-white text-xs flex items-center space-x-1 transition-colors">
+                            <i class="far fa-copy text-xs"></i>
+                            <span class="font-semibold text-[10px]">Copy</span>
+                        </button>
+                    </div>
+                    <span class="text-xs text-white font-mono select-all truncate bg-gray-950 py-1.5 px-3 rounded-lg border border-gray-800/40">${url}</span>
+                `;
+                return div;
+            };
+
+            if (currentDb.type === 'pocketbase') {
+                endpointsContainer.appendChild(createEndpointRow('REST API Base', `http://${hostIP}:${currentDb.host_port}/api`));
+                endpointsContainer.appendChild(createEndpointRow('Real-time SSE Endpoint', `http://${hostIP}:${currentDb.host_port}/api/realtime`));
+            } else if (currentDb.type === 'appwrite') {
+                endpointsContainer.appendChild(createEndpointRow('REST Client API', `http://${hostIP}:${currentDb.host_port}/v1`));
+                endpointsContainer.appendChild(createEndpointRow('Real-time WebSocket', `ws://${hostIP}:${currentDb.host_port}/v1/realtime`));
+            }
+        }
+    }
+
+    function copyEndpoint(url, btn) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(() => {
+                const label = btn.querySelector('span');
+                const orig = label.innerText;
+                label.innerText = 'Copied!';
+                setTimeout(() => label.innerText = orig, 1500);
+            });
+        } else {
+            App.UI.toast('success', 'URL copied.');
+        }
+    }
+
+    function startBaaSTelemetry() {
+        if (!currentDb) return;
+        updateBaaSTelemetry();
+        baasTelemetryInterval = setInterval(updateBaaSTelemetry, 4000);
+    }
+    
+    async function updateBaaSTelemetry() {
+        if (!currentDb || activeBaaSTab !== 'overview') {
+            if (baasTelemetryInterval) {
+                clearInterval(baasTelemetryInterval);
+                baasTelemetryInterval = null;
+            }
+            return;
+        }
+
+        let coreContainerName = `gopulse-${currentDb.id}`;
+        if (currentDb.type === 'appwrite') {
+            coreContainerName = `gopulse-${currentDb.id}-appwrite`;
+        }
+
+        try {
+            const [statsRes, telemetryRes] = await Promise.all([
+                App.API.get(`/containers/${coreContainerName}/stats`).catch(() => null),
+                App.API.get(`/databases/${currentDb.id}/telemetry`).catch(() => null)
+            ]);
+
+            const cpuCircle = document.getElementById('baas-cpu-circle');
+            const cpuValEl = document.getElementById('baas-cpu-val');
+            if (statsRes && statsRes.success && statsRes.data) {
+                const cpu = Math.min(statsRes.data.cpu_percent, 100);
+                if (cpuValEl) cpuValEl.innerText = `${cpu.toFixed(1)}%`;
+                
+                if (cpuCircle) {
+                    const circum = 276.46;
+                    const offset = circum - (cpu / 100) * circum;
+                    cpuCircle.style.strokeDashoffset = offset;
+                }
+            } else {
+                if (cpuValEl) cpuValEl.innerText = "0.0%";
+                if (cpuCircle) cpuCircle.style.strokeDashoffset = 276.46;
+            }
+
+            const memValEl = document.getElementById('baas-mem-val');
+            const memBar = document.getElementById('baas-mem-bar');
+            const memLimitEl = document.getElementById('baas-mem-limit');
+            
+            if (statsRes && statsRes.success && statsRes.data) {
+                const memUsage = statsRes.data.memory_usage_mb;
+                const memLimit = statsRes.data.memory_limit_mb || 512;
+                
+                if (memValEl) memValEl.innerText = `${memUsage.toFixed(2)} MB`;
+                if (memLimitEl) memLimitEl.innerText = `Limit: ${memLimit.toFixed(0)} MB`;
+                
+                if (memBar) {
+                    const pct = Math.min((memUsage / memLimit) * 100, 100);
+                    memBar.style.width = `${pct}%`;
+                }
+            } else {
+                if (memValEl) memValEl.innerText = "0.00 MB";
+                if (memLimitEl) memLimitEl.innerText = "Limit: N/A";
+                if (memBar) memBar.style.width = "0%";
+            }
+
+            const diskValEl = document.getElementById('baas-disk-val');
+            const diskBar = document.getElementById('baas-disk-bar');
+            if (telemetryRes && telemetryRes.success && telemetryRes.data) {
+                const sizeMB = telemetryRes.data.data_size / (1024 * 1024);
+                if (diskValEl) diskValEl.innerText = `${sizeMB.toFixed(2)} MB`;
+                
+                if (diskBar) {
+                    const maxBaaSVolume = 2 * 1024 * 1024 * 1024;
+                    const pct = Math.min((telemetryRes.data.data_size / maxBaaSVolume) * 100, 100);
+                    diskBar.style.width = `${pct}%`;
+                }
+            } else {
+                if (diskValEl) diskValEl.innerText = "0.00 MB";
+                if (diskBar) diskBar.style.width = "0%";
+            }
+
+        } catch (e) {
+            console.error("BaaS telemetry polling error", e);
+        }
+    }
+
+    function renderBaaSEnv() {
+        const container = document.getElementById('baas-keys-container');
+        if (!container || !currentDb) return;
+        container.innerHTML = '';
+
+        const createKeyCard = (title, subtitle, value) => {
+            const div = document.createElement('div');
+            div.className = "p-5 bg-gray-900 border border-gray-700/60 rounded-xl space-y-3 flex flex-col justify-between backdrop-blur-md shadow-inner";
+            div.innerHTML = `
+                <div>
+                    <h4 class="text-sm font-bold text-white">${title}</h4>
+                    <p class="text-[10px] text-gray-400">${subtitle}</p>
+                </div>
+                <div class="flex items-center space-x-2 pt-1.5">
+                    <span class="text-xs text-white font-mono select-all bg-gray-950 py-2 px-3 rounded-lg border border-gray-800/40 flex-1 truncate text-left">${value}</span>
+                    <button onclick="App.Databases.copyEndpoint('${value}', this)" class="p-2 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white rounded-lg transition-all text-xs" title="Copy Key">
+                        <i class="far fa-copy"></i>
+                    </button>
+                </div>
+            `;
+            return div;
+        };
+
+        if (currentDb.type === 'pocketbase') {
+            container.className = "grid grid-cols-1 md:grid-cols-2 gap-6";
+            container.appendChild(createKeyCard(
+                'Superuser Admin Account', 
+                'Default email address configured for primary dashboard root access.', 
+                currentDb.username
+            ));
+            container.appendChild(createKeyCard(
+                'Superuser Admin Password', 
+                'Primary boot credentials password generated for visual admin configuration.', 
+                currentDb.password
+            ));
+        } else if (currentDb.type === 'appwrite') {
+            container.className = "grid grid-cols-1 md:grid-cols-2 gap-6";
+            let opensslKey = `gopulse-appw-${currentDb.id}-${currentDb.password}`;
+            if (opensslKey.length > 64) {
+                opensslKey = opensslKey.substring(0, 64);
+            } else {
+                opensslKey = opensslKey + "x".repeat(64 - opensslKey.length);
+            }
+            container.appendChild(createKeyCard(
+                'Appwrite Server Encryption Key', 
+                '_APP_OPENSSL_KEY_V1 used for encrypting relational cookies, session databases, and user indexes.', 
+                opensslKey
+            ));
+            container.appendChild(createKeyCard(
+                'MariaDB Root Bypass Key', 
+                'Generated root administrator password scoped under Appwrite docker networks.', 
+                `root-${currentDb.id}-${currentDb.password}`.substring(0, 32)
+            ));
+        }
+    }
+
+    async function refreshBaaSLogs() {
+        const select = document.getElementById('baas-log-service-select');
+        const output = document.getElementById('baas-logs-output');
+        if (!select || !output || !currentDb) return;
+        
+        const containerID = select.value;
+        output.innerHTML = '<div class="text-gray-500 mb-1 opacity-50"># Fetching engine log streams...</div>';
+
+        try {
+            const response = await App.API.get(`/containers/${containerID}/logs`);
+            if (response.success) {
+                const logsList = response.data.logs || [];
+                if (logsList.length === 0) {
+                    output.innerHTML = '<div class="text-gray-500 opacity-50"># No log events recorded yet.</div>';
+                    return;
+                }
+                
+                output.innerHTML = logsList.map(entry => {
+                    const timeStr = new Date(entry.timestamp).toLocaleString();
+                    const cleanMsg = escapeHTML(entry.message);
+                    let levelColor = "text-gray-400";
+                    if (entry.level === 'error' || entry.level === 'stderr') {
+                        levelColor = "text-red-400 font-bold";
+                    } else if (entry.level === 'warn') {
+                        levelColor = "text-yellow-400";
+                    }
+                    return `<div class="flex items-start space-x-2 font-mono leading-relaxed"><span class="text-gray-600 flex-shrink-0 font-bold select-none">[${timeStr}]</span><span class="${levelColor} flex-shrink-0 uppercase font-semibold text-[10px] select-none tracking-wider">${entry.level}:</span><span class="text-gray-300 select-text whitespace-pre-wrap break-all">${cleanMsg}</span></div>`;
+                }).join('');
+                
+                output.scrollTop = output.scrollHeight;
+            } else {
+                output.innerHTML = '<div class="text-red-500">Failed to render container log events.</div>';
+            }
+        } catch (e) {
+            output.innerHTML = '<div class="text-red-500">Connection error while retrieving logs.</div>';
+        }
+    }
+
+    const baasGuidesData = {
+        pocketbase: {
+            js: {
+                init: {
+                    file: "index.ts",
+                    code: `import PocketBase from 'pocketbase';\n\nconst pb = new PocketBase('http://HOST_IP:HOST_PORT');`
+                },
+                auth: {
+                    file: "auth.ts",
+                    code: `import PocketBase from 'pocketbase';\nconst pb = new PocketBase('http://HOST_IP:HOST_PORT');\n\n// Authenticate as a normal application user\nconst authData = await pb.collection('users').authWithPassword(\n  'admin@example.com',\n  'DB_PASSWORD'\n);\n\nconsole.log(pb.authStore.isValid);\nconsole.log(pb.authStore.token);`
+                },
+                query: {
+                    file: "query.ts",
+                    code: `import PocketBase from 'pocketbase';\nconst pb = new PocketBase('http://HOST_IP:HOST_PORT');\n\n// Fetch a paginated records list\nconst resultList = await pb.collection('posts').getList(1, 50, {\n  filter: 'created >= "2026-01-01" && active = true',\n});\nconsole.log(resultList.items);`
+                },
+                insert: {
+                    file: "insert.ts",
+                    code: `import PocketBase from 'pocketbase';\nconst pb = new PocketBase('http://HOST_IP:HOST_PORT');\n\nconst record = await pb.collection('posts').create({\n  title: 'Hello GoPulse!',\n  content: 'PocketBase is running natively in Docker.',\n  active: true\n});\nconsole.log(record.id);`
+                },
+                realtime: {
+                    file: "realtime.ts",
+                    code: `import PocketBase from 'pocketbase';\nconst pb = new PocketBase('http://HOST_IP:HOST_PORT');\n\n// Subscribe to real-time events on posts collection\npb.collection('posts').subscribe('*', (e) => {\n  console.log('Action:', e.action);\n  console.log('Record:', e.record);\n});\n\n// Unsubscribe later:\n// pb.collection('posts').unsubscribe();`
+                }
+            },
+            flutter: {
+                init: {
+                    file: "main.dart",
+                    code: `import 'package:pocketbase/pocketbase.dart';\n\nfinal pb = PocketBase('http://HOST_IP:HOST_PORT');`
+                },
+                auth: {
+                    file: "auth.dart",
+                    code: `import 'package:pocketbase/pocketbase.dart';\nfinal pb = PocketBase('http://HOST_IP:HOST_PORT');\n\nfinal authData = await pb.collection('users').authWithPassword(\n  'admin@example.com',\n  'DB_PASSWORD',\n);`
+                },
+                query: {
+                    file: "query.dart",
+                    code: `import 'package:pocketbase/pocketbase.dart';\nfinal pb = PocketBase('http://HOST_IP:HOST_PORT');\n\nfinal records = await pb.collection('posts').getList(\n  page: 1,\n  perPage: 30,\n  filter: 'active = true',\n);`
+                },
+                insert: {
+                    file: "create.dart",
+                    code: `import 'package:pocketbase/pocketbase.dart';\nfinal pb = PocketBase('http://HOST_IP:HOST_PORT');\n\nfinal record = await pb.collection('posts').create(body: {\n  'title': 'Flutter post',\n  'content': 'Created from Dart SDK',\n  'active': true,\n});`
+                },
+                realtime: {
+                    file: "realtime.dart",
+                    code: `import 'package:pocketbase/pocketbase.dart';\nfinal pb = PocketBase('http://HOST_IP:HOST_PORT');\n\npb.collection('posts').subscribe('*', (e) {\n  print(e.action); // create, update, delete\n  print(e.record); // RecordModel\n});`
+                }
+            },
+            python: {
+                init: {
+                    file: "main.py",
+                    code: `from pocketbase import PocketBase\n\npb = PocketBase('http://HOST_IP:HOST_PORT')`
+                },
+                auth: {
+                    file: "auth.py",
+                    code: `from pocketbase import PocketBase\npb = PocketBase('http://HOST_IP:HOST_PORT')\n\nauth_data = pb.collection('users').auth_with_password(\n  'admin@example.com',\n  'DB_PASSWORD'\n)`
+                },
+                query: {
+                    file: "query.py",
+                    code: `from pocketbase import PocketBase\npb = PocketBase('http://HOST_IP:HOST_PORT')\n\nrecords = pb.collection('posts').get_list(\n  page=1,\n  per_page=30,\n  query_params={"filter": "active = true"}\n)`
+                },
+                insert: {
+                    file: "insert.py",
+                    code: `from pocketbase import PocketBase\npb = PocketBase('http://HOST_IP:HOST_PORT')\n\nrecord = pb.collection('posts').create({\n  "title": "Python client",\n  "content": "Running under pip",\n  "active": True\n})`
+                },
+                realtime: {
+                    file: "realtime.py",
+                    code: `# Real-time subscriptions require SSE support (e.g. via sseclient)\nprint("SSE subscriptions are supported natively in JavaScript/Dart SDKs.\\nFor Python, construct standard SSE client listeners on /api/realtime.")`
+                }
+            },
+            go: {
+                init: {
+                    file: "main.go",
+                    code: `package main\n\nimport "github.com/pocketbase/pocketbase"\n\nfunc main() {\n    app := pocketbase.New()\n    // Start PocketBase server embedded\n    if err := app.Start(); err != nil {\n        panic(err)\n    }\n}`
+                },
+                auth: {
+                    file: "auth.go",
+                    code: `// To connect as a Go HTTP client, use standard HTTP request\n// or PocketBase Go SDK client wrapper.`
+                },
+                query: {
+                    file: "query.go",
+                    code: `// Fetch embedded posts collection\npackage main\nimport (\n    "github.com/pocketbase/pocketbase"\n    "github.com/pocketbase/pocketbase/models"\n)\n\nfunc query(app *pocketbase.PocketBase) {\n    records, err := app.Dao().FindRecordsByFilter(\n        "posts",\n        "active = true",\n        "-created",\n        30,\n        0,\n    )\n}`
+                },
+                insert: {
+                    file: "insert.go",
+                    code: `package main\nimport (\n    "github.com/pocketbase/pocketbase"\n    "github.com/pocketbase/pocketbase/models"\n)\n\nfunc insert(app *pocketbase.PocketBase) {\n    collection, _ := app.Dao().FindCollectionByNameOrId("posts")\n    record := models.NewRecord(collection)\n    record.Set("title", "Go insertion")\n    record.Set("active", true)\n    app.Dao().SaveRecord(record)\n}`
+                },
+                realtime: {
+                    file: "events.go",
+                    code: `package main\nimport "github.com/pocketbase/pocketbase"\n\nfunc hook(app *pocketbase.PocketBase) {\n    app.OnRecordBeforeCreateRequest().Add(func(e *core.RecordCreateEvent) error {\n        print("Hook triggered!")\n        return nil\n    })\n}`
+                }
+            },
+            curl: {
+                init: {
+                    file: "curl.sh",
+                    code: `curl -X GET http://HOST_IP:HOST_PORT/api/health`
+                },
+                auth: {
+                    file: "auth.sh",
+                    code: `curl -X POST http://HOST_IP:HOST_PORT/api/collections/users/auth-with-password \\\n  -H "Content-Type: application/json" \\\n  -d '{"identity":"admin@example.com", "password":"DB_PASSWORD"}'`
+                },
+                query: {
+                    file: "query.sh",
+                    code: `curl -X GET "http://HOST_IP:HOST_PORT/api/collections/posts/records?page=1&perPage=30&filter=(active=true)"`
+                },
+                insert: {
+                    file: "insert.sh",
+                    code: `curl -X POST http://HOST_IP:HOST_PORT/api/collections/posts/records \\\n  -H "Content-Type: application/json" \\\n  -d '{"title":"curl post", "content":"sent via shell script", "active":true}'`
+                },
+                realtime: {
+                    file: "realtime.sh",
+                    code: `curl -N -H "Accept: text/event-stream" http://HOST_IP:HOST_PORT/api/realtime`
+                }
+            }
+        },
+        appwrite: {
+            js: {
+                init: {
+                    file: "index.ts",
+                    code: `import { Client, Databases } from 'appwrite';\n\nconst client = new Client()\n  .setEndpoint('http://HOST_IP:HOST_PORT/v1')\n  .setProject('YOUR_PROJECT_ID');\n\nconst databases = new Databases(client);`
+                },
+                auth: {
+                    file: "auth.ts",
+                    code: `import { Client, Account } from 'appwrite';\nconst client = new Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\nconst account = new Account(client);\n\nconst session = await account.createEmailSession(\n  'admin@example.com',\n  'DB_PASSWORD'\n);`
+                },
+                query: {
+                    file: "query.ts",
+                    code: `import { Client, Databases, Query } from 'appwrite';\nconst client = new Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\nconst databases = new Databases(client);\n\nconst response = await databases.listDocuments(\n  'YOUR_DATABASE_ID',\n  'YOUR_COLLECTION_ID',\n  [Query.equal('active', true)]\n);`
+                },
+                insert: {
+                    file: "insert.ts",
+                    code: `import { Client, Databases, ID } from 'appwrite';\nconst client = new Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\nconst databases = new Databases(client);\n\nconst document = await databases.createDocument(\n  'YOUR_DATABASE_ID',\n  'YOUR_COLLECTION_ID',\n  ID.unique(),\n  { title: 'Appwrite Doc', active: true }\n);`
+                },
+                realtime: {
+                    file: "realtime.ts",
+                    code: `import { Client } from 'appwrite';\nconst client = new Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\n\nclient.subscribe('documents', response => {\n  console.log('Realtime change!', response);\n});`
+                }
+            },
+            flutter: {
+                init: {
+                    file: "main.dart",
+                    code: `import 'package:appwrite/appwrite.dart';\n\nClient client = Client()\n  .setEndpoint('http://HOST_IP:HOST_PORT/v1')\n  .setProject('YOUR_PROJECT_ID');\n\nDatabases databases = Databases(client);`
+                },
+                auth: {
+                    file: "auth.dart",
+                    code: `import 'package:appwrite/appwrite.dart';\nClient client = Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\nAccount account = Account(client);\n\nfinal session = await account.createEmailSession(\n  email: 'admin@example.com',\n  password: 'DB_PASSWORD',\n);`
+                },
+                query: {
+                    file: "query.dart",
+                    code: `import 'package:appwrite/appwrite.dart';\nClient client = Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\nDatabases databases = Databases(client);\n\nfinal response = await databases.listDocuments(\n  databaseId: 'YOUR_DATABASE_ID',\n  collectionId: 'YOUR_COLLECTION_ID',\n  queries: [Query.equal('active', true)],\n);`
+                },
+                insert: {
+                    file: "insert.dart",
+                    code: `import 'package:appwrite/appwrite.dart';\nClient client = Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\nDatabases databases = Databases(client);\n\nfinal document = await databases.createDocument(\n  databaseId: 'YOUR_DATABASE_ID',\n  collectionId: 'YOUR_COLLECTION_ID',\n  documentId: ID.unique(),\n  data: {'title': 'Flutter appwrite', 'active': true},\n);`
+                },
+                realtime: {
+                    file: "realtime.dart",
+                    code: `import 'package:appwrite/appwrite.dart';\nClient client = Client().setEndpoint('http://HOST_IP:HOST_PORT/v1').setProject('YOUR_PROJECT_ID');\n\nfinal realtime = Realtime(client);\nrealtime.subscribe(['collections.posts.documents'], (e) {\n  print(e.events);\n});`
+                }
+            },
+            python: {
+                init: {
+                    file: "main.py",
+                    code: `from appwrite.client import Client\nfrom appwrite.services.databases import Databases\n\nclient = Client()\nclient.set_endpoint('http://HOST_IP:HOST_PORT/v1')\nclient.set_project('YOUR_PROJECT_ID')\n\ndatabases = Databases(client)`
+                },
+                auth: {
+                    file: "auth.py",
+                    code: `from appwrite.client import Client\nfrom appwrite.services.account import Account\nclient = Client().set_endpoint('http://HOST_IP:HOST_PORT/v1').set_project('YOUR_PROJECT_ID')\naccount = Account(client)\n\nsession = account.create_email_session('admin@example.com', 'DB_PASSWORD')`
+                },
+                query: {
+                    file: "query.py",
+                    code: `from appwrite.client import Client\nfrom appwrite.services.databases import Databases\nfrom appwrite.query import Query\nclient = Client().set_endpoint('http://HOST_IP:HOST_PORT/v1').set_project('YOUR_PROJECT_ID')\ndatabases = Databases(client)\n\nresponse = databases.list_documents(\n  database_id='YOUR_DATABASE_ID',\n  collection_id='YOUR_COLLECTION_ID',\n  queries=[Query.equal('active', True)]\n)`
+                },
+                insert: {
+                    file: "insert.py",
+                    code: `from appwrite.client import Client\nfrom appwrite.services.databases import Databases\nfrom appwrite.id import ID\nclient = Client().set_endpoint('http://HOST_IP:HOST_PORT/v1').set_project('YOUR_PROJECT_ID')\ndatabases = Databases(client)\n\ndocument = databases.create_document(\n  database_id='YOUR_DATABASE_ID',\n  collection_id='YOUR_COLLECTION_ID',\n  document_id=ID.unique(),\n  data={"title": "Python SDK", "active": True}\n)`
+                },
+                realtime: {
+                    file: "realtime.py",
+                    code: `# Websocket subscriptions are fully supported in core SDK hooks.\nprint("WebSocket callbacks are routed natively to standard listeners.")`
+                }
+            },
+            go: {
+                init: {
+                    file: "main.go",
+                    code: `package main\n\nimport (\n    "github.com/appwrite/sdk-for-go/appwrite"\n)\n\nfunc main() {\n    client := appwrite.NewClient()\n    client.SetEndpoint("http://HOST_IP:HOST_PORT/v1")\n    client.SetProject("YOUR_PROJECT_ID")\n}`
+                },
+                auth: {
+                    file: "auth.go",
+                    code: `package main\nimport "github.com/appwrite/sdk-for-go/appwrite"\n\nfunc auth(client appwrite.Client) {\n    account := appwrite.NewAccount(client)\n    session, err := account.CreateEmailSession("admin@example.com", "DB_PASSWORD")\n}`
+                },
+                query: {
+                    file: "query.go",
+                    code: `package main\nimport "github.com/appwrite/sdk-for-go/appwrite"\n\nfunc query(client appwrite.Client) {\n    databases := appwrite.NewDatabases(client)\n    docList, err := databases.ListDocuments(\n        "YOUR_DATABASE_ID",\n        "YOUR_COLLECTION_ID",\n        databases.WithQueryEqual("active", true),\n    )\n}`
+                },
+                insert: {
+                    file: "insert.go",
+                    code: `package main\nimport "github.com/appwrite/sdk-for-go/appwrite"\n\nfunc insert(client appwrite.Client) {\n    databases := appwrite.NewDatabases(client)\n    row := map[string]interface{}{\n        "title": "Go SDK integration",\n        "active": true,\n    }\n    databases.CreateDocument("YOUR_DATABASE_ID", "YOUR_COLLECTION_ID", "unique()", row)\n}`
+                },
+                realtime: {
+                    file: "realtime.go",
+                    code: `// Appwrite Real-time WebSockets are supported natively in client SDK libraries.`
+                }
+            },
+            curl: {
+                init: {
+                    file: "curl.sh",
+                    code: `curl -X GET http://HOST_IP:HOST_PORT/v1/health`
+                },
+                auth: {
+                    file: "auth.sh",
+                    code: `curl -X POST http://HOST_IP:HOST_PORT/v1/account/sessions/email \\\n  -H "Content-Type: application/json" \\\n  -H "X-Appwrite-Project: YOUR_PROJECT_ID" \\\n  -d '{"email":"admin@example.com", "password":"DB_PASSWORD"}'`
+                },
+                query: {
+                    file: "query.sh",
+                    code: `curl -X GET "http://HOST_IP:HOST_PORT/v1/databases/YOUR_DATABASE_ID/collections/YOUR_COLLECTION_ID/documents" \\\n  -H "X-Appwrite-Project: YOUR_PROJECT_ID"`
+                },
+                insert: {
+                    file: "insert.sh",
+                    code: `curl -X POST http://HOST_IP:HOST_PORT/v1/databases/YOUR_DATABASE_ID/collections/YOUR_COLLECTION_ID/documents \\\n  -H "Content-Type: application/json" \\\n  -H "X-Appwrite-Project: YOUR_PROJECT_ID" \\\n  -d '{"documentId":"unique()", "data":{"title":"curl post", "active":true}}'`
+                },
+                realtime: {
+                    file: "realtime.sh",
+                    code: `curl -N -H "Accept: text/event-stream" http://HOST_IP:HOST_PORT/v1/realtime`
+                }
+            }
+        }
+    };
+
+    function refreshBaaSGuides() {
+        const list = document.getElementById('baas-guide-topics');
+        if (!list || !currentDb) return;
+        list.innerHTML = '';
+        
+        const topics = [
+            { id: 'init', name: 'Initialize Client', icon: 'fa-plug' },
+            { id: 'auth', name: 'User Authentication', icon: 'fa-user-lock' },
+            { id: 'query', name: 'Query Collection', icon: 'fa-search' },
+            { id: 'insert', name: 'Create / Insert Record', icon: 'fa-plus-square' },
+            { id: 'realtime', name: 'Real-time Event Streams', icon: 'fa-bolt' }
+        ];
+
+        topics.forEach(t => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.onclick = () => {
+                activeBaaSGuideTopic = t.id;
+                refreshBaaSGuides();
+            };
+            
+            const isActive = activeBaaSGuideTopic === t.id;
+            
+            btn.className = `p-3 rounded-lg flex items-center space-x-3 text-xs font-bold text-left transition-all border ${
+                isActive 
+                    ? 'bg-orange-600/10 border-orange-500/40 text-orange-400' 
+                    : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'
+            }`;
+            
+            btn.innerHTML = `
+                <i class="fas ${t.icon} ${isActive ? 'text-orange-400 animate-pulse' : 'text-gray-500'} flex-shrink-0 text-sm"></i>
+                <span class="truncate">${t.name}</span>
+            `;
+            list.appendChild(btn);
+        });
+
+        renderBaaSGuideCode();
+    }
+
+    function renderBaaSGuideCode() {
+        if (!currentDb) return;
+        const langSelect = document.getElementById('baas-guide-lang-select');
+        const fileLabel = document.getElementById('baas-guide-file-label');
+        const codeEl = document.getElementById('baas-guide-code');
+        if (!langSelect || !fileLabel || !codeEl) return;
+
+        const lang = langSelect.value;
+        const engine = currentDb.type;
+
+        const topicData = baasGuidesData[engine]?.[lang]?.[activeBaaSGuideTopic];
+        if (!topicData) {
+            codeEl.innerText = '// Guide snippet not available for this combination.';
+            fileLabel.innerText = 'empty';
+            return;
+        }
+
+        fileLabel.innerText = topicData.file;
+
+        let code = topicData.code;
+        const hostIP = (App.System && App.System.currentServer && App.System.currentServer.host) 
+            || window.location.hostname 
+            || "127.0.0.1";
+            
+        code = code.replace(/HOST_IP/g, hostIP);
+        code = code.replace(/HOST_PORT/g, currentDb.host_port);
+        code = code.replace(/DB_PASSWORD/g, currentDb.password);
+        code = code.replace(/DB_USER/g, currentDb.username);
+
+        codeEl.innerText = code;
+    }
+
+    function copyBaaSGuideCode() {
+        const codeEl = document.getElementById('baas-guide-code');
+        if (!codeEl) return;
+        const text = codeEl.innerText;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+                App.UI.toast('success', 'Code snippet copied to clipboard.');
+            });
+        }
+    }
+
+    function toggleBaaSPasswordVisibility() {
+        if (!currentDb) return;
+        const passEl = document.getElementById('baas-settings-pass');
+        const eye = document.getElementById('baas-settings-pass-eye');
+        if (!passEl || !eye) return;
+
+        if (passEl.innerText === "••••••••") {
+            passEl.innerText = currentDb.password;
+            eye.className = "far fa-eye-slash";
+        } else {
+            passEl.innerText = "••••••••";
+            eye.className = "far fa-eye";
+        }
+    }
+
+    async function deleteBaaSInstance() {
+        if (!currentDb) return;
+        const deleteVolume = document.getElementById('baas-delete-volume-check').checked;
+        
+        let confirmMsg = `Permanently delete "${currentDb.name}"?`;
+        if (deleteVolume) {
+            confirmMsg += `\n\n⚠️ This will also PURGE all data volumes, users, and configurations on the remote host!`;
+        }
+
+        if (!confirm(confirmMsg)) return;
+
+        try {
+            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}?delete_volume=${deleteVolume}`);
+            if (res.success) {
+                App.UI.toast('success', 'BaaS engine instance successfully destroyed.');
+                showListView();
+            } else {
+                App.UI.toast('error', `Delete failed: ${res.message}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Failed to execute engine deletion.');
+        }
+    }
+
+    // ---- BaaS Backups Integration ----
+
+    async function loadAutoBackupConfigBaaS() {
+        if (!currentDb) return;
+        const toggle = document.getElementById('baas-auto-backup-toggle');
+        const retention = document.getElementById('baas-auto-backup-retention');
+        const statusText = document.getElementById('baas-auto-backup-status-text');
+        const settingsGrid = document.getElementById('baas-auto-backup-settings');
+        
+        if (!toggle || !retention) return;
+
+        try {
+            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/auto-backup`);
+            if (res.success && res.data) {
+                toggle.checked = res.data.auto_backup;
+                retention.value = res.data.retention_days;
+                
+                if (res.data.auto_backup) {
+                    statusText.textContent = 'Enabled';
+                    statusText.className = 'ml-3 text-sm font-semibold text-orange-400';
+                    settingsGrid.classList.remove('hidden');
+                } else {
+                    statusText.textContent = 'Disabled';
+                    statusText.className = 'ml-3 text-sm font-medium text-gray-400';
+                    settingsGrid.classList.add('hidden');
+                }
+            }
+        } catch (e) {
+            console.error('Failed to load auto backup configuration for BaaS', e);
+        }
+    }
+
+    async function saveAutoBackupConfigBaaS() {
+        if (!currentDb) return;
+        const toggle = document.getElementById('baas-auto-backup-toggle');
+        const retention = document.getElementById('baas-auto-backup-retention');
+        if (!toggle || !retention) return;
+
+        const enabled = toggle.checked;
+        const retentionDays = parseInt(retention.value, 10);
+
+        try {
+            const res = await App.API.put(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/auto-backup`, {
+                auto_backup: enabled,
+                retention_days: retentionDays
+            });
+
+            if (res.success) {
+                App.UI.toast('success', 'BaaS backup configuration updated.');
+                loadAutoBackupConfigBaaS();
+            } else {
+                App.UI.toast('error', `Failed to save configuration: ${res.message}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Connection error while saving configuration.');
+        }
+    }
+
+    async function loadBackupsBaaS() {
+        if (!currentDb) return;
+        
+        loadAutoBackupConfigBaaS();
+        const tbody = document.getElementById('baas-backups-table-body');
+        const empty = document.getElementById('baas-backups-empty');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        empty.classList.add('hidden');
+
+        try {
+            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups`);
+            if (!res.success || !res.data || res.data.length === 0) {
+                empty.classList.remove('hidden');
+                return;
+            }
+
+            res.data.forEach(backup => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-800/20 border-b border-gray-700/50 text-sm text-gray-300";
+                
+                const sizeMB = (backup.size / (1024 * 1024)).toFixed(2);
+                const createdTime = new Date(backup.created_at).toLocaleString();
+
+                tr.innerHTML = `
+                    <td class="px-6 py-4 font-mono text-xs text-white flex items-center space-x-2">
+                        <i class="far fa-file-archive text-orange-400"></i>
+                        <span>${escapeHTML(backup.filename)}</span>
+                    </td>
+                    <td class="px-6 py-4 font-semibold">${sizeMB} MB</td>
+                    <td class="px-6 py-4 text-gray-400">${createdTime}</td>
+                    <td class="px-6 py-4 text-right">
+                        <div class="flex justify-end space-x-2">
+                            <button onclick="App.Databases.restoreBackupBaaS('${escapeHTML(backup.filename)}', this)" class="px-3 py-1.5 bg-orange-950/40 hover:bg-orange-950/60 border border-orange-500/20 text-orange-400 text-xs font-bold rounded-lg transition-colors flex items-center space-x-1">
+                                <i class="fas fa-history"></i>
+                                <span>Restore</span>
+                            </button>
+                            <a href="/api/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/download?filename=${encodeURIComponent(backup.filename)}" download class="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 border border-gray-600/30 text-gray-300 text-xs font-bold rounded-lg transition-colors flex items-center space-x-1">
+                                <i class="fas fa-download"></i>
+                                <span>Download</span>
+                            </a>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } catch (e) {
+            empty.classList.remove('hidden');
+        }
+    }
+
+    async function createBackupBaaS() {
+        if (!currentDb) return;
+        const btn = document.querySelector('#baas-panel-backups button[onclick*="createBackupBaaS"]');
+        if (!btn) return;
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Generating Snapshot...';
+        btn.disabled = true;
+
+        try {
+            const res = await App.API.post(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backup`);
+            if (res.success) {
+                App.UI.toast('success', 'BaaS data snapshot generated and archived.');
+                loadBackupsBaaS();
+            } else {
+                App.UI.toast('error', `Backup failed: ${res.message}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Backup operation timed out.');
+        } finally {
+            btn.innerHTML = orig;
+            btn.disabled = false;
+        }
+    }
+
+    async function restoreBackupBaaS(filename, btnElement) {
+        if (!confirm(`Restore BaaS data snapshot "${filename}"?\n\n⚠️ This will OVERWRITE and completely replace the active container stack files.`)) {
+            return;
+        }
+
+        const orig = btnElement.innerHTML;
+        btnElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        btnElement.disabled = true;
+
+        try {
+            const res = await App.API.post(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/restore`, {
+                filename
+            });
+
+            if (res.success) {
+                App.UI.toast('success', 'BaaS engine data successfully restored from snapshot.');
+            } else {
+                App.UI.toast('error', `Restore failed: ${res.message}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Restore connection failed.');
+        } finally {
+            btnElement.innerHTML = orig;
+            btnElement.disabled = false;
+        }
+    }
+
+    async function importBackupBaaS(event) {
+        if (!currentDb) return;
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const btn = document.querySelector('#baas-panel-backups button[onclick*="baas-import-backup-file"]');
+        let orig = '';
+        if (btn) {
+            orig = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading...';
+            btn.disabled = true;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            App.UI.toast('info', 'Uploading BaaS database backup...');
+            const res = await App.API.upload(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/import`, formData);
+            if (res.success) {
+                App.UI.toast('success', 'Backup imported successfully.');
+                loadBackupsBaaS();
+            } else {
+                App.UI.toast('error', `Import failed: ${res.message || res.error}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Import network connection failed.');
+        } finally {
+            if (btn) {
+                btn.innerHTML = orig;
+                btn.disabled = false;
+            }
+        }
+    }
+
     return {
         load,
+        switchSubTab,
         openProvisionModal,
         closeProvisionModal,
         onProvTypeChange,
@@ -2020,6 +3272,9 @@ App.Databases = (function() {
         closeInsertRowModal,
         submitInsertRow,
         deleteRow,
+        openEditRowModal,
+        closeEditRowModal,
+        submitEditRow,
         // Users Management
         loadUsers,
         openAddUserModal,
@@ -2027,6 +3282,18 @@ App.Databases = (function() {
         toggleUserPassVisibility,
         copyUserURI,
         submitAddUser,
-        deleteUser
+        deleteUser,
+        // BaaS Exports
+        switchBaaSTab,
+        refreshBaaSLogs,
+        refreshBaaSGuides,
+        copyBaaSGuideCode,
+        copyEndpoint,
+        toggleBaaSPasswordVisibility,
+        deleteBaaSInstance,
+        createBackupBaaS,
+        restoreBackupBaaS,
+        importBackupBaaS,
+        saveAutoBackupConfigBaaS
     };
 })();

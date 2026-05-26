@@ -682,6 +682,40 @@ func (h *DatabaseHandler) DeleteRow(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateRow handles PUT /api/servers/{serverID}/databases/{dbID}/schemas/{schema}/tables/{table}/rows
+func (h *DatabaseHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
+	dbID := chi.URLParam(r, "dbID")
+	schema := chi.URLParam(r, "schema")
+	table := chi.URLParam(r, "table")
+
+	pkCol := r.URL.Query().Get("pk_col")
+	pkVal := r.URL.Query().Get("pk_val")
+
+	if pkCol == "" || pkVal == "" {
+		respondError(w, http.StatusBadRequest, "Primary key column (pk_col) and value (pk_val) are required", nil)
+		return
+	}
+
+	var req struct {
+		Data map[string]interface{} `json:"data"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body", err)
+		return
+	}
+
+	if err := h.service.UpdateRow(r.Context(), dbID, schema, table, pkCol, pkVal, req.Data); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update row/document", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Message: "Row/Document updated successfully",
+	})
+}
+
 // GetDatabaseTelemetry handles GET /api/servers/{serverID}/databases/{dbID}/telemetry
 func (h *DatabaseHandler) GetDatabaseTelemetry(w http.ResponseWriter, r *http.Request) {
 	dbID := chi.URLParam(r, "dbID")

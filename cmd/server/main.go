@@ -109,6 +109,12 @@ func main() {
 	backupScheduler := services.NewBackupScheduler(databaseService, databaseStore)
 	go backupScheduler.Start(ctx)
 
+	// Auto-start marked projects in background after a short delay (to let SSH clients connect)
+	go func() {
+		time.Sleep(5 * time.Second)
+		projectService.AutoStartProjects(ctx)
+	}()
+
 	// Setup Router
 	r := chi.NewRouter()
 
@@ -302,6 +308,7 @@ func main() {
 					r.Get("/{dbID}/schemas/{schema}/tables/{table}/columns", databaseHandler.DescribeTable)
 					r.Get("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.BrowseTableData)
 					r.Post("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.InsertRow)
+					r.Put("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.UpdateRow)
 					r.Delete("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.DeleteRow)
 				})
 

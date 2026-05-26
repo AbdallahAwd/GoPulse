@@ -97,13 +97,14 @@ func (h *GitHubHandler) CloneRepo(w http.ResponseWriter, r *http.Request) {
 	token := cookie.Value
 
 	var req struct {
-		Name     string `json:"name"`
-		RepoURL  string `json:"repo_url"`
-		Type     string `json:"type"`
-		Port     int    `json:"port"`
-		BuildCmd string `json:"build_cmd"`
-		StartCmd string `json:"start_cmd"`
-		ServerID string `json:"server_id"`
+		Name          string `json:"name"`
+		RepoURL       string `json:"repo_url"`
+		Type          string `json:"type"`
+		Port          int    `json:"port"`
+		BuildCmd      string `json:"build_cmd"`
+		StartCmd      string `json:"start_cmd"`
+		ServerID      string `json:"server_id"`
+		RestartOnBoot bool   `json:"restart_on_boot"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -117,15 +118,16 @@ func (h *GitHubHandler) CloneRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	project := models.Project{
-		ID:           uuid.New().String(),
-		ServerID:     req.ServerID,
-		Name:         req.Name,
-		Type:         req.Type,
-		Port:         req.Port,
-		HostPort:     req.Port, // Default to same port
-		BuildCommand: req.BuildCmd,
-		StartCommand: req.StartCmd,
-		BuildType:    "process", // Default
+		ID:            uuid.New().String(),
+		ServerID:      req.ServerID,
+		Name:          req.Name,
+		Type:          req.Type,
+		Port:          req.Port,
+		HostPort:      req.Port, // Default to same port
+		BuildCommand:  req.BuildCmd,
+		StartCommand:  req.StartCmd,
+		BuildType:     "process", // Default
+		RestartOnBoot: req.RestartOnBoot,
 	}
 
 	newProject, err := h.projectService.CreateProjectFromRepo(r.Context(), project, req.RepoURL, token)

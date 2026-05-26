@@ -739,9 +739,9 @@
                     <h2 class="text-2xl font-bold text-white tracking-tight">Database Clusters</h2>
                     <p class="text-sm text-gray-400">Deploy and manage high-performance, containerized relational and document databases.</p>
                 </div>
-                <button onclick="App.Databases.openProvisionModal()" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
+                <button id="db-provision-btn" onclick="App.Databases.openProvisionModal('clusters')" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
                     <i class="fas fa-plus"></i>
-                    <span>Provision Database</span>
+                    <span id="db-provision-btn-text">Provision Database</span>
                 </button>
             </div>
 
@@ -792,7 +792,7 @@
             </div>
 
             <!-- Stats Ribbon -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-4">
                 <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
                     <div>
                         <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">MySQL Engines</p>
@@ -847,18 +847,61 @@
                         <i class="fas fa-server text-xl"></i>
                     </div>
                 </div>
+
+                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">Appwrite BaaS</p>
+                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-appwrite">0</p>
+                    </div>
+                    <div class="p-3 bg-pink-950/20 text-pink-400 rounded-lg">
+                        <i class="fas fa-rocket text-xl"></i>
+                    </div>
+                </div>
             </div>
 
 
-            <!-- Databases Grid -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="databases-grid">
-                <!-- Populated dynamically via JS -->
+            <!-- Sub-tab Navigation Pills -->
+            <div id="db-subtabs-container" class="flex space-x-2 border-b border-gray-700/40 pb-px mb-6">
+                <button onclick="App.Databases.switchSubTab('clusters')" id="db-subtab-clusters" class="py-2.5 px-4 font-bold text-sm border-b-2 border-blue-500 text-blue-400 transition-all flex items-center space-x-2">
+                    <i class="fas fa-database text-xs"></i>
+                    <span>Database Clusters</span>
+                </button>
+                <button onclick="App.Databases.switchSubTab('baas')" id="db-subtab-baas" class="py-2.5 px-4 font-bold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-all flex items-center space-x-2">
+                    <i class="fas fa-cubes text-xs"></i>
+                    <span>Backend-As-A-Service (BaaS)</span>
+                </button>
             </div>
-            
-            <div id="db-empty-state" class="hidden bg-gray-800/20 rounded-xl p-12 text-center border border-gray-700/40">
-                <i class="fas fa-database text-5xl text-gray-600 mb-4"></i>
-                <h3 class="text-lg font-bold text-white">No Databases Provisioned</h3>
-                <p class="text-sm text-gray-400 mt-1 max-w-sm mx-auto">Get started by provisioning an isolated MySQL, Postgres, or MongoDB cluster instantly.</p>
+
+            <!-- Standard Database Clusters Section -->
+            <div id="db-clusters-section" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="databases-grid">
+                    <!-- Populated dynamically via JS -->
+                </div>
+                <div id="db-clusters-empty" class="hidden bg-gray-800/20 rounded-xl p-12 text-center border border-gray-700/30 backdrop-blur-md shadow-lg">
+                    <i class="fas fa-database text-5xl text-gray-600 mb-4 animate-pulse"></i>
+                    <h3 class="text-lg font-bold text-white">No Database Clusters Provisioned</h3>
+                    <p class="text-sm text-gray-400 mt-1 max-w-sm mx-auto mb-5">Get started by provisioning an isolated MySQL, Postgres, or MongoDB cluster instantly.</p>
+                    <button onclick="App.Databases.openProvisionModal('clusters')" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2 mx-auto">
+                        <i class="fas fa-plus"></i>
+                        <span>Provision Database</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Backend-As-A-Service (BaaS) Instances Section -->
+            <div id="baas-section" class="space-y-4 hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="baas-grid">
+                    <!-- Populated dynamically via JS -->
+                </div>
+                <div id="baas-empty" class="hidden bg-gray-800/20 rounded-xl p-12 text-center border border-gray-700/30 backdrop-blur-md shadow-lg">
+                    <i class="fas fa-cubes text-5xl text-orange-500/60 mb-4 animate-pulse"></i>
+                    <h3 class="text-lg font-bold text-white">No BaaS Instances Deployed</h3>
+                    <p class="text-sm text-gray-400 mt-1 max-w-sm mx-auto mb-5">Deploy isolated self-hosted backend systems like PocketBase instantly on this VPS.</p>
+                    <button onclick="App.Databases.openProvisionModal('baas')" class="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2 mx-auto">
+                        <i class="fas fa-plus"></i>
+                        <span>Provision BaaS Engine</span>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -1204,6 +1247,344 @@
                 </div>
             </div>
         </div>
+
+        <!-- Dedicated BaaS Manage View -->
+        <div id="baas-manage-view" class="hidden space-y-6">
+            <div class="flex items-center space-x-3 mb-2">
+                <button onclick="App.Databases.showListView()" class="text-gray-400 hover:text-white flex items-center space-x-2 text-sm font-semibold transition-colors">
+                    <i class="fas fa-chevron-left"></i>
+                    <span>Back to engines</span>
+                </button>
+            </div>
+
+            <!-- BaaS Header -->
+            <div class="bg-gray-800/80 border border-gray-700/60 rounded-xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div class="flex items-center space-x-4">
+                    <div id="baas-manage-logo" class="p-4 rounded-xl text-3xl">
+                        <!-- Populated dynamically -->
+                    </div>
+                    <div>
+                        <h2 class="text-2xl font-bold text-white mt-0.5" id="baas-manage-name">PocketBase Engine</h2>
+                        <div class="flex items-center space-x-2.5 mt-1.5">
+                            <span id="baas-manage-type-badge" class="px-2.5 py-0.5 text-xs font-bold rounded-full uppercase">pocketbase</span>
+                            <span id="baas-manage-status-badge" class="px-2.5 py-0.5 text-xs font-bold rounded-full uppercase flex items-center">
+                                <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-green-500 animate-pulse"></span>
+                                <span>Running</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-3" id="baas-manage-actions">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- BaaS Manage Tabs Menu -->
+            <div class="flex border-b border-gray-700/60 space-x-6 overflow-x-auto pb-px">
+                <button onclick="App.Databases.switchBaaSTab('overview')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-orange-500 text-orange-400 transition-colors whitespace-nowrap" data-baas-tab="overview">
+                    <i class="fas fa-chart-line mr-1.5"></i>Overview
+                </button>
+                <button onclick="App.Databases.switchBaaSTab('guides')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="guides">
+                    <i class="fas fa-book mr-1.5"></i>API & Client SDKs
+                </button>
+                <button onclick="App.Databases.switchBaaSTab('env')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="env">
+                    <i class="fas fa-key mr-1.5"></i>API Keys & Env
+                </button>
+                <button onclick="App.Databases.switchBaaSTab('logs')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="logs">
+                    <i class="fas fa-terminal mr-1.5"></i>System Logs
+                </button>
+                <button onclick="App.Databases.switchBaaSTab('backups')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="backups">
+                    <i class="fas fa-archive mr-1.5"></i>Backups
+                </button>
+                <button onclick="App.Databases.switchBaaSTab('settings')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="settings">
+                    <i class="fas fa-sliders-h mr-1.5"></i>Settings
+                </button>
+            </div>
+
+            <!-- BaaS Sub Panels -->
+            
+            <!-- Overview Sub Panel -->
+            <div id="baas-panel-overview" class="baas-panel-content space-y-6">
+                <!-- Launch Banner Card -->
+                <div id="baas-launch-banner">
+                    <!-- Populated dynamically based on pb, appwrite -->
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- CPU usage gauge -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-6 flex flex-col items-center justify-between text-center relative overflow-hidden backdrop-blur-md shadow-lg">
+                        <div class="text-left w-full mb-1">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Container CPU Load</span>
+                        </div>
+                        <div class="relative flex items-center justify-center my-3">
+                            <svg class="w-28 h-28 transform -rotate-90">
+                                <circle class="text-gray-700/30" stroke-width="6" stroke="currentColor" fill="transparent" r="44" cx="56" cy="56"/>
+                                <circle class="text-orange-500 transition-all duration-500 ease-out" stroke-dasharray="276.46" stroke-dashoffset="276.46" id="baas-cpu-circle" stroke-width="6" stroke-linecap="round" stroke="currentColor" fill="transparent" r="44" cx="56" cy="56"/>
+                            </svg>
+                            <div class="absolute flex flex-col items-center">
+                                <span class="text-2xl font-black text-white leading-none" id="baas-cpu-val">0.0%</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-gray-500 mt-1">Real-time Docker core utilization percent.</p>
+                    </div>
+
+                    <!-- RAM Footprint -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-6 flex flex-col items-center justify-between text-center relative overflow-hidden backdrop-blur-md shadow-lg">
+                        <div class="text-left w-full mb-1">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Memory Usage</span>
+                        </div>
+                        <div class="my-5 w-full">
+                            <p class="text-3xl font-black text-white tracking-tight" id="baas-mem-val">0.00 <span class="text-xs font-semibold text-gray-400 uppercase">MB</span></p>
+                            <div class="mt-4 w-44 bg-gray-900/60 rounded-full h-1.5 overflow-hidden mx-auto border border-gray-700/30">
+                                <div class="bg-gradient-to-r from-orange-500 to-amber-500 h-full rounded-full transition-all duration-500" style="width: 0%" id="baas-mem-bar"></div>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-gray-500">Allocated memory: <span id="baas-mem-limit">Unlimited</span></p>
+                    </div>
+
+                    <!-- Disk Storage Footprint -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-6 flex flex-col items-center justify-between text-center relative overflow-hidden backdrop-blur-md shadow-lg">
+                        <div class="text-left w-full mb-1">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Storage Space</span>
+                        </div>
+                        <div class="my-5 w-full">
+                            <p class="text-3xl font-black text-white tracking-tight" id="baas-disk-val">0.00 <span class="text-xs font-semibold text-gray-400 uppercase">MB</span></p>
+                            <div class="mt-4 w-44 bg-gray-900/60 rounded-full h-1.5 overflow-hidden mx-auto border border-gray-700/30">
+                                <div class="bg-gradient-to-r from-orange-500 to-amber-500 h-full rounded-full transition-all duration-500" style="width: 0%" id="baas-disk-bar"></div>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-gray-500">Storage occupied by engine data and assets.</p>
+                    </div>
+                </div>
+
+                <!-- API Endpoints Info -->
+                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-4">
+                    <h3 class="text-lg font-bold text-white flex items-center"><i class="fas fa-network-wired text-orange-400 mr-2"></i>BaaS Gateway Endpoints</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="baas-endpoints-container">
+                        <!-- Populated dynamically depending on engine type -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Guides & Client SDKs Sub Panel -->
+            <div id="baas-panel-guides" class="baas-panel-content hidden space-y-6">
+                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-700/30">
+                        <div class="flex items-center space-x-2.5">
+                            <div class="p-2 bg-orange-950/20 text-orange-400 rounded-lg">
+                                <i class="fas fa-book-open"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-bold text-white leading-tight">Interactive Integration Guide</h3>
+                                <p class="text-[10px] text-gray-400">Step-by-step code snippets to connect your frontend application to this BaaS instance.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">SDK / Language:</span>
+                            <select id="baas-guide-lang-select" onchange="App.Databases.refreshBaaSGuides()" class="bg-gray-900/80 text-white border border-gray-700/80 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-orange-500 font-semibold shadow-inner transition-colors">
+                                <option value="js" selected>JavaScript / TypeScript (Web)</option>
+                                <option value="flutter">Flutter / Dart</option>
+                                <option value="python">Python</option>
+                                <option value="go">Go SDK</option>
+                                <option value="curl">cURL (HTTP REST)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Code Guide Content -->
+                    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                        <!-- Sidebar topics/guides -->
+                        <div class="lg:col-span-1 space-y-2 flex flex-col" id="baas-guide-topics">
+                            <!-- Dynamically loaded topics (e.g. Initialize, Auth, Query, Insert, Realtime) -->
+                        </div>
+                        <!-- Code viewer -->
+                        <div class="lg:col-span-3 space-y-3">
+                            <div class="flex justify-between items-center bg-gray-900 px-4 py-2.5 rounded-t-xl border-t border-x border-gray-700/50">
+                                <span class="text-xs font-mono text-gray-400" id="baas-guide-file-label">index.ts</span>
+                                <button onclick="App.Databases.copyBaaSGuideCode()" class="text-xs text-gray-400 hover:text-white transition-colors flex items-center space-x-1">
+                                    <i class="far fa-copy"></i>
+                                    <span>Copy Snippet</span>
+                                </button>
+                            </div>
+                            <pre class="bg-gray-950 p-4 rounded-b-xl border-b border-x border-gray-700/50 overflow-x-auto text-xs font-mono text-emerald-400 max-h-[450px]" id="baas-guide-code">
+                                <!-- Code snippet -->
+                            </pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Keys & Environment Panel -->
+            <div id="baas-panel-env" class="baas-panel-content hidden space-y-6">
+                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-4">
+                    <h3 class="text-lg font-bold text-white flex items-center"><i class="fas fa-shield-alt text-orange-400 mr-2"></i>Security Tokens & Keys</h3>
+                    <p class="text-sm text-gray-400 font-medium">Use these generated keys and secret tokens in your clients or server-side configurations to authorize application requests.</p>
+                    
+                    <div class="space-y-4 pt-2" id="baas-keys-container">
+                        <!-- Loaded dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Logs Sub Panel -->
+            <div id="baas-panel-logs" class="baas-panel-content hidden space-y-4">
+                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-4">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-gray-700/30">
+                        <div class="flex items-center space-x-2.5">
+                            <div class="p-2 bg-orange-950/20 text-orange-400 rounded-lg">
+                                <i class="fas fa-terminal"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-bold text-white leading-tight">BaaS Service Logs</h3>
+                                <p class="text-[10px] text-gray-400">View real-time standard output and error streams generated by this BaaS deployment.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xs text-gray-400 font-semibold uppercase tracking-wider">Service:</span>
+                                <select id="baas-log-service-select" onchange="App.Databases.refreshBaaSLogs()" class="bg-gray-900/80 text-white border border-gray-700/85 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-orange-500 font-semibold shadow-inner">
+                                    <!-- Populated dynamically -->
+                                </select>
+                            </div>
+                            <button onclick="App.Databases.refreshBaaSLogs()" class="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-xs font-semibold rounded-lg transition-colors">
+                                <i class="fas fa-sync-alt mr-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Logs Output -->
+                    <div class="bg-gray-950 rounded-lg p-4 h-[400px] font-mono text-xs overflow-y-auto text-gray-300 space-y-1.5 border border-gray-850 shadow-inner" id="baas-logs-output">
+                        <div class="text-gray-500 opacity-50"># Fetching engine logs...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Backups Sub Panel -->
+            <div id="baas-panel-backups" class="baas-panel-content hidden space-y-6">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h3 class="text-lg font-bold text-white">Archives & Backups</h3>
+                        <p class="text-sm text-gray-400 mt-0.5">Database dumps are archived as compressed file streams directly on the host server.</p>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <input type="file" id="baas-import-backup-file" class="hidden" onchange="App.Databases.importBackupBaaS(event)">
+                        <button onclick="document.getElementById('baas-import-backup-file').click()" class="px-5 py-2.5 bg-orange-600/10 hover:bg-orange-600/20 border border-orange-500/20 text-orange-400 rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
+                            <i class="fas fa-upload"></i>
+                            <span>Import Snapshot</span>
+                        </button>
+                        <button onclick="App.Databases.createBackupBaaS()" class="px-5 py-2.5 bg-orange-600 hover:bg-orange-550 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
+                            <i class="fas fa-archive"></i>
+                            <span>Create Snapshot</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Scheduled Backups Configuration Card -->
+                <div class="bg-gray-800/20 rounded-xl border border-gray-700/60 p-6 space-y-4">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div class="flex items-start space-x-3">
+                            <div class="p-3 bg-orange-600/10 text-orange-400 rounded-lg border border-orange-500/20">
+                                <i class="fas fa-calendar-alt text-xl"></i>
+                            </div>
+                            <div>
+                                <h4 class="text-base font-semibold text-white">Automated Daily Backups</h4>
+                                <p class="text-sm text-gray-400 mt-0.5">Automatically trigger a compressed backup dump every day at 02:00 AM server time.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-4 self-end md:self-center">
+                            <!-- Toggle switch -->
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="baas-auto-backup-toggle" onchange="App.Databases.saveAutoBackupConfigBaaS()" class="sr-only peer">
+                                <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-600"></div>
+                                <span class="ml-3 text-sm font-medium text-gray-400" id="baas-auto-backup-status-text">Disabled</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="baas-auto-backup-settings" class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-700/40 hidden">
+                        <div class="space-y-1.5">
+                            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Backup Retention Policy</label>
+                            <select id="baas-auto-backup-retention" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500">
+                                <option value="3">Keep for 3 days</option>
+                                <option value="7" selected>Keep for 7 days</option>
+                                <option value="14">Keep for 14 days</option>
+                                <option value="30">Keep for 30 days</option>
+                                <option value="0">Keep forever (Unlimited)</option>
+                            </select>
+                        </div>
+                        <div class="flex items-end justify-end space-x-3">
+                            <button onclick="App.Databases.saveAutoBackupConfigBaaS()" class="w-full md:w-auto px-5 py-2 bg-orange-600 hover:bg-orange-550 text-white rounded-lg font-semibold text-sm shadow-md transition-all flex items-center justify-center space-x-2">
+                                <i class="fas fa-save"></i>
+                                <span>Save Retention Policy</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-800/40 rounded-xl border border-gray-700/40 overflow-hidden">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-gray-800/80 border-b border-gray-700 text-xs font-bold uppercase tracking-wider text-gray-400">
+                                <th class="px-6 py-4">Snapshot Filename</th>
+                                <th class="px-6 py-4">Compressed Size</th>
+                                <th class="px-6 py-4">Created Time</th>
+                                <th class="px-6 py-4 text-right">Operations</th>
+                            </tr>
+                        </thead>
+                        <tbody id="baas-backups-table-body" class="divide-y divide-gray-700/50">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                    <div id="baas-backups-empty" class="hidden py-12 text-center text-gray-400">
+                        <i class="fas fa-folder-open text-3xl mb-3 opacity-50"></i>
+                        <p class="text-sm">No snapshots created yet.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Sub Panel -->
+            <div id="baas-panel-settings" class="baas-panel-content hidden space-y-6">
+                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-6">
+                    <h3 class="text-lg font-bold text-white flex items-center"><i class="fas fa-cogs text-orange-400 mr-2"></i>BaaS Administration</h3>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Settings details -->
+                        <div class="p-5 bg-gray-900 bg-opacity-40 border border-gray-700/60 rounded-xl space-y-3">
+                            <h4 class="text-base font-bold text-white">Metadata & Admin Auth</h4>
+                            <p class="text-sm text-gray-400">Review core connection parameters and setup credentials inside the Docker container.</p>
+                            <div class="space-y-1.5 font-mono text-sm pt-1 text-gray-300">
+                                <p>Public Web Port: <span class="text-white" id="baas-settings-port">8090</span></p>
+                                <p>Default Admin: <span class="text-white" id="baas-settings-user">admin@example.com</span></p>
+                                <div class="flex items-center space-x-2">
+                                    <span>Admin Password: </span>
+                                    <span class="text-white font-bold select-all" id="baas-settings-pass">••••••</span>
+                                    <button type="button" onclick="App.Databases.toggleBaaSPasswordVisibility()" class="text-gray-400 hover:text-white text-xs"><i class="far fa-eye" id="baas-settings-pass-eye"></i></button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Danger Zone -->
+                        <div class="p-5 border border-red-500/20 bg-red-950/10 rounded-xl space-y-3">
+                            <h4 class="text-base font-bold text-red-400">Danger Zone</h4>
+                            <p class="text-sm text-gray-400">Destroying a BaaS deployment is permanent and will purge all system configurations. Make sure to archive database snapshots before destroying.</p>
+                            
+                            <div class="flex items-center space-x-3 mt-1.5">
+                                <input type="checkbox" id="baas-delete-volume-check" class="w-4 h-4 text-red-600 bg-gray-700 border-gray-600 rounded" checked>
+                                <label for="baas-delete-volume-check" class="text-sm text-gray-300 font-semibold select-none cursor-pointer">Purge associated Docker volumes, databases, and uploaded assets</label>
+                            </div>
+
+                            <button onclick="App.Databases.deleteBaaSInstance()" class="mt-2.5 bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2.5 rounded-lg transition-all flex items-center space-x-2 shadow-lg shadow-red-600/20">
+                                <i class="fas fa-trash-alt"></i>
+                                <span>Destroy BaaS Engine</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     </div>
 
         </main>
@@ -1246,11 +1627,11 @@
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
-                    <div>
+                    <div id="db-prov-dbname-wrapper">
                         <label class="block text-gray-400 text-sm font-bold mb-2">Default Database Name</label>
                         <input type="text" id="db-prov-dbname" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" value="gopulse">
                     </div>
-                    <div>
+                    <div id="db-prov-port-wrapper">
                         <label class="block text-gray-400 text-sm font-bold mb-2">Host Port Mapping</label>
                         <input type="number" id="db-prov-port" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" value="3306">
                     </div>
@@ -1258,11 +1639,11 @@
 
                 <div class="grid grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-2">Admin Username</label>
+                        <label class="block text-gray-400 text-sm font-bold mb-2" id="db-prov-user-label">Admin Username</label>
                         <input type="text" id="db-prov-user" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" value="root">
                     </div>
                     <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-2">Admin Password</label>
+                        <label class="block text-gray-400 text-sm font-bold mb-2" id="db-prov-pass-label">Admin Password</label>
                         <div class="flex space-x-2">
                             <input type="text" id="db-prov-pass" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm font-mono" placeholder="Secret password">
                             <button onclick="App.Databases.generatePass()" class="bg-gray-600 hover:bg-gray-500 text-white font-semibold px-4 rounded-lg transition-colors text-sm">Generate</button>
@@ -1528,6 +1909,16 @@
                             <span class="text-3xs text-slate-500 mt-1 block">Executable command to launch the application</span>
                         </div>
                     </div>
+
+                    <div class="mt-4">
+                        <label class="flex items-center space-x-3 cursor-pointer p-3.5 rounded-xl hover:bg-slate-800/40 transition-all border border-slate-800 bg-slate-950/20">
+                            <input type="checkbox" id="project-restart-on-boot" class="form-checkbox text-blue-500 rounded border-slate-800 focus:ring-0">
+                            <div>
+                                <span class="text-sm font-semibold text-white">Restart on boot</span>
+                                <p class="text-xs text-slate-400">Automatically boot the project container or process when the server restarts</p>
+                            </div>
+                        </label>
+                    </div>
                 </div>
 
                 <!-- Step 3: Source Code -->
@@ -1736,6 +2127,16 @@
                     <input type="text" id="edit-project-start-cmd"
                         class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
                         placeholder="npm start">
+                </div>
+
+                <div class="mt-4">
+                    <label class="flex items-center space-x-3 cursor-pointer p-3.5 rounded-xl hover:bg-gray-850/40 transition-all border border-gray-750 bg-gray-800/20">
+                        <input type="checkbox" id="edit-project-restart-on-boot" class="form-checkbox text-blue-500 rounded border-gray-750 focus:ring-0">
+                        <div>
+                            <span class="text-sm font-semibold text-white">Restart on boot</span>
+                            <p class="text-xs text-gray-400">Automatically boot the project container or process when the server restarts</p>
+                        </div>
+                    </label>
                 </div>
             </div>
         </div>
@@ -2468,6 +2869,32 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
         <div class="p-6 border-t border-gray-700 flex justify-end space-x-3 bg-gray-900 bg-opacity-35 rounded-b-lg">
             <button onclick="App.Databases.closeInsertRowModal()" class="px-5 py-2.5 text-gray-400 hover:text-white rounded-lg transition-colors font-semibold">Cancel</button>
             <button onclick="App.Databases.submitInsertRow()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-semibold shadow-lg">Insert</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Row/Document Modal -->
+<div id="db-edit-row-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-95 border border-gray-700">
+        <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+            <div class="flex items-center space-x-3">
+                <div class="p-2 bg-indigo-900/30 rounded-lg">
+                    <i class="fas fa-edit text-indigo-400 text-xl"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white" id="db-edit-row-modal-title">Edit Record</h3>
+            </div>
+            <button onclick="App.Databases.closeEditRowModal()" class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+        </div>
+        
+        <div class="p-6 max-h-[60vh] overflow-y-auto space-y-4" id="db-edit-row-fields-container">
+            <!-- Injected dynamically via databases.js -->
+        </div>
+
+        <div class="p-6 border-t border-gray-700 flex justify-end space-x-3 bg-gray-900 bg-opacity-35 rounded-b-lg">
+            <button onclick="App.Databases.closeEditRowModal()" class="px-5 py-2.5 text-gray-400 hover:text-white rounded-lg transition-colors font-semibold">Cancel</button>
+            <button onclick="App.Databases.submitEditRow()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-semibold shadow-lg">Save Changes</button>
         </div>
     </div>
 </div>

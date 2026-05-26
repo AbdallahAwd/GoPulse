@@ -189,6 +189,7 @@ type Project struct {
 	WebhookEnabled bool              `json:"webhook_enabled"`            // Toggle webhook auto-deploy
 	LastDeploy     time.Time         `json:"last_deploy,omitempty"`      // Timestamp of last auto-deploy
 	EnvVars        map[string]string `json:"env_vars,omitempty"`         // KEY=VALUE environment variables
+	RestartOnBoot  bool              `json:"restart_on_boot"`            // Auto-start project on system boot / server reboot
 }
 
 // StatsSnapshot represents a point-in-time system stats summary for history tracking
