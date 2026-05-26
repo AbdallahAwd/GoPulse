@@ -35,6 +35,7 @@ type Collector struct {
 	providers       map[string]services.StatsProvider
 	providersMu     sync.RWMutex
 	cache           *StatsCache
+	history         *StatsHistory
 	interval        time.Duration
 	clients         map[*websocket.Conn]bool
 	clientsMu       sync.RWMutex
@@ -42,7 +43,7 @@ type Collector struct {
 }
 
 // NewCollector creates a new stats collector
-func NewCollector(serverStore *store.ServerStore, factory ProviderFactory, interval time.Duration) *Collector {
+func NewCollector(serverStore *store.ServerStore, factory ProviderFactory, interval time.Duration, history *StatsHistory) *Collector {
 	return &Collector{
 		serverStore:     serverStore,
 		providerFactory: factory,
@@ -50,6 +51,7 @@ func NewCollector(serverStore *store.ServerStore, factory ProviderFactory, inter
 			stats:      make(map[string]*models.SystemStats),
 			lastUpdate: make(map[string]time.Time),
 		},
+		history:   history,
 		interval:  interval,
 		clients:   make(map[*websocket.Conn]bool),
 		broadcast: make(chan ServerStatsUpdate, 100),
@@ -130,10 +132,27 @@ func (c *Collector) collectServerStats(ctx context.Context, server models.Server
 	}
 
 	// Update cache
+	now := time.Now()
 	c.cache.mu.Lock()
 	c.cache.stats[server.ID] = stats
-	c.cache.lastUpdate[server.ID] = time.Now()
+	c.cache.lastUpdate[server.ID] = now
 	c.cache.mu.Unlock()
+
+	// Record history snapshot
+	if c.history != nil {
+		var diskPercent float64
+		if len(stats.Disk) > 0 {
+			diskPercent = stats.Disk[0].UsedPercent
+		}
+		c.history.Add(server.ID, models.StatsSnapshot{
+			Timestamp:   now,
+			CPUPercent:  stats.CPU.Percent,
+			MemPercent:  stats.Memory.UsedPercent,
+			DiskPercent: diskPercent,
+			NetRxBytes:  stats.Network.BytesRecv,
+			NetTxBytes:  stats.Network.BytesSent,
+		})
+	}
 
 	// Broadcast
 	c.broadcastUpdate(ServerStatsUpdate{
@@ -225,4 +244,12 @@ func (c *Collector) GetClientCount() int {
 	c.clientsMu.RLock()
 	defer c.clientsMu.RUnlock()
 	return len(c.clients)
+}
+
+// GetHistory returns historical stats snapshots for a server
+func (c *Collector) GetHistory(serverID string, duration time.Duration) []models.StatsSnapshot {
+	if c.history == nil {
+		return nil
+	}
+	return c.history.Get(serverID, duration)
 }

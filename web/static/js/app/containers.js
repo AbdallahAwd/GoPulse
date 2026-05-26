@@ -118,13 +118,14 @@ App.Docker.Containers = {
         const output = document.getElementById('docker-logs-output');
         try {
             const response = await App.API.get(`/containers/${id}/logs`);
-            if (response.success && response.data && response.data.logs) {
-                if (response.data.logs.length === 0) {
+            if (response.success && response.data) {
+                const logsList = response.data.logs || [];
+                if (logsList.length === 0) {
                      output.innerHTML = '<div class="text-gray-500 opacity-50"># No logs found.</div>';
                      return;
                 }
                 
-                output.innerHTML = response.data.logs.map(entry => {
+                output.innerHTML = logsList.map(entry => {
                     const time = new Date(entry.timestamp).toLocaleTimeString();
                     // Simple color coding based on message content
                     let colorClass = 'text-gray-300';

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/amaa/gopulse/internal/middleware"
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/amaa/gopulse/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -24,13 +25,30 @@ func NewServerHandler(store *store.ServerStore) *ServerHandler {
 	return &ServerHandler{store: store}
 }
 
-// ListServers returns all configured servers
+// ListServers returns all configured servers (filtered for restricted users)
 func (h *ServerHandler) ListServers(w http.ResponseWriter, r *http.Request) {
 	servers := h.store.ListServers()
 
+	role, _ := r.Context().Value(middleware.RoleContextKey).(string)
+	allowedServers, _ := r.Context().Value(middleware.AllowedServersContextKey).([]string)
+
+	var filteredServers []models.Server
+	for _, s := range servers {
+		if role == "admin" || role == "" {
+			filteredServers = append(filteredServers, s)
+		} else {
+			for _, allowedID := range allowedServers {
+				if s.ID == allowedID {
+					filteredServers = append(filteredServers, s)
+					break
+				}
+			}
+		}
+	}
+
 	// Sanitize passwords before returning
-	safeServers := make([]models.Server, len(servers))
-	for i, s := range servers {
+	safeServers := make([]models.Server, len(filteredServers))
+	for i, s := range filteredServers {
 		s.Password = "" // Do not return password
 		safeServers[i] = s
 	}
@@ -158,5 +176,40 @@ func (h *ServerHandler) UploadKey(w http.ResponseWriter, r *http.Request) {
 		"data": map[string]string{
 			"key_path": keyPath,
 		},
+	})
+}
+
+// UpdateServer updates an existing server configuration
+func (h *ServerHandler) UpdateServer(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "serverID")
+	if id == "" {
+		http.Error(w, "ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var server models.Server
+	if err := json.NewDecoder(r.Body).Decode(&server); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	server.ID = id
+
+	// Retain existing password if blank in request
+	original, err := h.store.GetServer(id)
+	if err == nil && server.Password == "" {
+		server.Password = original.Password
+	}
+
+	if err := h.store.UpdateServer(server); err != nil {
+		http.Error(w, "Failed to update server: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	server.Password = "" // Sanitize
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data":    server,
 	})
 }

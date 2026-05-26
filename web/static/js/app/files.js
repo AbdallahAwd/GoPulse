@@ -12,14 +12,120 @@ App.Files = {
             const response = await App.API.get(`/files/list?path=${encodeURIComponent(path)}`);
             if (response.success) {
                 App.state.currentPath = response.data.path;
+                App.state.lastFilesList = response.data.files || [];
                 this.render(response.data.files);
                 this.renderBreadcrumbs(App.state.currentPath);
             }
         } catch (e) {
             const tbody = App.UI.el('files-tbody');
-            if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-red-400">Failed to load directory</td></tr>`;
+            if (tbody) {
+                tbody.innerHTML = `<tr><td colspan="5" class="px-4 py-8 text-center text-red-400">Failed to load directory</td></tr>`;
+            } else {
+                const container = App.UI.el('file-list-container');
+                if (container) {
+                    container.innerHTML = `<div class="text-center text-red-400 py-12">Failed to load directory</div>`;
+                }
+            }
         } finally {
             if (overlay) overlay.classList.add('hidden');
+        }
+    },
+
+    getFileIcon(name, isDir) {
+        if (isDir) {
+            return {
+                icon: 'fa-folder',
+                color: 'text-yellow-400',
+                bgColor: 'bg-yellow-400/10'
+            };
+        }
+        
+        const ext = name.split('.').pop().toLowerCase();
+        
+        const fileTypes = {
+            // Archives
+            'zip': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
+            'tar': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
+            'gz': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
+            'rar': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
+            
+            // Code
+            'js': { icon: 'fa-file-code', color: 'text-yellow-300', bgColor: 'bg-yellow-300/10' },
+            'ts': { icon: 'fa-file-code', color: 'text-blue-400', bgColor: 'bg-blue-400/10' },
+            'jsx': { icon: 'fa-file-code', color: 'text-cyan-400', bgColor: 'bg-cyan-400/10' },
+            'tsx': { icon: 'fa-file-code', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
+            'html': { icon: 'fa-file-code', color: 'text-orange-500', bgColor: 'bg-orange-500/10' },
+            'css': { icon: 'fa-file-code', color: 'text-blue-400', bgColor: 'bg-blue-400/10' },
+            'scss': { icon: 'fa-file-code', color: 'text-pink-400', bgColor: 'bg-pink-400/10' },
+            'php': { icon: 'fa-file-code', color: 'text-indigo-400', bgColor: 'bg-indigo-400/10' },
+            'go': { icon: 'fa-file-code', color: 'text-cyan-400', bgColor: 'bg-cyan-400/10' },
+            'py': { icon: 'fa-file-code', color: 'text-green-400', bgColor: 'bg-green-400/10' },
+            'rb': { icon: 'fa-file-code', color: 'text-red-500', bgColor: 'bg-red-500/10' },
+            'rs': { icon: 'fa-file-code', color: 'text-amber-600', bgColor: 'bg-amber-600/10' },
+            
+            // Scripts
+            'sh': { icon: 'fa-terminal', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            'bash': { icon: 'fa-terminal', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            
+            // Config/Data
+            'json': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
+            'yaml': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
+            'yml': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
+            'toml': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
+            'lock': { icon: 'fa-lock', color: 'text-amber-500', bgColor: 'bg-amber-500/10' },
+            'env': { icon: 'fa-sliders-h', color: 'text-pink-400', bgColor: 'bg-pink-400/10' },
+            
+            // Media
+            'png': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            'jpg': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            'jpeg': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            'gif': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            'svg': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            'ico': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
+            
+            // Docs
+            'md': { icon: 'fa-file-alt', color: 'text-teal-400', bgColor: 'bg-teal-400/10' },
+            'txt': { icon: 'fa-file-alt', color: 'text-slate-300', bgColor: 'bg-slate-300/10' },
+            'pdf': { icon: 'fa-file-pdf', color: 'text-rose-500', bgColor: 'bg-rose-500/10' },
+            
+            // Database
+            'sql': { icon: 'fa-database', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
+            'db': { icon: 'fa-database', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
+            'sqlite': { icon: 'fa-database', color: 'text-blue-500', bgColor: 'bg-blue-500/10' }
+        };
+
+        if (name.startsWith('.env')) {
+            return fileTypes['env'];
+        }
+
+        return fileTypes[ext] || {
+            icon: 'fa-file',
+            color: 'text-slate-400',
+            bgColor: 'bg-slate-400/10'
+        };
+    },
+
+    setViewMode(mode) {
+        this.viewMode = mode;
+        localStorage.setItem('gopulse_files_view_mode', mode);
+        
+        // Update toggle UI
+        const btnList = App.UI.el('btn-view-list');
+        const btnGrid = App.UI.el('btn-view-grid');
+        
+        if (btnList && btnGrid) {
+            if (mode === 'list') {
+                btnList.className = 'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-all text-white bg-blue-600 shadow';
+                btnGrid.className = 'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-all text-gray-400 hover:text-white';
+            } else {
+                btnGrid.className = 'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-all text-white bg-blue-600 shadow';
+                btnList.className = 'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-all text-gray-400 hover:text-white';
+            }
+        }
+        
+        // Re-render
+        if (App.state.lastFilesList) {
+            this.render(App.state.lastFilesList);
         }
     },
 
@@ -29,102 +135,381 @@ App.Files = {
 
         const fileList = files || []; // Handle null/undefined files
         const path = App.state.currentPath;
+        
+        // Initialize view mode
+        if (!this.viewMode) {
+            this.viewMode = localStorage.getItem('gopulse_files_view_mode') || 'list';
+        }
 
         const loadingOverlay = `<div id="file-loading-overlay"
-                    class="absolute inset-0 bg-white bg-opacity-10 backdrop-blur-sm flex items-center justify-center z-10 hidden transition-all duration-300">
-                    <div class="flex flex-col items-center p-4 rounded-lg  bg-opacity-75 shadow-xl ">
-                        <i class="fas fa-circle-notch fa-spin text-3xl mb-3 text-blue-500"></i>
+                    class="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-10 hidden transition-all duration-300">
+                    <div class="flex flex-col items-center p-6 rounded-2xl bg-gray-900/95 border border-gray-800/80 shadow-2xl text-center">
+                        <i class="fas fa-circle-notch fa-spin text-3xl mb-3.5 text-blue-500"></i>
                         <p class="text-white font-medium text-sm">Loading contents...</p>
                     </div>
                 </div>`;
 
-        // Parent directory row
-        let parentRow = '';
-        if (path !== '/' && path !== '') {
-            const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
-            parentRow = `
-                <tr class="border-b border-gray-700/50 hover:bg-gray-700/50 transition-colors group cursor-pointer"
-                    onclick="App.Files.list('${parentPath}')">
-                    <td class="py-3 px-4 text-center"><i class="fas fa-level-up-alt text-lg text-gray-500"></i></td>
-                    <td class="py-3 px-4 font-medium text-gray-400 group-hover:text-blue-400 transition-colors">..</td>
-                    <td class="py-3 px-4 text-gray-500 font-mono text-xs">-</td>
-                    <td class="py-3 px-4 text-gray-500 text-xs">-</td>
-                    <td class="py-3 px-4 text-right"></td>
+        // Empty state HTML
+        const emptyStateHtml = `<div class="text-center text-gray-500 py-16 flex flex-col items-center justify-center bg-gray-900/10 rounded-xl border border-dashed border-gray-800/50 p-8 w-full">
+                <div class="w-16 h-16 rounded-full bg-gray-800/30 flex items-center justify-center mb-4 text-gray-600 border border-gray-850">
+                    <i class="fas fa-folder-open text-2xl"></i>
+                </div>
+                <h3 class="text-white font-semibold text-base">This folder is empty</h3>
+                <p class="text-xs text-gray-500 mt-1 max-w-xs">There are no files or directories inside this path. You can create one or upload a file using the toolbar.</p>
+           </div>`;
+
+        if (this.viewMode === 'grid') {
+            // Render Grid View
+            let parentGridItem = '';
+            if (path !== '/' && path !== '') {
+                const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+                parentGridItem = `
+                    <div class="relative bg-gray-900/20 hover:bg-gray-700/10 border border-gray-800/40 hover:border-gray-700/60 rounded-xl p-4 transition-all duration-200 group flex flex-col items-center justify-center text-center cursor-pointer min-h-[140px]"
+                        onclick="App.Files.list('${parentPath}')">
+                        <div class="w-16 h-16 rounded-2xl flex items-center justify-center bg-gray-800/50 text-gray-400 group-hover:text-blue-400 mb-3 transition-transform duration-300 group-hover:scale-105">
+                            <i class="fas fa-level-up-alt text-2xl"></i>
+                        </div>
+                        <span class="text-gray-400 group-hover:text-blue-400 transition-colors font-semibold text-xs">
+                            Go Back (..)
+                        </span>
+                    </div>`;
+            }
+
+            const gridContent = fileList.map(file => {
+                const fileMeta = this.getFileIcon(file.name, file.is_dir);
+                const size = file.is_dir ? 'Folder' : App.UI.formatBytes(file.size);
+                const fullPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
+                
+                return `
+                <div class="relative bg-gray-900/30 hover:bg-gray-700/20 border border-gray-800/60 hover:border-gray-700/80 rounded-xl p-4 transition-all duration-200 group flex flex-col items-center text-center cursor-pointer select-none file-grid-item"
+                    data-path="${fullPath}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${file.name}"
+                    onclick="event.preventDefault(); ${file.is_dir ? 
+                        `App.Files.list('${fullPath}')` : 
+                        `App.Editor.open('${fullPath}')`}">
+                    
+                    <!-- Quick Actions Hover Overlay -->
+                    <div class="absolute top-2 right-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-all duration-200 z-10">
+                        ${!file.is_dir ? `
+                        <button onclick="event.stopPropagation(); App.Files.download('${fullPath}')" 
+                            class="w-7 h-7 flex items-center justify-center bg-gray-950/80 hover:bg-emerald-950/60 border border-gray-800 hover:border-emerald-500/40 text-gray-400 hover:text-emerald-400 rounded-full transition-all" title="Download">
+                            <i class="fas fa-download text-[10px]"></i>
+                        </button>` : ''}
+                        ${file.is_dir ? `
+                        <button onclick="event.stopPropagation(); App.Files.zip('${fullPath}')" 
+                            class="w-7 h-7 flex items-center justify-center bg-gray-950/80 hover:bg-amber-950/60 border border-gray-800 hover:border-amber-500/40 text-gray-400 hover:text-amber-400 rounded-full transition-all" title="Zip Folder">
+                            <i class="fas fa-file-zipper text-[10px]"></i>
+                        </button>` : ''}
+                        <button onclick="event.stopPropagation(); App.Files.delete('${fullPath}')" 
+                            class="w-7 h-7 flex items-center justify-center bg-gray-950/80 hover:bg-red-950/60 border border-gray-800 hover:border-red-500/40 text-gray-400 hover:text-red-400 rounded-full transition-all" title="Delete">
+                            <i class="fas fa-trash-alt text-[10px]"></i>
+                        </button>
+                    </div>
+
+                    <!-- Icon -->
+                    <div class="w-16 h-16 rounded-2xl flex items-center justify-center ${fileMeta.bgColor} ${fileMeta.color} mb-3.5 transition-transform duration-300 group-hover:scale-110 shadow-lg">
+                        <i class="fas ${fileMeta.icon} text-3xl"></i>
+                    </div>
+
+                    <!-- Details -->
+                    <span class="text-gray-200 group-hover:text-blue-400 transition-colors font-medium text-xs break-all line-clamp-2 px-1 w-full">
+                        ${file.name}
+                    </span>
+                    <span class="text-[10px] text-gray-500 font-mono mt-1">
+                        ${size}
+                    </span>
+                </div>`;
+            }).join('');
+
+            const gridHtml = (fileList.length === 0 && !parentGridItem)
+                ? emptyStateHtml
+                : `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 p-1">
+                        ${parentGridItem}
+                        ${gridContent}
+                   </div>`;
+
+            container.innerHTML = loadingOverlay + gridHtml;
+        } else {
+            // Render List View (Sleek Table)
+            let parentRow = '';
+            if (path !== '/' && path !== '') {
+                const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
+                parentRow = `
+                    <tr class="border-b border-gray-800/40 hover:bg-gray-700/20 transition-colors group cursor-pointer"
+                        onclick="App.Files.list('${parentPath}')">
+                        <td class="py-3 px-4 text-center">
+                            <div class="w-9 h-9 rounded-lg flex items-center justify-center bg-gray-800/40 text-gray-500">
+                                <i class="fas fa-level-up-alt text-sm"></i>
+                            </div>
+                        </td>
+                        <td class="py-3 px-4 font-semibold text-gray-400 group-hover:text-blue-400 transition-colors">..</td>
+                        <td class="py-3 px-4 text-gray-500 font-mono text-xs">-</td>
+                        <td class="py-3 px-4 text-gray-500 text-xs">-</td>
+                        <td class="py-3 px-4 text-right"></td>
+                    </tr>`;
+            }
+
+            const tableContent = fileList.map(file => {
+                const fileMeta = this.getFileIcon(file.name, file.is_dir);
+                const size = file.is_dir ? '-' : App.UI.formatBytes(file.size);
+                const date = new Date(file.mod_time).toLocaleString();
+                const fullPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
+                
+                return `
+                <tr class="border-b border-gray-800/40 hover:bg-gray-700/20 transition-colors group cursor-pointer file-item"
+                    data-path="${fullPath}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${file.name}">
+                    <td class="py-2.5 px-4 text-center">
+                        <div class="w-9 h-9 rounded-lg flex items-center justify-center ${fileMeta.bgColor} ${fileMeta.color} transition-transform group-hover:scale-105">
+                            <i class="fas ${fileMeta.icon} text-base"></i>
+                        </div>
+                    </td>
+                    <td class="py-2.5 px-4 font-semibold text-gray-200 group-hover:text-blue-400 transition-colors">
+                        <a href="#" onclick="event.preventDefault(); ${file.is_dir ? 
+                            `App.Files.list('${fullPath}')` : 
+                            `App.Editor.open('${fullPath}')`}" class="block py-1">
+                            ${file.name}
+                        </a>
+                    </td>
+                    <td class="py-2.5 px-4 text-gray-400 font-mono text-xs">${size}</td>
+                    <td class="py-2.5 px-4 text-gray-400 text-xs">${date}</td>
+                    <td class="py-2.5 px-4 text-right">
+                        <div class="flex items-center justify-end space-x-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200">
+                            ${!file.is_dir ? `
+                            <button onclick="event.stopPropagation(); App.Files.download('${fullPath}')" 
+                                class="p-1.5 bg-gray-900/80 hover:bg-emerald-950/40 border border-gray-800 hover:border-emerald-500/30 text-gray-400 hover:text-emerald-400 rounded-lg transition-all" title="Download">
+                                <i class="fas fa-download text-xs"></i>
+                            </button>` : ''}
+                            ${file.is_dir ? `
+                            <button onclick="event.stopPropagation(); App.Files.zip('${fullPath}')" 
+                                class="p-1.5 bg-gray-900/80 hover:bg-amber-950/40 border border-gray-800 hover:border-amber-500/30 text-gray-400 hover:text-amber-400 rounded-lg transition-all" title="Zip Folder">
+                                <i class="fas fa-file-zipper text-xs"></i>
+                            </button>` : ''}
+                            ${!file.is_dir && file.name.endsWith('.zip') ? `
+                            <button onclick="event.stopPropagation(); App.Files.unzip('${fullPath}')" 
+                                class="p-1.5 bg-gray-900/80 hover:bg-blue-950/40 border border-gray-800 hover:border-blue-500/30 text-gray-400 hover:text-blue-400 rounded-lg transition-all" title="Unzip">
+                                <i class="fas fa-box-open text-xs"></i>
+                            </button>` : ''}
+                            <button onclick="event.stopPropagation(); App.Files.delete('${fullPath}')" 
+                                class="p-1.5 bg-gray-900/80 hover:bg-red-950/40 border border-gray-800 hover:border-red-500/30 text-gray-400 hover:text-red-400 rounded-lg transition-all" title="Delete">
+                                <i class="fas fa-trash-alt text-xs"></i>
+                            </button>
+                        </div>
+                    </td>
                 </tr>`;
+            }).join('');
+
+            const tableHtml = (fileList.length === 0 && !parentRow)
+                ? emptyStateHtml
+                : `<table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="text-gray-400 border-b border-gray-800/85 text-xs uppercase tracking-wider bg-gray-900/40">
+                            <th class="py-3 px-4 font-semibold w-16 text-center">Type</th>
+                            <th class="py-3 px-4 font-semibold">Name</th>
+                            <th class="py-3 px-4 font-semibold w-32">Size</th>
+                            <th class="py-3 px-4 font-semibold w-52">Modified</th>
+                            <th class="py-3 px-4 font-semibold w-40 text-right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-gray-300 text-sm">
+                        ${parentRow}
+                        ${tableContent}
+                    </tbody>
+                </table>`;
+
+            container.innerHTML = loadingOverlay + tableHtml;
         }
 
-        const tableContent = fileList.map(file => {
-            const icon = file.is_dir ? 'fa-folder text-yellow-400' : 'fa-file-code text-blue-400';
-            const size = file.is_dir ? '-' : App.UI.formatBytes(file.size);
-            const date = new Date(file.mod_time).toLocaleString();
-            const fullPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
-            
-            return `
-            <tr class="border-b border-gray-700/50 hover:bg-gray-700/50 transition-colors group cursor-pointer file-item"
-                data-path="${fullPath}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${file.name}">
-                <td class="py-3 px-4 text-center"><i class="fas ${icon} text-lg"></i></td>
-                <td class="py-3 px-4 font-medium text-white group-hover:text-blue-400 transition-colors">
-                    <a href="#" onclick="event.preventDefault(); ${file.is_dir ? 
-                        `App.Files.list('${fullPath}')` : 
-                        `App.Editor.open('${fullPath}')`}" class="block">
-                        ${file.name}
-                    </a>
-                </td>
-                <td class="py-3 px-4 text-gray-400 font-mono text-xs">${size}</td>
-                <td class="py-3 px-4 text-gray-400 text-xs">${date}</td>
-                <td class="py-3 px-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onclick="App.Files.delete('${fullPath}')" class="text-gray-400 hover:text-red-400 transition-colors p-1" title="Delete">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                    ${file.is_dir ? `<button onclick="App.Files.zip('${fullPath}')" class="ml-2 text-gray-400 hover:text-yellow-400 transition-colors p-1" title="Zip Folder">
-                        <i class="fas fa-file-zipper"></i>
-                    </button>` : ''}
-                    ${!file.is_dir ? `<button onclick="App.Files.download('${fullPath}')" class="ml-2 text-gray-400 hover:text-green-400 transition-colors p-1" title="Download">
-                        <i class="fas fa-download"></i>
-                    </button>` : ''}
-                    ${!file.is_dir && file.name.endsWith('.zip') ? `<button onclick="App.Files.unzip('${fullPath}')" class="ml-2 text-gray-400 hover:text-blue-400 transition-colors p-1" title="Unzip">
-                        <i class="fas fa-box-open"></i>
-                    </button>` : ''}
-                </td>
-            </tr>`;
-        }).join('');
-
-        const tableHtml = (fileList.length === 0 && !parentRow)
-            ? `<div class="text-center text-gray-500 py-12 flex flex-col items-center">
-                    <i class="fas fa-folder-open text-4xl mb-3 opacity-50"></i>
-                    <p>Empty directory</p>
-               </div>`
-            : `<table class="w-full text-left border-collapse">
-                <thead>
-                    <tr class="text-gray-400 border-b border-gray-700 text-sm uppercase bg-gray-900/50">
-                        <th class="py-3 px-4 font-medium w-12 text-center"><i class="fas fa-file"></i></th>
-                        <th class="py-3 px-4 font-medium">Name</th>
-                        <th class="py-3 px-4 font-medium w-32">Size</th>
-                        <th class="py-3 px-4 font-medium w-48">Modified</th>
-                        <th class="py-3 px-4 font-medium w-32 text-right">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="text-gray-300 text-sm">
-                    ${parentRow}
-                    ${tableContent}
-                </tbody>
-            </table>`;
-        
-        container.innerHTML = loadingOverlay + tableHtml;
         this.attachContextMenu();
     },
 
     renderBreadcrumbs(path) {
         const input = App.UI.el('file-path-input');
-        console.log('renderBreadcrumbs called with path:', path, 'input element found:', !!input);
         if (input) {
-            console.log('Setting input value to:', path);
             input.value = path;
             input.setAttribute('value', path);
-            console.log('Input value after setting:', input.value);
-        } else {
-            console.warn('file-path-input element not found!');
         }
+
+        const display = App.UI.el('file-breadcrumbs-display');
+        if (!display) return;
+
+        // Ensure path starts with / and has no trailing / (unless it's just /)
+        let normalizedPath = path.startsWith('/') ? path : '/' + path;
+        if (normalizedPath.endsWith('/') && normalizedPath.length > 1) {
+            normalizedPath = normalizedPath.slice(0, -1);
+        }
+
+        const parts = normalizedPath.split('/').filter(p => p !== '');
+        
+        let html = `
+            <button onclick="App.Files.navigateToSegment('/', event)" 
+                class="flex items-center text-gray-400 hover:text-blue-400 font-semibold transition-colors focus:outline-none shrink-0">
+                <i class="fas fa-hdd mr-1.5"></i>root
+            </button>
+        `;
+
+        let currentBuildPath = '';
+        parts.forEach((part, index) => {
+            currentBuildPath += '/' + part;
+            const isLast = index === parts.length - 1;
+            
+            html += `
+                <span class="text-gray-650 px-1 select-none shrink-0 font-mono text-[10px]">/</span>
+                <button onclick="App.Files.navigateToSegment('${currentBuildPath}', event)" 
+                    class="font-semibold transition-colors focus:outline-none truncate max-w-[120px] ${
+                        isLast 
+                        ? 'text-white font-bold cursor-default pointer-events-none' 
+                        : 'text-gray-400 hover:text-blue-400'
+                    }">
+                    ${part}
+                </button>
+            `;
+        });
+
+        display.innerHTML = html;
+    },
+
+    navigateToSegment(path, event) {
+        if (event) event.stopPropagation(); // Prevent focusing input
+        this.list(path);
+    },
+
+    focusPathInput(event) {
+        // Only trigger if we didn't click on a button inside display
+        if (event && event.target.closest('button')) return;
+
+        const display = App.UI.el('file-breadcrumbs-display');
+        const form = App.UI.el('file-path-form');
+        const input = App.UI.el('file-path-input');
+
+        if (!display || !form || !input) return;
+
+        display.classList.add('hidden');
+        form.classList.remove('hidden');
+        input.focus();
+        input.select();
+    },
+
+    blurPathInput() {
+        // Set a slight timeout so clicking navigation buttons inside breadcrumbs works first
+        setTimeout(() => {
+            const display = App.UI.el('file-breadcrumbs-display');
+            const form = App.UI.el('file-path-form');
+            if (!display || !form) return;
+
+            form.classList.add('hidden');
+            display.classList.remove('hidden');
+        }, 150);
+    },
+
+    submitPath(event) {
+        if (event) event.preventDefault();
+        const input = App.UI.el('file-path-input');
+        if (!input) return;
+
+        const path = input.value.trim() || '/';
+        this.list(path);
+        
+        const form = App.UI.el('file-path-form');
+        const display = App.UI.el('file-breadcrumbs-display');
+        if (form && display) {
+            form.classList.add('hidden');
+            display.classList.remove('hidden');
+        }
+    },
+
+    attachContextMenu() {
+        const menu = App.UI.el('file-context-menu');
+        if (!menu) return;
+
+        // Hide menu on document click
+        const hideMenu = () => menu.classList.add('hidden');
+        document.removeEventListener('click', hideMenu);
+        document.addEventListener('click', hideMenu);
+
+        // Hide menu on esc key
+        const escMenu = (e) => {
+            if (e.key === 'Escape') menu.classList.add('hidden');
+        };
+        document.removeEventListener('keydown', escMenu);
+        document.addEventListener('keydown', escMenu);
+
+        // Find all file items
+        const items = document.querySelectorAll('.file-item, .file-grid-item');
+        items.forEach(item => {
+            item.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const path = item.getAttribute('data-path');
+                const type = item.getAttribute('data-type');
+                const name = item.getAttribute('data-name');
+
+                // Position menu at cursor
+                menu.style.left = `${e.clientX}px`;
+                menu.style.top = `${e.clientY}px`;
+                menu.classList.remove('hidden');
+
+                // Configure menu actions
+                const editAction = menu.querySelector('[data-action="edit"]');
+                const downloadAction = menu.querySelector('[data-action="download"]');
+                const compressAction = menu.querySelector('[data-action="compress"]');
+                const deleteAction = menu.querySelector('[data-action="delete"]');
+
+                // Toggle visibility of actions based on type
+                if (editAction) {
+                    if (type === 'dir') {
+                        editAction.classList.add('hidden');
+                    } else {
+                        editAction.classList.remove('hidden');
+                        editAction.onclick = (event) => {
+                            event.preventDefault();
+                            App.Editor.open(path);
+                        };
+                    }
+                }
+
+                if (downloadAction) {
+                    if (type === 'dir') {
+                        downloadAction.classList.add('hidden');
+                    } else {
+                        downloadAction.classList.remove('hidden');
+                        downloadAction.onclick = (event) => {
+                            event.preventDefault();
+                            App.Files.download(path);
+                        };
+                    }
+                }
+
+                if (compressAction) {
+                    // For dir or zip decompress
+                    if (type === 'dir') {
+                        compressAction.innerHTML = '<i class="fas fa-file-archive w-5 text-yellow-400"></i> Compress (Zip)';
+                        compressAction.onclick = (event) => {
+                            event.preventDefault();
+                            App.Files.zip(path);
+                        };
+                    } else if (name.endsWith('.zip')) {
+                        compressAction.innerHTML = '<i class="fas fa-box-open w-5 text-blue-400"></i> Decompress (Unzip)';
+                        compressAction.onclick = (event) => {
+                            event.preventDefault();
+                            App.Files.unzip(path);
+                        };
+                    } else {
+                        compressAction.innerHTML = '<i class="fas fa-file-archive w-5 text-yellow-400"></i> Compress (Zip)';
+                        compressAction.onclick = (event) => {
+                            event.preventDefault();
+                            App.Files.zip(path);
+                        };
+                    }
+                }
+
+                if (deleteAction) {
+                    deleteAction.onclick = (event) => {
+                        event.preventDefault();
+                        App.Files.delete(path);
+                    };
+                }
+            });
+        });
     },
 
     create(type) {

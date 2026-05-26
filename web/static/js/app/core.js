@@ -70,6 +70,13 @@ App.API = {
         });
     },
 
+    put(endpoint, body) {
+        return this.request(endpoint, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+        });
+    },
+
     delete(endpoint) {
         return this.request(endpoint, { method: 'DELETE' });
     },

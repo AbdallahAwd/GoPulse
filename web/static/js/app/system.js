@@ -1,20 +1,107 @@
 /**
  * GoPulse App - System Module
- * Handles system operations like shutdown and restart
+ * Handles system operations like shutdown, restart, and Server configurations
  */
 
 App.System = {
-    init: function() {
+    currentServer: null,
+
+    init: async function() {
         console.log('System module initialized');
+        
+        // Fetch server details on-demand to initialize settings
+        if (App.config.SERVER_ID) {
+            try {
+                const res = await App.API.get(`/servers/${App.config.SERVER_ID}`);
+                if (res.success && res.data) {
+                    this.currentServer = res.data;
+                    
+                    // Populate Settings Inputs
+                    const hostInput = document.getElementById('settings-server-host');
+                    if (hostInput) hostInput.value = res.data.host;
+                    
+                    const nameInput = document.getElementById('settings-server-name');
+                    if (nameInput) nameInput.value = res.data.name;
+
+                    // Synchronize toggle switch state
+                    this.syncFocusToggleState(res.data.is_db_only);
+                    
+                    // If dedicated database host focus is active and user lands on the default "processes" tab,
+                    // automatically redirect the tab display directly to "databases"!
+                    const hashTab = window.location.hash.substring(1);
+                    if (res.data.is_db_only && (!hashTab || hashTab === 'processes')) {
+                        setTimeout(() => {
+                            const dbBtn = document.getElementById('nav-btn-databases');
+                            if (dbBtn) dbBtn.click();
+                        }, 50);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load server configuration', e);
+            }
+        }
+    },
+
+    syncFocusToggleState: function(isDbOnly) {
+        const toggle = document.getElementById('server-db-focus-toggle');
+        const knob = document.getElementById('server-db-focus-knob');
+        if (!toggle || !knob) return;
+
+        if (isDbOnly) {
+            toggle.classList.remove('bg-gray-700');
+            toggle.classList.add('bg-blue-600');
+            knob.classList.remove('translate-x-1');
+            knob.classList.add('translate-x-6');
+        } else {
+            toggle.classList.remove('bg-blue-600');
+            toggle.classList.add('bg-gray-700');
+            knob.classList.remove('translate-x-6');
+            knob.classList.add('translate-x-1');
+        }
+    },
+
+    toggleDbFocus: function() {
+        if (!this.currentServer) return;
+        this.currentServer.is_db_only = !this.currentServer.is_db_only;
+        this.syncFocusToggleState(this.currentServer.is_db_only);
+    },
+
+    saveServerSettings: async function() {
+        if (!this.currentServer) return;
+
+        const nameInput = document.getElementById('settings-server-name');
+        if (nameInput) {
+            this.currentServer.name = nameInput.value.trim();
+            if (!this.currentServer.name) {
+                App.UI.toast('error', 'Server name is required.');
+                return;
+            }
+        }
+
+        try {
+            App.UI.toast('info', 'Saving server configurations...');
+            const res = await App.API.put(`/servers/${App.config.SERVER_ID}`, this.currentServer);
+            if (res.success) {
+                App.UI.toast('success', 'Server configurations saved successfully!');
+                
+                // Short reload delay to apply layout and tab transitions cleanly
+                setTimeout(() => {
+                    window.location.reload();
+                }, 800);
+            } else {
+                App.UI.toast('error', `Save failed: ${res.message}`);
+            }
+        } catch (e) {
+            App.UI.toast('error', 'Failed to save server settings.');
+        }
     },
 
     showPowerModal: function() {
         const modal = document.getElementById('power-modal');
         if (modal) {
             modal.classList.remove('hidden');
-            // Reset state
             const warning = document.getElementById('shutdown-warning');
-            if(warning) warning.classList.add('hidden');
+            if (warning) warning.classList.add('hidden');
             
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -44,7 +131,6 @@ App.System = {
             App.UI.toast('info', 'Restarting remote server...');
             const res = await App.API.post(endpoint, {});
             if (res.success) {
-                // Show overlay
                 document.body.innerHTML = `
                     <div class="fixed inset-0 bg-black flex flex-col items-center justify-center text-white z-50">
                         <i class="fas fa-sync-alt fa-spin text-5xl text-blue-500 mb-6"></i>
@@ -53,7 +139,6 @@ App.System = {
                     </div>
                 `;
                 
-                // Attempt to reload after 30 seconds (remote reboot takes longer)
                 setTimeout(() => {
                     window.location.reload();
                 }, 30000);

@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // DockerService handles Docker operations
@@ -156,29 +158,54 @@ func (s *DockerService) GetContainerLogs(ctx context.Context, containerID string
 	}
 	defer logsReader.Close()
 
-	output, err := io.ReadAll(logsReader)
+	// Inspect the container to see if TTY was enabled
+	insp, err := s.client.ContainerInspect(ctx, containerID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read logs: %w", err)
+		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
-	var logs []models.LogEntry
+	var output []byte
+	if insp.Config.Tty {
+		output, err = io.ReadAll(logsReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read logs: %w", err)
+		}
+	} else {
+		var stdoutBuf, stderrBuf bytes.Buffer
+		_, err = stdcopy.StdCopy(&stdoutBuf, &stderrBuf, logsReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to demultiplex logs: %w", err)
+		}
+		// Combine stdout and stderr outputs
+		output = append(stdoutBuf.Bytes(), stderrBuf.Bytes()...)
+	}
+
+	logs := []models.LogEntry{}
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
 
-		// Parsing Docker logs... Docker returns header bytes for streams.
-		// Standard log with TTY=false has 8-byte header: [STREAM_TYPE, 0, 0, 0, SIZE1, SIZE2, SIZE3, SIZE4]
-		// But here we read all... client.ContainerLogs with TTY=true handles it?
-		// If TTY is enabled for container, it's raw text. If not, it has header.
-		// For simplicity, we just dump line as message.
+		timestamp := time.Now()
+		message := line
+
+		// Try parsing the RFC3339 nano timestamp prefixed by Docker (Timestamps: true)
+		if len(line) > 30 {
+			if idx := strings.Index(line, " "); idx != -1 {
+				tsStr := line[:idx]
+				if parsedTime, parseErr := time.Parse(time.RFC3339Nano, tsStr); parseErr == nil {
+					timestamp = parsedTime
+					message = line[idx+1:]
+				}
+			}
+		}
 
 		logs = append(logs, models.LogEntry{
-			Timestamp: time.Now(), // Ideally parse from line if Timestamps=true
+			Timestamp: timestamp,
 			Level:     "INFO",
 			Source:    "container",
-			Message:   line,
+			Message:   message,
 		})
 	}
 

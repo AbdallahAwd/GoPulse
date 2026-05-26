@@ -2,7 +2,79 @@
  * GoPulse App - Editor Module
  */
 
+let aceEditor = null;
+
 App.Editor = {
+    getModeByExtension(ext) {
+        const modes = {
+            'js': 'javascript',
+            'ts': 'typescript',
+            'jsx': 'javascript',
+            'tsx': 'typescript',
+            'html': 'html',
+            'htm': 'html',
+            'css': 'css',
+            'scss': 'scss',
+            'less': 'less',
+            'go': 'golang',
+            'py': 'python',
+            'json': 'json',
+            'yaml': 'yaml',
+            'yml': 'yaml',
+            'toml': 'toml',
+            'md': 'markdown',
+            'sh': 'sh',
+            'bash': 'sh',
+            'sql': 'sql',
+            'php': 'php',
+            'rb': 'ruby',
+            'rs': 'rust',
+            'c': 'c_cpp',
+            'cpp': 'c_cpp',
+            'h': 'c_cpp',
+            'hpp': 'c_cpp',
+            'java': 'java',
+            'xml': 'xml',
+            'ini': 'ini',
+            'conf': 'ini'
+        };
+        return modes[ext] || 'text';
+    },
+
+    initAce() {
+        if (aceEditor) return aceEditor;
+        if (typeof ace === 'undefined') return null;
+
+        const container = document.getElementById('file-editor-ace');
+        if (!container) return null;
+
+        // Initialize Ace
+        aceEditor = ace.edit("file-editor-ace");
+        aceEditor.setTheme("ace/theme/tomorrow_night"); // modern dark theme
+        aceEditor.setOptions({
+            fontSize: "13px",
+            fontFamily: "Menlo, Monaco, Consolas, 'Courier New', monospace",
+            showPrintMargin: false,
+            enableBasicAutocompletion: true,
+            enableLiveAutocompletion: true,
+            tabSize: 4,
+            useSoftTabs: true,
+            wrap: true
+        });
+
+        // Add Premium Keybindings: Save on Ctrl+S / Cmd+S
+        aceEditor.commands.addCommand({
+            name: 'saveFile',
+            bindKey: { win: 'Ctrl-S', mac: 'Command-S' },
+            exec: function() {
+                App.Editor.save();
+            },
+            readOnly: false
+        });
+
+        return aceEditor;
+    },
+
     async open(path) {
         App.state.currentEditPath = path;
         
@@ -14,6 +86,7 @@ App.Editor = {
         const els = {
             filename: App.UI.el('editor-filename'),
             content: App.UI.el('file-editor-content'),
+            aceContainer: document.getElementById('file-editor-ace'),
             imageContainer: App.UI.el('file-editor-image'),
             audioContainer: App.UI.el('file-editor-audio'),
             modal: App.UI.el('file-editor-modal'),
@@ -25,6 +98,7 @@ App.Editor = {
         
         // Reset Views
         if (els.content) { els.content.value = ''; els.content.classList.add('hidden'); }
+        if (els.aceContainer) els.aceContainer.classList.add('hidden');
         if (els.imageContainer) { els.imageContainer.classList.add('hidden'); els.imageContainer.querySelector('img').src = ''; }
         if (els.audioContainer) { els.audioContainer.classList.add('hidden'); els.audioContainer.querySelector('audio').src = ''; }
         if (els.skeleton) els.skeleton.classList.remove('hidden'); // Show loader
@@ -44,27 +118,16 @@ App.Editor = {
         }
 
         try {
-            const url = `/files/content?path=${encodeURIComponent(path)}`;
-            // Base URL includes /api/v1 prefix, ensure we construct full URL correctly for fetch/src
-            // App.API.url returns relative to API base if passed path, so...
-            // Actually, we can check how download constructs it:
-            // `${App.config.API_BASE}/servers/${App.config.SERVER_ID}/files/content`
-            
             const serverId = App.config.SERVER_ID;
             const fullUrl = `${App.config.API_BASE}/servers/${serverId}/files/content?path=${encodeURIComponent(path)}`;
 
             if (isMedia) {
-                // For media, just set the SRC
-                // We need to wait a bit or just hide skeleton immediately? 
-                // Let's rely on image onload if possible, but for now simple hidden toggle
-                
                 if (isImage) {
                     const img = els.imageContainer.querySelector('img');
                     img.src = fullUrl;
                     img.onload = () => els.skeleton.classList.add('hidden');
                     img.onerror = () => App.UI.toast('error', 'Failed to load image');
                     els.imageContainer.classList.remove('hidden');
-                    // Fallback cleanup if onload doesn't fire fast or error
                     setTimeout(() => els.skeleton.classList.add('hidden'), 500); 
                 } else if (isAudio) {
                     const audio = els.audioContainer.querySelector('audio');
@@ -79,9 +142,24 @@ App.Editor = {
                 const text = await res.text();
 
                 if (els.skeleton) els.skeleton.classList.add('hidden');
-                if (els.content) {
-                    els.content.value = text;
-                    els.content.classList.remove('hidden');
+                
+                const editor = this.initAce();
+                if (editor && els.aceContainer) {
+                    // Populate Ace Editor
+                    editor.setValue(text, -1);
+                    editor.session.getUndoManager().reset();
+                    
+                    // Apply language modes
+                    const mode = this.getModeByExtension(ext);
+                    editor.session.setMode(`ace/mode/${mode}`);
+                    
+                    els.aceContainer.classList.remove('hidden');
+                } else {
+                    // Fallback to plain Textarea if Ace is not loaded
+                    if (els.content) {
+                        els.content.value = text;
+                        els.content.classList.remove('hidden');
+                    }
                 }
             }
         } catch (e) {
@@ -91,7 +169,18 @@ App.Editor = {
     },
 
     async save() {
-        const content = App.UI.el('file-editor-content')?.value || '';
+        const els = {
+            aceContainer: document.getElementById('file-editor-ace'),
+            textarea: App.UI.el('file-editor-content')
+        };
+
+        let content = '';
+        if (aceEditor && els.aceContainer && !els.aceContainer.classList.contains('hidden')) {
+            content = aceEditor.getValue();
+        } else if (els.textarea) {
+            content = els.textarea.value;
+        }
+
         const btn = App.UI.el('editor-save-btn');
         const originalHtml = btn?.innerHTML;
 
@@ -103,7 +192,7 @@ App.Editor = {
         try {
             await App.API.post('/files/save', { path: App.state.currentEditPath, content });
             if (btn) btn.innerHTML = `<i class="fas fa-check mr-2"></i> Saved!`;
-            App.UI.toast('success', 'File saved');
+            App.UI.toast('success', 'File saved successfully');
             setTimeout(() => {
                 this.close();
                 App.Files.list(App.state.currentPath);
@@ -129,6 +218,11 @@ App.Editor = {
             if (btn) {
                 btn.disabled = false;
                 btn.innerHTML = `<i class="fas fa-save mr-2"></i> Save Changes`;
+            }
+            
+            // Free some editor resources/clear session when closed
+            if (aceEditor) {
+                aceEditor.setValue('', -1);
             }
         }, 300);
     }

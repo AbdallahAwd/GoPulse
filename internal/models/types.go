@@ -152,6 +152,7 @@ type Server struct {
 	KeyPath  string   `json:"key_path"`
 	Password string   `json:"password"` // Encrypt if possible, or warn user
 	Tags     []string `json:"tags"`
+	IsDbOnly bool     `json:"is_db_only"`
 }
 
 // ProjectStatus represents the status of a project
@@ -182,8 +183,22 @@ type Project struct {
 	Domain       string        `json:"domain"`       // Future use
 	CreatedAt    time.Time     `json:"created_at"`
 	StartCommand string        `json:"start_command"` // e.g. "npm start"
-	BuildCommand string        `json:"build_command"` // e.g. "npm install && npm run build"
-	LastBuild    time.Time     `json:"last_build,omitempty"`
+	BuildCommand   string            `json:"build_command"`              // e.g. "npm install && npm run build"
+	LastBuild      time.Time         `json:"last_build,omitempty"`
+	WebhookSecret  string            `json:"webhook_secret,omitempty"`   // HMAC secret for GitHub webhook verification
+	WebhookEnabled bool              `json:"webhook_enabled"`            // Toggle webhook auto-deploy
+	LastDeploy     time.Time         `json:"last_deploy,omitempty"`      // Timestamp of last auto-deploy
+	EnvVars        map[string]string `json:"env_vars,omitempty"`         // KEY=VALUE environment variables
+}
+
+// StatsSnapshot represents a point-in-time system stats summary for history tracking
+type StatsSnapshot struct {
+	Timestamp   time.Time `json:"timestamp"`
+	CPUPercent  float64   `json:"cpu_percent"`
+	MemPercent  float64   `json:"mem_percent"`
+	DiskPercent float64   `json:"disk_percent"`
+	NetRxBytes  uint64    `json:"net_rx_bytes"`
+	NetTxBytes  uint64    `json:"net_tx_bytes"`
 }
 
 // Domain represents a domain/subdomain mapped to a port via Nginx reverse proxy
@@ -195,3 +210,60 @@ type Domain struct {
 	SSL       bool      `json:"ssl"`    // future: enable HTTPS via certbot
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// DatabaseStatus represents the status of a database
+type DatabaseStatus string
+
+const (
+	DatabaseStatusStopped  DatabaseStatus = "Stopped"
+	DatabaseStatusRunning  DatabaseStatus = "Running"
+	DatabaseStatusStarting DatabaseStatus = "Starting"
+	DatabaseStatusError    DatabaseStatus = "Error"
+)
+
+// Database represents a containerized database
+type Database struct {
+	ID           string         `json:"id"`
+	ServerID     string         `json:"server_id"`
+	Name         string         `json:"name"`          // Friendly name
+	Type         string         `json:"type"`          // "mysql", "postgres", "mongodb"
+	DatabaseName string         `json:"database_name"`  // Default database name
+	Username     string         `json:"username"`
+	Password     string         `json:"password"`
+	HostPort     int            `json:"host_port"`     // Port on host
+	ContainerID  string         `json:"container_id"`  // Docker container ID
+	Status       DatabaseStatus `json:"status"`
+	CreatedAt    time.Time      `json:"created_at"`
+	AutoBackup   bool           `json:"auto_backup"`    // Enable/disable daily automatic backups
+	RetentionDays int           `json:"retention_days"` // Number of days to keep backups (default: 7, 0 = keep forever)
+}
+
+// DatabaseBackup represents a database backup dump
+type DatabaseBackup struct {
+	Filename  string    `json:"filename"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// TableColumn represents a column definition when creating a table
+type TableColumn struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Nullable bool   `json:"nullable"`
+	Unique   bool   `json:"unique"`
+}
+
+// DatabaseTelemetry represents instant diagnostic performance metrics for a database cluster
+type DatabaseTelemetry struct {
+	ActiveConnections int   `json:"active_connections"`
+	DataSize          int64 `json:"data_size"` // Footprint in bytes
+}
+
+// DatabaseUser represents a database user and their privilege scope
+type DatabaseUser struct {
+	Username string `json:"username"`
+	Scope    string `json:"scope"` // "read", "readWrite", "admin"
+	Host     string `json:"host,omitempty"` // For SQL engines
+	Database string `json:"database,omitempty"` // Targeted database scope
+}
+

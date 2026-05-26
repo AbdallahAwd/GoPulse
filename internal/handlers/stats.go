@@ -3,6 +3,7 @@ package handlers
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/amaa/gopulse/internal/monitor"
@@ -30,24 +31,6 @@ func NewStatsHandler(collector *monitor.Collector) *StatsHandler {
 
 // GetStats handles GET /api/stats (or /api/servers/{serverID}/stats if routed)
 func (h *StatsHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	// If routed as /api/stats, it might return all?
-	// Or if routed as /api/servers/{serverID}/stats, we get serverID.
-
-	// For now, let's support optional query param ?server_id=... or just dump all if none?
-	// But GetCachedStats(serverID) requires an ID.
-	// If no ID, maybe return map of all?
-
-	// Let's assume we want specific server stats here as per main.go routing plan (though I didn't add /stats to {serverID} route group yet in main.go, I added global /api/stats).
-	// Let's make /api/stats return all servers stats map.
-
-	// Wait, Collector doesn't have GetAllCachedStats exposed public yet.
-	// It has GetCachedStats(serverID).
-
-	// Let's update main.go to use /api/servers/{serverID}/stats for specific stats.
-	// And /api/stats can remain for backward compatibility or global view (but needs to be implemented).
-
-	// For now, let's just make it work with serverID query param or if inside /servers/{serverID} path.
-
 	serverID := r.URL.Query().Get("server_id")
 	if serverID == "" {
 		serverID = chi.URLParam(r, "serverID")
@@ -66,13 +49,52 @@ func (h *StatsHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If no ID, return summary of all connected clients?
 	respondJSON(w, http.StatusOK, models.APIResponse{
 		Success: true,
 		Data: map[string]interface{}{
 			"message": "Specify server_id to get stats",
 			"clients": h.collector.GetClientCount(),
 		},
+	})
+}
+
+// GetStatsHistory handles GET /api/servers/{serverID}/stats/history?range=1h|6h|24h
+func (h *StatsHandler) GetStatsHistory(w http.ResponseWriter, r *http.Request) {
+	serverID := chi.URLParam(r, "serverID")
+	if serverID == "" {
+		serverID = r.URL.Query().Get("server_id")
+	}
+	if serverID == "" {
+		respondError(w, http.StatusBadRequest, "Server ID required", nil)
+		return
+	}
+
+	rangeStr := r.URL.Query().Get("range")
+	var duration time.Duration
+	switch rangeStr {
+	case "1h":
+		duration = 1 * time.Hour
+	case "6h":
+		duration = 6 * time.Hour
+	case "24h", "":
+		duration = 24 * time.Hour
+	default:
+		d, err := time.ParseDuration(rangeStr)
+		if err != nil {
+			duration = 24 * time.Hour
+		} else {
+			duration = d
+		}
+	}
+
+	snapshots := h.collector.GetHistory(serverID, duration)
+	if snapshots == nil {
+		snapshots = []models.StatsSnapshot{}
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    snapshots,
 	})
 }
 

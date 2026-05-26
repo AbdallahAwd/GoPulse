@@ -43,15 +43,27 @@ func main() {
 		log.Fatalf("Failed to initialize server store: %v", err)
 	}
 
+	// Initialize User Store
+	userStore, err := store.NewUserStore(filepath.Join(dataDir, "users.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize user store: %v", err)
+	}
+
+	// Initialize Auth Middleware
+	authMiddleware := middleware.NewAuthMiddleware(cfg.Auth.JWTSecret, userStore)
+
 	// Initialize Service Manager
 	serviceManager := services.NewServiceManager(serverStore)
 	defer serviceManager.CloseAll()
+
+	// Initialize Stats History (in-memory ring buffer, 24 hours at 1-minute interval = 1440 entries)
+	statsHistory := monitor.NewStatsHistory(1440)
 
 	// Initialize Stats Collector
 	factory := func(server models.Server) (services.StatsProvider, error) {
 		return serviceManager.GetStatsProvider(server.ID)
 	}
-	collector := monitor.NewCollector(serverStore, factory, cfg.Monitoring.PollInterval)
+	collector := monitor.NewCollector(serverStore, factory, cfg.Monitoring.PollInterval, statsHistory)
 
 	// Initialize Handlers
 	dashboardHandler := handlers.NewDashboardHandler(web.Assets, serverStore)
@@ -60,6 +72,7 @@ func main() {
 	dockerHandler := handlers.NewDockerHandler(serviceManager)
 	statsHandler := handlers.NewStatsHandler(collector)
 	systemHandler := handlers.NewSystemHandler(serviceManager)
+	terminalHandler := handlers.NewTerminalHandler(serviceManager)
 
 	// Initialize Project Components
 	projectStore, err := store.NewProjectStore(filepath.Join(dataDir, "projects.json"))
@@ -68,6 +81,7 @@ func main() {
 	}
 	projectService := services.NewProjectService(projectStore, serviceManager, filepath.Join(dataDir, "projects"))
 	projectHandler := handlers.NewProjectHandler(projectService)
+	webhookHandler := handlers.NewWebhookHandler(projectService)
 	githubHandler := handlers.NewGitHubHandler(cfg.GitHub, projectService)
 
 	// Initialize Domain Components
@@ -78,10 +92,22 @@ func main() {
 	domainService := services.NewDomainService(domainStore, serviceManager)
 	domainHandler := handlers.NewDomainHandler(domainService)
 
+	// Initialize Database Components
+	databaseStore, err := store.NewDatabaseStore(filepath.Join(dataDir, "databases.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize database store: %v", err)
+	}
+	databaseService := services.NewDatabaseService(databaseStore, serviceManager)
+	databaseHandler := handlers.NewDatabaseHandler(databaseService, serviceManager)
+
 	// Start Collector
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go collector.Start(ctx)
+
+	// Start Backup Scheduler
+	backupScheduler := services.NewBackupScheduler(databaseService, databaseStore)
+	go backupScheduler.Start(ctx)
 
 	// Setup Router
 	r := chi.NewRouter()
@@ -89,6 +115,7 @@ func main() {
 	// Middleware
 	r.Use(middleware.LoggingMiddleware)
 	r.Use(middleware.RecoveryMiddleware)
+	r.Use(authMiddleware.Handler)
 	r.Use(chiMiddleware.Timeout(60 * time.Second))
 
 	// Static Files (Embedded)
@@ -99,11 +126,28 @@ func main() {
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	// Web Routes
+	r.Get("/login", dashboardHandler.Login)
+	r.Get("/register", dashboardHandler.Register)
+	r.Get("/logout", authMiddleware.LogoutHandler)
 	r.Get("/", dashboardHandler.Index)
-	r.Get("/servers/{serverID}/dashboard", dashboardHandler.ServerDashboard)
+	r.With(authMiddleware.RequireServerAccess).Get("/servers/{serverID}/dashboard", dashboardHandler.ServerDashboard)
+	r.With(authMiddleware.RequirePermission("user:manage")).Get("/users", dashboardHandler.Users)
 
 	// API Routes
 	r.Route("/api", func(r chi.Router) {
+		// Auth Endpoints
+		r.Post("/auth/login", authMiddleware.LoginHandler)
+		r.Post("/auth/register", authMiddleware.RegisterHandler)
+		r.Get("/auth/has-users", authMiddleware.CheckUsersHandler)
+
+		// User Management API
+		r.Route("/users", func(r chi.Router) {
+			r.Use(authMiddleware.RequirePermission("user:manage"))
+			r.Get("/", authMiddleware.ListUsersHandler)
+			r.Post("/", authMiddleware.CreateUserHandler)
+			r.Delete("/{id}", authMiddleware.DeleteUserHandler)
+		})
+
 		// Server Management
 		r.Route("/servers", func(r chi.Router) {
 			r.Get("/", serverHandler.ListServers)
@@ -112,10 +156,12 @@ func main() {
 
 			// Per-Server Stats & Operations
 			r.Route("/{serverID}", func(r chi.Router) {
+				r.Use(authMiddleware.RequireServerAccess)
 				r.Delete("/", serverHandler.RemoveServer)
 				r.Get("/", serverHandler.GetServer)
-				// Stats (Historical or snapshot if needed via REST, but WS is preferred)
-				// r.Get("/stats", ...)
+				r.Put("/", serverHandler.UpdateServer)
+				r.Get("/terminal", terminalHandler.HandleTerminal)
+				r.Get("/stats/history", statsHandler.GetStatsHistory)
 
 				// Processes
 				r.Route("/processes", func(r chi.Router) {
@@ -194,6 +240,10 @@ func main() {
 						r.Post("/start", projectHandler.StartProject) // Fixed method name reference
 						r.Post("/stop", projectHandler.StopProject)
 						r.Delete("/", projectHandler.DeleteProject)
+						r.Post("/webhook/enable", projectHandler.EnableWebhook)
+						r.Post("/webhook/disable", projectHandler.DisableWebhook)
+						r.Get("/env", projectHandler.GetEnvVars)
+						r.Put("/env", projectHandler.UpdateEnvVars)
 					})
 				})
 
@@ -203,6 +253,11 @@ func main() {
 					r.Post("/shutdown", systemHandler.ShutdownRemote)
 					r.Get("/check/{software}", systemHandler.CheckSoftware)
 					r.Post("/install/{software}", systemHandler.InstallSoftware)
+
+					// Linux User Management Endpoints
+					r.Get("/users", systemHandler.ListLinuxUsers)
+					r.Post("/users", systemHandler.CreateLinuxUser)
+					r.Delete("/users/{username}", systemHandler.DeleteLinuxUser)
 				})
 
 				// Domains
@@ -211,6 +266,43 @@ func main() {
 					r.Post("/", domainHandler.AddDomain)
 					r.Delete("/{id}", domainHandler.RemoveDomain)
 					r.Get("/nginx/status", domainHandler.NginxStatus)
+				})
+
+				// Databases
+				r.Route("/databases", func(r chi.Router) {
+					r.Get("/", databaseHandler.ListDatabases)
+					r.Post("/", databaseHandler.ProvisionDatabase)
+					r.Get("/{dbID}", databaseHandler.GetDatabase)
+					r.Post("/{dbID}/start", databaseHandler.StartDatabase)
+					r.Post("/{dbID}/stop", databaseHandler.StopDatabase)
+					r.Post("/{dbID}/restart", databaseHandler.RestartDatabase)
+					r.Delete("/{dbID}", databaseHandler.DeleteDatabase)
+					r.Post("/{dbID}/query", databaseHandler.ExecuteQuery)
+					r.Post("/{dbID}/backup", databaseHandler.CreateBackup)
+					r.Get("/{dbID}/backups", databaseHandler.ListBackups)
+					r.Post("/{dbID}/backups/restore", databaseHandler.RestoreBackup)
+					r.Post("/{dbID}/backups/import", databaseHandler.ImportBackup)
+					r.Get("/{dbID}/backups/download", databaseHandler.DownloadBackup)
+					r.Get("/{dbID}/auto-backup", databaseHandler.GetAutoBackupConfig)
+					r.Put("/{dbID}/auto-backup", databaseHandler.SetAutoBackupConfig)
+					r.Get("/{dbID}/telemetry", databaseHandler.GetDatabaseTelemetry)
+
+					// User management endpoints
+					r.Get("/{dbID}/users", databaseHandler.ListDatabaseUsers)
+					r.Post("/{dbID}/users", databaseHandler.CreateDatabaseUser)
+					r.Delete("/{dbID}/users/{username}", databaseHandler.DeleteDatabaseUser)
+
+					// Explorer endpoints
+					r.Get("/{dbID}/schemas", databaseHandler.ListSchemas)
+					r.Post("/{dbID}/schemas", databaseHandler.CreateSchema)
+					r.Delete("/{dbID}/schemas/{schema}", databaseHandler.DeleteSchema)
+					r.Get("/{dbID}/schemas/{schema}/tables", databaseHandler.ListTables)
+					r.Post("/{dbID}/schemas/{schema}/tables", databaseHandler.CreateTable)
+					r.Delete("/{dbID}/schemas/{schema}/tables/{table}", databaseHandler.DeleteTable)
+					r.Get("/{dbID}/schemas/{schema}/tables/{table}/columns", databaseHandler.DescribeTable)
+					r.Get("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.BrowseTableData)
+					r.Post("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.InsertRow)
+					r.Delete("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.DeleteRow)
 				})
 
 			})
@@ -233,8 +325,14 @@ func main() {
 			r.Post("/shutdown", systemHandler.Shutdown)
 		})
 
+		// GitHub Webhook Receiver (CI/CD)
+		r.Post("/webhooks/github/{projectID}", webhookHandler.HandleGitHubWebhook)
+
 		// Global Stats Snapshot
 		r.Get("/stats", statsHandler.GetStats)
+		
+		// Global Stats History
+		r.Get("/stats/history", statsHandler.GetStatsHistory)
 
 	})
 
@@ -275,3 +373,4 @@ func main() {
 
 	log.Println("Server exiting")
 }
+// Trigger rebuild for air hot-reload - dynamic authentication pool and system user filtering

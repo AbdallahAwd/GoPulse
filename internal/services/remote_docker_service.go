@@ -217,23 +217,38 @@ func parseBytesToMB(s string) float64 {
 
 // GetContainerLogs returns logs
 func (s *RemoteDockerService) GetContainerLogs(ctx context.Context, id string) ([]models.LogEntry, error) {
-	cmd := fmt.Sprintf("docker logs --tail 100 %s", id)
+	cmd := fmt.Sprintf("docker logs --tail 100 --timestamps %s 2>&1", id)
 	output, err := s.client.RunCommand(cmd)
 	if err != nil {
 		return nil, err
 	}
 
-	var logs []models.LogEntry
+	logs := []models.LogEntry{}
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
+
+		timestamp := time.Now()
+		message := line
+
+		// Try parsing the RFC3339 nano timestamp prefixed by Docker (Timestamps: true)
+		if len(line) > 30 {
+			if idx := strings.Index(line, " "); idx != -1 {
+				tsStr := line[:idx]
+				if parsedTime, parseErr := time.Parse(time.RFC3339Nano, tsStr); parseErr == nil {
+					timestamp = parsedTime
+					message = line[idx+1:]
+				}
+			}
+		}
+
 		logs = append(logs, models.LogEntry{
-			Timestamp: time.Now(),
+			Timestamp: timestamp,
 			Level:     "INFO",
 			Source:    "container",
-			Message:   line,
+			Message:   message,
 		})
 	}
 	return logs, nil

@@ -293,6 +293,13 @@ func (c *SSHClient) IsRoot() bool {
 	return c.server.User == "root"
 }
 
+// GetClient returns the underlying SSH client connection (used by terminal handler for direct PTY access)
+func (c *SSHClient) GetClient() *ssh.Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client
+}
+
 // Close closes the SSH connection
 func (c *SSHClient) Close() error {
 	c.mu.Lock()

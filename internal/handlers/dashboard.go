@@ -95,9 +95,49 @@ func (h *DashboardHandler) ServerDashboard(w http.ResponseWriter, r *http.Reques
 		"Page":       "dashboard",
 		"ServerID":   server.ID,
 		"ServerName": server.Name,
+		"IsDbOnly":   server.IsDbOnly,
 	}
 
 	if err := h.render(w, "dashboard.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// Login renders the login page
+func (h *DashboardHandler) Login(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{
+		"Title": "GoPulse - Sign In",
+		"Page":  "login",
+	}
+
+	if err := h.render(w, "login.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// Register renders the registration page
+func (h *DashboardHandler) Register(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{
+		"Title": "GoPulse - Setup",
+		"Page":  "register",
+	}
+
+	if err := h.render(w, "register.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// Users renders the user management page
+func (h *DashboardHandler) Users(w http.ResponseWriter, r *http.Request) {
+	servers := h.store.ListServers()
+
+	data := map[string]interface{}{
+		"Title":   "GoPulse - User Management",
+		"Page":    "users",
+		"Servers": servers,
+	}
+
+	if err := h.render(w, "users.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }

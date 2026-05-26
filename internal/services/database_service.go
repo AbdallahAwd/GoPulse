@@ -1,0 +1,2125 @@
+package services
+
+import (
+	"context"
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/amaa/gopulse/internal/models"
+	"github.com/amaa/gopulse/internal/store"
+)
+
+// jsonUnmarshal is an alias to avoid import confusion
+var jsonUnmarshal = json.Unmarshal
+
+// DatabaseService handles containerized database operations on remote servers via SSH
+type DatabaseService struct {
+	store   *store.DatabaseStore
+	manager *ServiceManager
+}
+
+// NewDatabaseService creates a new DatabaseService
+func NewDatabaseService(store *store.DatabaseStore, manager *ServiceManager) *DatabaseService {
+	return &DatabaseService{
+		store:   store,
+		manager: manager,
+	}
+}
+
+// ListDatabases returns all databases for a specific server
+func (s *DatabaseService) ListDatabases(serverID string) ([]models.Database, error) {
+	allDbs := s.store.ListDatabases()
+	var serverDbs []models.Database
+	for _, db := range allDbs {
+		if db.ServerID == serverID {
+			serverDbs = append(serverDbs, db)
+		}
+	}
+	return serverDbs, nil
+}
+
+// GetDatabase returns a database by ID
+func (s *DatabaseService) GetDatabase(id string) (models.Database, error) {
+	return s.store.GetDatabase(id)
+}
+
+// ProvisionDatabase creates and runs a containerized database on the remote server
+func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string, name string, dbType string, dbName string, username string, password string, hostPort int) (*models.Database, error) {
+	client, err := s.manager.GetSSHClient(serverID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get SSH client: %w", err)
+	}
+
+	if dbType != "sqlite" {
+		// 1. Check if the host port is already listening
+		portCheckCmd := fmt.Sprintf("netstat -tuln | grep -q ':%d ' && echo 'busy' || echo 'free'", hostPort)
+		portCheckOut, _ := client.RunCommand(portCheckCmd)
+		if strings.TrimSpace(portCheckOut) == "busy" {
+			return nil, fmt.Errorf("port %d is already in use on the host", hostPort)
+		}
+	}
+
+	// Generate a unique database ID
+	dbID := fmt.Sprintf("db-%d", time.Now().UnixNano()/1e6)
+	containerName := fmt.Sprintf("gopulse-%s", dbID)
+	volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", dbID)
+
+	// Create directories on host
+	_, err = client.RunCommand(fmt.Sprintf("mkdir -p %s", volumePath))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create persistent database directory: %w", err)
+	}
+
+	// Compose the run command based on database type
+	var runCmd string
+	switch dbType {
+	case "mysql":
+		runCmd = fmt.Sprintf(
+			"docker run -d --name %s -p %d:3306 -v %s:/var/lib/mysql -e MYSQL_ROOT_PASSWORD=%s -e MYSQL_DATABASE=%s --restart unless-stopped mysql:8.0",
+			containerName, hostPort, volumePath, password, dbName,
+		)
+	case "postgres":
+		runCmd = fmt.Sprintf(
+			"docker run -d --name %s -p %d:5432 -v %s:/var/lib/postgresql/data -e POSTGRES_PASSWORD=%s -e POSTGRES_USER=%s -e POSTGRES_DB=%s --restart unless-stopped postgres:15",
+			containerName, hostPort, volumePath, password, username, dbName,
+		)
+	case "mongodb":
+		runCmd = fmt.Sprintf(
+			"docker run -d --name %s -p %d:27017 -v %s:/data/db -e MONGO_INITDB_ROOT_USERNAME=%s -e MONGO_INITDB_ROOT_PASSWORD=%s --restart unless-stopped mongo:6.0",
+			containerName, hostPort, volumePath, username, password,
+		)
+	case "redis":
+		runCmd = fmt.Sprintf(
+			"docker run -d --name %s -p %d:6379 -v %s:/data --restart unless-stopped redis:7.0-alpine redis-server --requirepass %s --appendonly yes",
+			containerName, hostPort, volumePath, password,
+		)
+	case "sqlite":
+		runCmd = fmt.Sprintf("sqlite3 %s/sqlite.db 'VACUUM;' 2>/dev/null || touch %s/sqlite.db", volumePath, volumePath)
+	case "pocketbase":
+		runCmd = fmt.Sprintf(
+			"docker run -d --name %s --entrypoint /usr/local/bin/pocketbase -p %d:8090 -v %s/pb_data:/pb_data --restart unless-stopped spectado/pocketbase:latest serve --http=0.0.0.0:8090 --dir=/pb_data",
+			containerName, hostPort, volumePath,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported database engine type: %s", dbType)
+	}
+
+	var containerID string
+	if dbType == "sqlite" {
+		_, err = client.RunCommand(runCmd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize sqlite database file: %w", err)
+		}
+		containerID = "sqlite-local"
+	} else {
+		containerIDOut, err := client.RunCommand(runCmd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute docker run command: %w", err)
+		}
+		containerID = strings.TrimSpace(containerIDOut)
+		if len(containerID) > 12 {
+			containerID = containerID[:12]
+		}
+	}
+
+	// Create database record
+	db := models.Database{
+		ID:           dbID,
+		ServerID:     serverID,
+		Name:         name,
+		Type:         dbType,
+		DatabaseName: dbName,
+		Username:     username,
+		Password:     password,
+		HostPort:     hostPort,
+		ContainerID:  containerID,
+		Status:       models.DatabaseStatusStarting,
+		CreatedAt:    time.Now(),
+	}
+
+	err = s.store.AddDatabase(db)
+	if err != nil {
+		// Attempt cleanup
+		client.RunCommand(fmt.Sprintf("docker rm -f %s", containerName))
+		return nil, fmt.Errorf("failed to persist database metadata: %w", err)
+	}
+
+	// Update status asynchronously
+	go func() {
+		time.Sleep(5 * time.Second)
+		s.UpdateStatus(context.Background(), dbID)
+	}()
+
+	return &db, nil
+}
+
+// UpdateStatus queries Docker and database health CLI endpoints to resolve state
+func (s *DatabaseService) UpdateStatus(ctx context.Context, id string) (models.DatabaseStatus, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return models.DatabaseStatusError, err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return models.DatabaseStatusError, err
+	}
+
+	if db.Type == "sqlite" {
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		checkCmd := fmt.Sprintf("[ -f %s/sqlite.db ] && echo 'exists' || echo 'missing'", volumePath)
+		out, err := client.RunCommand(checkCmd)
+		if err == nil && strings.TrimSpace(out) == "exists" {
+			db.Status = models.DatabaseStatusRunning
+		} else {
+			db.Status = models.DatabaseStatusError
+		}
+		s.store.UpdateDatabase(db)
+		return db.Status, nil
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	inspectCmd := fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s 2>/dev/null", containerName)
+	runningOut, err := client.RunCommand(inspectCmd)
+	if err != nil || strings.TrimSpace(runningOut) != "true" {
+		db.Status = models.DatabaseStatusStopped
+		s.store.UpdateDatabase(db)
+		return models.DatabaseStatusStopped, nil
+	}
+
+	// Container is running! Let's check health using client ping tools
+	var healthCmd string
+	switch db.Type {
+	case "mysql":
+		healthCmd = fmt.Sprintf("docker exec %s mysqladmin -u%s -p%s ping 2>/dev/null | grep -q 'alive' && echo 'healthy' || echo 'starting'", containerName, db.Username, db.Password)
+	case "postgres":
+		healthCmd = fmt.Sprintf("docker exec %s pg_isready -U %s -d %s >/dev/null 2>&1 && echo 'healthy' || echo 'starting'", containerName, db.Username, db.DatabaseName)
+	case "mongodb":
+		healthCmd = fmt.Sprintf("docker exec %s mongosh --quiet --eval \"db.adminCommand('ping')\" 2>/dev/null | grep -q 'ok' && echo 'healthy' || echo 'starting'", containerName)
+	case "redis":
+		healthCmd = fmt.Sprintf("docker exec %s redis-cli -a %s ping 2>/dev/null | grep -q 'PONG' && echo 'healthy' || echo 'starting'", containerName, db.Password)
+	case "pocketbase":
+		healthCmd = fmt.Sprintf("docker exec %s nc -z 127.0.0.1 8090 && echo 'healthy' || echo 'starting'", containerName)
+	}
+
+	healthOut, _ := client.RunCommand(healthCmd)
+	statusStr := strings.TrimSpace(healthOut)
+	if statusStr == "healthy" {
+		db.Status = models.DatabaseStatusRunning
+	} else {
+		db.Status = models.DatabaseStatusStarting
+	}
+
+	s.store.UpdateDatabase(db)
+	return db.Status, nil
+}
+
+// StartDatabase boots up a database container
+func (s *DatabaseService) StartDatabase(ctx context.Context, id string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	if db.Type == "sqlite" {
+		return nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	_, err = client.RunCommand(fmt.Sprintf("docker start %s", containerName))
+	if err != nil {
+		return err
+	}
+
+	db.Status = models.DatabaseStatusStarting
+	s.store.UpdateDatabase(db)
+
+	go func() {
+		time.Sleep(3 * time.Second)
+		s.UpdateStatus(context.Background(), id)
+	}()
+
+	return nil
+}
+
+// StopDatabase halts a database container
+func (s *DatabaseService) StopDatabase(ctx context.Context, id string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	if db.Type == "sqlite" {
+		return nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	_, err = client.RunCommand(fmt.Sprintf("docker stop %s", containerName))
+	if err != nil {
+		return err
+	}
+
+	db.Status = models.DatabaseStatusStopped
+	s.store.UpdateDatabase(db)
+	return nil
+}
+
+// RestartDatabase reboots a database container
+func (s *DatabaseService) RestartDatabase(ctx context.Context, id string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	if db.Type == "sqlite" {
+		return nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	_, err = client.RunCommand(fmt.Sprintf("docker restart %s", containerName))
+	if err != nil {
+		return err
+	}
+
+	db.Status = models.DatabaseStatusStarting
+	s.store.UpdateDatabase(db)
+
+	go func() {
+		time.Sleep(4 * time.Second)
+		s.UpdateStatus(context.Background(), id)
+	}()
+
+	return nil
+}
+
+// DeleteDatabase removes a database container and metadata, optionally purging volumes
+func (s *DatabaseService) DeleteDatabase(ctx context.Context, id string, deleteVolume bool) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	if db.Type == "sqlite" {
+		if deleteVolume {
+			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+			backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+			client.RunCommand(fmt.Sprintf("rm -rf %s %s", volumePath, backupPath))
+		}
+		return s.store.RemoveDatabase(id)
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	client.RunCommand(fmt.Sprintf("docker stop %s", containerName))
+	client.RunCommand(fmt.Sprintf("docker rm %s", containerName))
+
+	if deleteVolume {
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+		client.RunCommand(fmt.Sprintf("rm -rf %s %s", volumePath, backupPath))
+	}
+
+	return s.store.RemoveDatabase(id)
+}
+
+// ExecuteQuery runs a SQL/NoSQL instruction in the container and returns clean formatted rows
+func (s *DatabaseService) ExecuteQuery(ctx context.Context, id string, schema string, query string) (interface{}, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	// Escape double-quotes inside the query for shell safety
+	safeQuery := strings.ReplaceAll(query, `"`, `\"`)
+	safeQuery = strings.ReplaceAll(safeQuery, `$`, `\$`)
+
+	targetSchema := schema
+	if targetSchema == "" {
+		targetSchema = db.DatabaseName
+	}
+	if targetSchema == "" && db.Type == "mongodb" {
+		targetSchema = "test"
+	}
+
+	var execCmd string
+	switch db.Type {
+	case "mysql":
+		// MySQL tabular output with -B (batch/tab-separated)
+		execCmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s %s -B -e "%s" 2>&1`,
+			containerName, db.Username, db.Password, targetSchema, safeQuery,
+		)
+	case "postgres":
+		// For SELECT queries, use --csv for clean parseable output
+		// For non-SELECT (INSERT/UPDATE/CREATE/DROP), use plain -c
+		trimmedUpper := strings.ToUpper(strings.TrimSpace(query))
+		if strings.HasPrefix(trimmedUpper, "SELECT") || strings.HasPrefix(trimmedUpper, "WITH") || strings.HasPrefix(trimmedUpper, "TABLE") || strings.HasPrefix(trimmedUpper, "VALUES") {
+			execCmd = fmt.Sprintf(
+				`docker exec %s psql -U %s -d %s --csv -c "%s" 2>&1`,
+				containerName, db.Username, targetSchema, safeQuery,
+			)
+		} else {
+			execCmd = fmt.Sprintf(
+				`docker exec %s psql -U %s -d %s -c "%s" 2>&1`,
+				containerName, db.Username, targetSchema, safeQuery,
+			)
+		}
+	case "sqlite":
+		trimmedUpper := strings.ToUpper(strings.TrimSpace(query))
+		if strings.HasPrefix(trimmedUpper, "SELECT") || strings.HasPrefix(trimmedUpper, "WITH") || strings.HasPrefix(trimmedUpper, "PRAGMA") {
+			execCmd = fmt.Sprintf(
+				`sqlite3 -header -csv /var/lib/gopulse/databases/%s/sqlite.db "%s" 2>&1`,
+				db.ID, safeQuery,
+			)
+		} else {
+			execCmd = fmt.Sprintf(
+				`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "%s" 2>&1`,
+				db.ID, safeQuery,
+			)
+		}
+	case "pocketbase":
+		trimmedUpper := strings.ToUpper(strings.TrimSpace(query))
+		if strings.HasPrefix(trimmedUpper, "SELECT") || strings.HasPrefix(trimmedUpper, "WITH") || strings.HasPrefix(trimmedUpper, "PRAGMA") {
+			execCmd = fmt.Sprintf(
+				`sqlite3 -header -csv /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`,
+				db.ID, safeQuery,
+			)
+		} else {
+			execCmd = fmt.Sprintf(
+				`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`,
+				db.ID, safeQuery,
+			)
+		}
+	case "mongodb":
+		execCmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "%s" 2>&1`,
+			containerName, db.Username, db.Password, targetSchema, safeQuery,
+		)
+	case "redis":
+		dbNum := "0"
+		if strings.HasPrefix(targetSchema, "db") {
+			dbNum = strings.TrimPrefix(targetSchema, "db")
+		}
+		// Run command using redis-cli
+		execCmd = fmt.Sprintf(
+			`docker exec %s redis-cli -n %s -a %s %s 2>&1`,
+			containerName, dbNum, db.Password, safeQuery,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported database engine: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(execCmd)
+	if err != nil {
+		return nil, fmt.Errorf("execution error: %s", output)
+	}
+
+	// Parse results into clean standard format
+	return parseQueryResult(db.Type, output)
+}
+
+// parseQueryResult parses different CLI database logs into uniform JSON structures
+func parseQueryResult(dbType string, output string) (interface{}, error) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return map[string]interface{}{"message": "Query completed successfully. Empty result set."}, nil
+	}
+
+	// Check if output is a raw error message
+	if strings.Contains(output, "ERROR:") || strings.Contains(output, "Error:") || strings.Contains(output, "Access denied") {
+		return nil, fmt.Errorf("%s", output)
+	}
+
+	switch dbType {
+	case "mysql":
+		// Parse MySQL Tab-separated values
+		lines := strings.Split(output, "\n")
+		if len(lines) == 0 {
+			return map[string]interface{}{"message": "Empty result set."}, nil
+		}
+
+		headers := strings.Split(lines[0], "\t")
+		var rows [][]string
+		for _, line := range lines[1:] {
+			if line == "" {
+				continue
+			}
+			rows = append(rows, strings.Split(line, "\t"))
+		}
+
+		return map[string]interface{}{
+			"type":    "table",
+			"columns": headers,
+			"rows":    rows,
+		}, nil
+
+	case "postgres", "sqlite", "pocketbase":
+		// Parse PostgreSQL / SQLite CSV values
+		r := csv.NewReader(strings.NewReader(output))
+		records, err := r.ReadAll()
+		if err != nil {
+			// Fallback to raw output if CSV parsing fails
+			return map[string]interface{}{
+				"type": "raw",
+				"data": output,
+			}, nil
+		}
+
+		if len(records) == 0 {
+			return map[string]interface{}{"message": "Empty result set."}, nil
+		}
+
+		headers := records[0]
+		var rows [][]string
+		if len(records) > 1 {
+			rows = records[1:]
+		}
+
+		return map[string]interface{}{
+			"type":    "table",
+			"columns": headers,
+			"rows":    rows,
+		}, nil
+
+	case "mongodb":
+		// MongoDB output is raw BSON/JSON records
+		return map[string]interface{}{
+			"type": "raw",
+			"data": output,
+		}, nil
+	case "redis":
+		// Redis output is raw lines
+		return map[string]interface{}{
+			"type": "raw",
+			"data": output,
+		}, nil
+	}
+
+	return output, nil
+}
+
+// CreateBackup takes a live dump of the remote database and saves it to a persistent archive folder
+func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.DatabaseBackup, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+
+	_, err = client.RunCommand(fmt.Sprintf("mkdir -p %s", backupDir))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create host backup folder: %w", err)
+	}
+
+	backupName := fmt.Sprintf("backup-%s-%s.sql.gz", db.ID, time.Now().Format("20060102-150405"))
+		if db.Type == "mongodb" {
+			backupName = fmt.Sprintf("backup-%s-%s.archive.gz", db.ID, time.Now().Format("20060102-150405"))
+		} else if db.Type == "redis" {
+			backupName = fmt.Sprintf("backup-%s-%s.rdb.gz", db.ID, time.Now().Format("20060102-150405"))
+		} else if db.Type == "sqlite" {
+			backupName = fmt.Sprintf("backup-%s-%s.db.gz", db.ID, time.Now().Format("20060102-150405"))
+		} else if db.Type == "pocketbase" {
+			backupName = fmt.Sprintf("backup-%s-%s.tar.gz", db.ID, time.Now().Format("20060102-150405"))
+		}
+	
+		var dumpCmd string
+		switch db.Type {
+		case "mysql":
+			dumpCmd = fmt.Sprintf(
+				"docker exec %s mysqldump -u%s -p%s --single-transaction --quick %s | gzip > %s/%s",
+				containerName, db.Username, db.Password, db.DatabaseName, backupDir, backupName,
+			)
+		case "postgres":
+			dumpCmd = fmt.Sprintf(
+				"docker exec %s pg_dump -U %s -d %s --clean --if-exists | gzip > %s/%s",
+				containerName, db.Username, db.DatabaseName, backupDir, backupName,
+			)
+		case "mongodb":
+			dumpCmd = fmt.Sprintf(
+				"docker exec %s mongodump --username %s --password %s --authenticationDatabase admin --archive | gzip > %s/%s",
+				containerName, db.Username, db.Password, backupDir, backupName,
+			)
+		case "redis":
+			dumpCmd = fmt.Sprintf(
+				"docker exec %s redis-cli -a %s SAVE && gzip -c /var/lib/gopulse/databases/%s/dump.rdb > %s/%s",
+				containerName, db.Password, db.ID, backupDir, backupName,
+			)
+		case "sqlite":
+			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+			dumpCmd = fmt.Sprintf(
+				"gzip -c %s/sqlite.db > %s/%s",
+				volumePath, backupDir, backupName,
+			)
+		case "pocketbase":
+			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+			dumpCmd = fmt.Sprintf(
+				"tar -czf %s/%s -C %s pb_data",
+				backupDir, backupName, volumePath,
+			)
+		}
+
+	output, err := client.RunCommand(dumpCmd)
+	if err != nil {
+		return nil, fmt.Errorf("database dump failed: %s (err: %w)", output, err)
+	}
+
+	// Retrieve file size from remote host
+	sizeCmd := fmt.Sprintf("stat -c%%s %s/%s", backupDir, backupName)
+	sizeOut, err := client.RunCommand(sizeCmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve remote backup size: %w", err)
+	}
+
+	size, _ := strconv.ParseInt(strings.TrimSpace(sizeOut), 10, 64)
+
+	return &models.DatabaseBackup{
+		Filename:  backupName,
+		Size:      size,
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+// ListBackups scans the backups directory on the remote host and compiles an active list of archives
+func (s *DatabaseService) ListBackups(ctx context.Context, id string) ([]models.DatabaseBackup, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+
+	// Ensure folder exists
+	client.RunCommand(fmt.Sprintf("mkdir -p %s", backupDir))
+
+	// Search file listing using tabular output format (Filename, Size, Timestamp)
+	findCmd := fmt.Sprintf("find %s -type f -name 'backup-*' -printf '%%f\\t%%s\\t%%T@\\n' 2>/dev/null", backupDir)
+	output, err := client.RunCommand(findCmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var backups []models.DatabaseBackup
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 3 {
+			continue
+		}
+
+		filename := parts[0]
+		size, _ := strconv.ParseInt(parts[1], 10, 64)
+		tsFloat, _ := strconv.ParseFloat(parts[2], 64)
+		createdAt := time.Unix(int64(tsFloat), 0)
+
+		backups = append(backups, models.DatabaseBackup{
+			Filename:  filename,
+			Size:      size,
+			CreatedAt: createdAt,
+		})
+	}
+
+	// Sort backups with newest first
+	for i := 0; i < len(backups)/2; i++ {
+		j := len(backups) - i - 1
+		backups[i], backups[j] = backups[j], backups[i]
+	}
+
+	return backups, nil
+}
+
+// RestoreBackup restores a database snapshot from a remote file into the live container
+func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+	backupPath := fmt.Sprintf("%s/%s", backupDir, filename)
+
+	// Confirm that the file exists on host
+	checkCmd := fmt.Sprintf("[ -f %s ] && echo 'exists' || echo 'missing'", backupPath)
+	checkOut, _ := client.RunCommand(checkCmd)
+	if strings.TrimSpace(checkOut) != "exists" {
+		return fmt.Errorf("backup file %s does not exist on remote host", filename)
+	}
+
+	isGzipped := strings.HasSuffix(filename, ".gz")
+
+	var restoreCmd string
+	switch db.Type {
+	case "mysql":
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"gzip -d -c %s | docker exec -i %s mysql -u%s -p%s %s 2>&1",
+				backupPath, containerName, db.Username, db.Password, db.DatabaseName,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"cat %s | docker exec -i %s mysql -u%s -p%s %s 2>&1",
+				backupPath, containerName, db.Username, db.Password, db.DatabaseName,
+			)
+		}
+	case "postgres":
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"gzip -d -c %s | docker exec -i %s psql -U %s -d %s 2>&1",
+				backupPath, containerName, db.Username, db.DatabaseName,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"cat %s | docker exec -i %s psql -U %s -d %s 2>&1",
+				backupPath, containerName, db.Username, db.DatabaseName,
+			)
+		}
+	case "mongodb":
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"gzip -d -c %s | docker exec -i %s mongorestore --username %s --password %s --authenticationDatabase admin --archive --drop 2>&1",
+				backupPath, containerName, db.Username, db.Password,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"cat %s | docker exec -i %s mongorestore --username %s --password %s --authenticationDatabase admin --archive --drop 2>&1",
+				backupPath, containerName, db.Username, db.Password,
+			)
+		}
+	case "redis":
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"gzip -d -c %s > /var/lib/gopulse/databases/%s/dump.rdb && docker restart %s 2>&1",
+				backupPath, db.ID, containerName,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"cat %s > /var/lib/gopulse/databases/%s/dump.rdb && docker restart %s 2>&1",
+				backupPath, db.ID, containerName,
+			)
+		}
+	case "sqlite":
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"gzip -d -c %s > %s/sqlite.db 2>&1",
+				backupPath, volumePath,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"cat %s > %s/sqlite.db 2>&1",
+				backupPath, volumePath,
+			)
+		}
+	case "pocketbase":
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		if isGzipped {
+			restoreCmd = fmt.Sprintf(
+				"docker stop %s && rm -rf %s/pb_data && tar -xzf %s -C %s && docker start %s 2>&1",
+				containerName, volumePath, backupPath, volumePath, containerName,
+			)
+		} else {
+			restoreCmd = fmt.Sprintf(
+				"docker stop %s && rm -rf %s/pb_data && tar -xf %s -C %s && docker start %s 2>&1",
+				containerName, volumePath, backupPath, volumePath, containerName,
+			)
+		}
+	}
+
+	output, err := client.RunCommand(restoreCmd)
+	if err != nil {
+		return fmt.Errorf("database restore failed: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// SetAutoBackup updates the automatic backup status and retention period for a database
+func (s *DatabaseService) SetAutoBackup(id string, enabled bool, retentionDays int) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	db.AutoBackup = enabled
+	db.RetentionDays = retentionDays
+
+	return s.store.UpdateDatabase(db)
+}
+
+// PurgeOldBackups scans the remote backups directory and deletes any backups older than the retention limit
+func (s *DatabaseService) PurgeOldBackups(ctx context.Context, id string, retentionDays int) error {
+	if retentionDays <= 0 {
+		return nil // keep forever
+	}
+
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
+	purgeCmd := fmt.Sprintf("find %s -type f -name 'backup-*' -mtime +%d -delete", backupDir, retentionDays)
+	_, err = client.RunCommand(purgeCmd)
+	if err != nil {
+		return fmt.Errorf("failed to purge old backups: %w", err)
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Explorer — Schema / Table / Row browsing
+// =============================================================================
+
+// ListSchemas returns all databases/schemas inside the container
+func (s *DatabaseService) ListSchemas(ctx context.Context, id string) ([]string, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if db.Type == "redis" {
+		var schemas []string
+		for i := 0; i < 16; i++ {
+			schemas = append(schemas, fmt.Sprintf("db%d", i))
+		}
+		return schemas, nil
+	}
+
+	if db.Type == "sqlite" || db.Type == "pocketbase" {
+		return []string{"main"}, nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s -B -N -e "SHOW DATABASES;" 2>/dev/null`,
+			containerName, db.Username, db.Password,
+		)
+	case "postgres":
+		cmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s -t -A -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;" 2>/dev/null`,
+			containerName, db.Username, db.DatabaseName,
+		)
+	case "mongodb":
+		cmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin --eval "db.adminCommand('listDatabases').databases.map(d => d.name).join('\n')" 2>/dev/null`,
+			containerName, db.Username, db.Password,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list schemas: %w", err)
+	}
+
+	var schemas []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			schemas = append(schemas, line)
+		}
+	}
+
+	return schemas, nil
+}
+
+// ListTables returns all tables/collections inside a specific schema/database
+func (s *DatabaseService) ListTables(ctx context.Context, id string, schema string) ([]string, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if db.Type == "redis" {
+		return []string{"Keys"}, nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s %s -B -N -e "SHOW TABLES;" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema,
+		)
+	case "postgres":
+		cmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s -t -A -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" 2>/dev/null`,
+			containerName, db.Username, schema,
+		)
+	case "sqlite":
+		cmd = fmt.Sprintf(
+			`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%%' ORDER BY name;" 2>/dev/null`,
+			db.ID,
+		)
+	case "pocketbase":
+		cmd = fmt.Sprintf(
+			`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%%' AND name NOT LIKE '_%%' ORDER BY name;" 2>/dev/null`,
+			db.ID,
+		)
+	case "mongodb":
+		cmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "db.getCollectionNames().join('\n')" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tables: %w", err)
+	}
+
+	var tables []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			tables = append(tables, line)
+		}
+	}
+
+	return tables, nil
+}
+
+// ColumnInfo represents a table column descriptor
+type ColumnInfo struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// DescribeTable returns column metadata for a specific table
+func (s *DatabaseService) DescribeTable(ctx context.Context, id string, schema string, table string) ([]ColumnInfo, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if db.Type == "redis" {
+		return []ColumnInfo{
+			{Name: "key", Type: "string"},
+			{Name: "type", Type: "string"},
+			{Name: "value", Type: "string"},
+			{Name: "ttl", Type: "integer"},
+		}, nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s %s -B -N -e "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='%s' AND TABLE_NAME='%s' ORDER BY ORDINAL_POSITION;" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema, schema, table,
+		)
+	case "postgres":
+		cmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s -t -A -F '	' -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '%s' ORDER BY ordinal_position;" 2>/dev/null`,
+			containerName, db.Username, schema, table,
+		)
+	case "sqlite":
+		cmd = fmt.Sprintf(
+			`sqlite3 -tabs /var/lib/gopulse/databases/%s/sqlite.db "PRAGMA table_info('%s');" 2>/dev/null`,
+			db.ID, table,
+		)
+	case "pocketbase":
+		cmd = fmt.Sprintf(
+			`sqlite3 -tabs /var/lib/gopulse/databases/%s/pb_data/data.db "PRAGMA table_info('%s');" 2>/dev/null`,
+			db.ID, table,
+		)
+	case "mongodb":
+		// MongoDB is schema-less; sample one document to get field names
+		cmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "const doc = db.getCollection('%s').findOne(); if(doc) { Object.keys(doc).forEach(k => print(k + '\t' + typeof doc[k])) } else { print('_id\tobjectId') }" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema, table,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to describe table: %w", err)
+	}
+
+	var columns []ColumnInfo
+	if db.Type == "sqlite" || db.Type == "pocketbase" {
+		for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) > 2 {
+				columns = append(columns, ColumnInfo{
+					Name: parts[1],
+					Type: parts[2],
+				})
+			}
+		}
+		return columns, nil
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		col := ColumnInfo{Name: parts[0]}
+		if len(parts) > 1 {
+			col.Type = parts[1]
+		}
+		columns = append(columns, col)
+	}
+
+	return columns, nil
+}
+
+// TableDataResult holds paginated row data
+type TableDataResult struct {
+	Columns []string   `json:"columns"`
+	Rows    [][]string `json:"rows"`
+	Total   int64      `json:"total"`
+	Page    int        `json:"page"`
+	Limit   int        `json:"limit"`
+}
+
+// BrowseTableData returns paginated rows/documents from a table/collection
+func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema string, table string, page int, limit int) (*TableDataResult, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	if db.Type == "redis" {
+		dbNum := "0"
+		if strings.HasPrefix(schema, "db") {
+			dbNum = strings.TrimPrefix(schema, "db")
+		}
+
+		if page < 1 {
+			page = 1
+		}
+		if limit <= 0 || limit > 200 {
+			limit = 50
+		}
+		offset := (page - 1) * limit
+
+		// 1. Get total list of keys
+		keysListCmd := fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s KEYS "*" 2>/dev/null`, containerName, dbNum, db.Password)
+		keysListOut, err := client.RunCommand(keysListCmd)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch keys: %w", err)
+		}
+
+		var allKeys []string
+		for _, line := range strings.Split(strings.TrimSpace(keysListOut), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.Contains(line, "Warning:") {
+				allKeys = append(allKeys, line)
+			}
+		}
+
+		total := int64(len(allKeys))
+
+		start := offset
+		if start > len(allKeys) {
+			start = len(allKeys)
+		}
+		end := offset + limit
+		if end > len(allKeys) {
+			end = len(allKeys)
+		}
+		pageKeys := allKeys[start:end]
+
+		result := &TableDataResult{
+			Columns: []string{"key", "type", "value", "ttl"},
+			Rows:    [][]string{},
+			Total:   total,
+			Page:    page,
+			Limit:   limit,
+		}
+
+		if len(pageKeys) > 0 {
+			var keyCmds []string
+			for _, k := range pageKeys {
+				// Construct a shell-safe command slice for this key
+				cmdPart := fmt.Sprintf(
+					`t=$(redis-cli -n %[1]s -a %[2]s TYPE "%[3]s" 2>/dev/null); `+
+						`ttl=$(redis-cli -n %[1]s -a %[2]s TTL "%[3]s" 2>/dev/null); `+
+						`if [ "$t" = "string" ]; then v=$(redis-cli -n %[1]s -a %[2]s GET "%[3]s" 2>/dev/null); `+
+						`elif [ "$t" = "hash" ]; then v=$(redis-cli -n %[1]s -a %[2]s HGETALL "%[3]s" 2>/dev/null | paste -sd " " -); `+
+						`else v=$(redis-cli -n %[1]s -a %[2]s LRANGE "%[3]s" 0 -1 2>/dev/null | paste -sd "," -); fi; `+
+						`echo -e "%[3]s\t\$t\t\$v\t\$ttl"`,
+					dbNum, db.Password, k,
+				)
+				keyCmds = append(keyCmds, cmdPart)
+			}
+
+			dataCmd := fmt.Sprintf(`docker exec %s bash -c '%s'`, containerName, strings.Join(keyCmds, "; "))
+			dataOut, err := client.RunCommand(dataCmd)
+			if err == nil {
+				for _, line := range strings.Split(strings.TrimSpace(dataOut), "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					parts := strings.Split(line, "\t")
+					if len(parts) >= 4 {
+						result.Rows = append(result.Rows, []string{parts[0], parts[1], parts[2], parts[3]})
+					} else if len(parts) == 3 {
+						result.Rows = append(result.Rows, []string{parts[0], parts[1], parts[2], "-1"})
+					} else if len(parts) == 2 {
+						result.Rows = append(result.Rows, []string{parts[0], parts[1], "", "-1"})
+					}
+				}
+			}
+		}
+
+		return result, nil
+	}
+
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	offset := (page - 1) * limit
+
+	// First, get total row count
+	var countCmd string
+	switch db.Type {
+	case "mysql":
+		countCmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s %s -B -N -e "SELECT COUNT(*) FROM %s;" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema, table,
+		)
+	case "postgres":
+		countCmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s -t -A -c "SELECT COUNT(*) FROM \"%s\";" 2>/dev/null`,
+			containerName, db.Username, schema, table,
+		)
+	case "sqlite":
+		countCmd = fmt.Sprintf(
+			`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "SELECT COUNT(*) FROM \"%s\";" 2>/dev/null`,
+			db.ID, table,
+		)
+	case "pocketbase":
+		countCmd = fmt.Sprintf(
+			`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "SELECT COUNT(*) FROM \"%s\";" 2>/dev/null`,
+			db.ID, table,
+		)
+	case "mongodb":
+		countCmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "db.getCollection('%s').countDocuments()" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema, table,
+		)
+	}
+
+	countOut, _ := client.RunCommand(countCmd)
+	total, _ := strconv.ParseInt(strings.TrimSpace(countOut), 10, 64)
+
+	// Then, fetch paginated rows
+	var dataCmd string
+	switch db.Type {
+	case "mysql":
+		dataCmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s %s -B -e "SELECT * FROM %s LIMIT %d OFFSET %d;" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema, table, limit, offset,
+		)
+	case "postgres":
+		dataCmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s --csv -c "SELECT * FROM \"%s\" LIMIT %d OFFSET %d;" 2>/dev/null`,
+			containerName, db.Username, schema, table, limit, offset,
+		)
+	case "sqlite":
+		dataCmd = fmt.Sprintf(
+			`sqlite3 -header -csv /var/lib/gopulse/databases/%s/sqlite.db "SELECT * FROM \"%s\" LIMIT %d OFFSET %d;" 2>/dev/null`,
+			db.ID, table, limit, offset,
+		)
+	case "pocketbase":
+		dataCmd = fmt.Sprintf(
+			`sqlite3 -header -csv /var/lib/gopulse/databases/%s/pb_data/data.db "SELECT * FROM \"%s\" LIMIT %d OFFSET %d;" 2>/dev/null`,
+			db.ID, table, limit, offset,
+		)
+	case "mongodb":
+		dataCmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "JSON.stringify(db.getCollection('%s').find().skip(%d).limit(%d).toArray())" 2>/dev/null`,
+			containerName, db.Username, db.Password, schema, table, offset, limit,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(dataCmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to browse table data: %w", err)
+	}
+
+	result := &TableDataResult{
+		Total: total,
+		Page:  page,
+		Limit: limit,
+	}
+
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return result, nil
+	}
+
+	// Parse output based on engine type
+	switch db.Type {
+	case "mysql":
+		// Tab-separated with header row
+		lines := strings.Split(output, "\n")
+		if len(lines) > 0 {
+			result.Columns = strings.Split(lines[0], "\t")
+			for _, line := range lines[1:] {
+				if line == "" {
+					continue
+				}
+				result.Rows = append(result.Rows, strings.Split(line, "\t"))
+			}
+		}
+
+	case "postgres", "sqlite", "pocketbase":
+		// CSV with header row
+		r := csv.NewReader(strings.NewReader(output))
+		records, csvErr := r.ReadAll()
+		if csvErr != nil {
+			// Fallback: treat as raw
+			result.Columns = []string{"output"}
+			result.Rows = [][]string{{output}}
+			return result, nil
+		}
+		if len(records) > 0 {
+			result.Columns = records[0]
+			if len(records) > 1 {
+				result.Rows = records[1:]
+			}
+		}
+
+	case "mongodb":
+		// JSON array — parse and flatten to columns + rows
+		result.Columns, result.Rows = parseMongoJSONArray(output)
+	}
+
+	return result, nil
+}
+
+// parseMongoJSONArray takes a JSON array string and converts it to columns + rows
+func parseMongoJSONArray(jsonStr string) ([]string, [][]string) {
+	jsonStr = strings.TrimSpace(jsonStr)
+	if jsonStr == "" || jsonStr == "[]" {
+		return nil, nil
+	}
+
+	// Simple JSON array parsing using encoding/json
+	var docs []map[string]interface{}
+	if err := jsonUnmarshal([]byte(jsonStr), &docs); err != nil || len(docs) == 0 {
+		// Fallback: return raw output
+		return []string{"document"}, [][]string{{jsonStr}}
+	}
+
+	// Collect all unique keys across documents to build columns
+	keyOrder := make([]string, 0)
+	keySet := make(map[string]bool)
+	for _, doc := range docs {
+		for k := range doc {
+			if !keySet[k] {
+				keySet[k] = true
+				keyOrder = append(keyOrder, k)
+			}
+		}
+	}
+
+	// Build rows
+	var rows [][]string
+	for _, doc := range docs {
+		row := make([]string, len(keyOrder))
+		for i, key := range keyOrder {
+			if val, ok := doc[key]; ok {
+				row[i] = fmt.Sprintf("%v", val)
+			} else {
+				row[i] = ""
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	return keyOrder, rows
+}
+
+// CreateSchema creates a new schema/database
+func (s *DatabaseService) CreateSchema(ctx context.Context, id string, name string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s -e \"CREATE DATABASE `%s`;\" 2>&1", containerName, db.Username, db.Password, name)
+	case "postgres":
+		cmd = fmt.Sprintf("docker exec %s psql -U %s -d postgres -c \"CREATE DATABASE \\\"%s\\\";\" 2>&1", containerName, db.Username, name)
+	case "mongodb":
+		cmd = fmt.Sprintf("docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval \"db.createCollection('init')\" 2>&1", containerName, db.Username, db.Password, name)
+	case "redis", "sqlite", "pocketbase":
+		// Static schemas, no active dynamic creation
+		return nil
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to create schema: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// DeleteSchema deletes an existing schema/database
+func (s *DatabaseService) DeleteSchema(ctx context.Context, id string, name string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s -e \"DROP DATABASE `%s`;\" 2>&1", containerName, db.Username, db.Password, name)
+	case "postgres":
+		cmd = fmt.Sprintf("docker exec %s psql -U %s -d postgres -c \"DROP DATABASE \\\"%s\\\";\" 2>&1", containerName, db.Username, name)
+	case "mongodb":
+		cmd = fmt.Sprintf("docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval \"db.dropDatabase()\" 2>&1", containerName, db.Username, db.Password, name)
+	case "redis":
+		dbNum := "0"
+		if strings.HasPrefix(name, "db") {
+			dbNum = strings.TrimPrefix(name, "db")
+		}
+		cmd = fmt.Sprintf("docker exec %s redis-cli -n %s -a %s FLUSHDB 2>&1", containerName, dbNum, db.Password)
+	case "sqlite", "pocketbase":
+		// Static schemas, no active dynamic dropping
+		return nil
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to delete schema: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// CreateTable creates a new table or collection with a custom schema
+func (s *DatabaseService) CreateTable(ctx context.Context, id string, schema string, name string, columns []models.TableColumn) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		var colDefs []string
+		colDefs = append(colDefs, "`id` INT AUTO_INCREMENT PRIMARY KEY")
+		for _, col := range columns {
+			nullableStr := "NOT NULL"
+			if col.Nullable {
+				nullableStr = "NULL"
+			}
+			uniqueStr := ""
+			if col.Unique {
+				uniqueStr = "UNIQUE"
+			}
+			colDefs = append(colDefs, fmt.Sprintf("`%s` %s %s %s", col.Name, col.Type, nullableStr, uniqueStr))
+		}
+		query := fmt.Sprintf("CREATE TABLE `%s` (%s);", name, strings.Join(colDefs, ", "))
+		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s %s -e \"%s\" 2>&1", containerName, db.Username, db.Password, schema, query)
+	case "postgres":
+		var colDefs []string
+		colDefs = append(colDefs, "\"id\" SERIAL PRIMARY KEY")
+		for _, col := range columns {
+			nullableStr := "NOT NULL"
+			if col.Nullable {
+				nullableStr = "NULL"
+			}
+			uniqueStr := ""
+			if col.Unique {
+				uniqueStr = "UNIQUE"
+			}
+			colDefs = append(colDefs, fmt.Sprintf("\"%s\" %s %s %s", col.Name, col.Type, nullableStr, uniqueStr))
+		}
+		query := fmt.Sprintf("CREATE TABLE \"%s\" (%s);", name, strings.Join(colDefs, ", "))
+		cmd = fmt.Sprintf("docker exec %s psql -U %s -d %s -c \"%s\" 2>&1", containerName, db.Username, schema, query)
+	case "sqlite":
+		var colDefs []string
+		colDefs = append(colDefs, "\"id\" INTEGER PRIMARY KEY AUTOINCREMENT")
+		for _, col := range columns {
+			nullableStr := "NOT NULL"
+			if col.Nullable {
+				nullableStr = "NULL"
+			}
+			uniqueStr := ""
+			if col.Unique {
+				uniqueStr = "UNIQUE"
+			}
+			colDefs = append(colDefs, fmt.Sprintf("\"%s\" %s %s %s", col.Name, col.Type, nullableStr, uniqueStr))
+		}
+		query := fmt.Sprintf("CREATE TABLE \"%s\" (%s);", name, strings.Join(colDefs, ", "))
+		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "%s" 2>&1`, db.ID, query)
+	case "pocketbase":
+		var colDefs []string
+		colDefs = append(colDefs, "\"id\" TEXT PRIMARY KEY")
+		for _, col := range columns {
+			nullableStr := "NOT NULL"
+			if col.Nullable {
+				nullableStr = "NULL"
+			}
+			uniqueStr := ""
+			if col.Unique {
+				uniqueStr = "UNIQUE"
+			}
+			colDefs = append(colDefs, fmt.Sprintf("\"%s\" %s %s %s", col.Name, col.Type, nullableStr, uniqueStr))
+		}
+		query := fmt.Sprintf("CREATE TABLE \"%s\" (%s);", name, strings.Join(colDefs, ", "))
+		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`, db.ID, query)
+	case "mongodb":
+		cmd = fmt.Sprintf("docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval \"db.createCollection('%s')\" 2>&1", containerName, db.Username, db.Password, schema, name)
+	case "redis":
+		// Only virtual table Keyspace is allowed, no custom dynamic tables
+		return nil
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to create table: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// DeleteTable deletes an existing table or collection
+func (s *DatabaseService) DeleteTable(ctx context.Context, id string, schema string, name string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s %s -e \"DROP TABLE `%s`;\" 2>&1", containerName, db.Username, db.Password, schema, name)
+	case "postgres":
+		cmd = fmt.Sprintf("docker exec %s psql -U %s -d %s -c \"DROP TABLE \\\"%s\\\";\" 2>&1", containerName, db.Username, schema, name)
+	case "sqlite":
+		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "DROP TABLE \"%s\";" 2>&1`, db.ID, name)
+	case "pocketbase":
+		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "DROP TABLE \"%s\";" 2>&1`, db.ID, name)
+	case "mongodb":
+		cmd = fmt.Sprintf("docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval \"db.getCollection('%s').drop()\" 2>&1", containerName, db.Username, db.Password, schema, name)
+	case "redis":
+		dbNum := "0"
+		if strings.HasPrefix(schema, "db") {
+			dbNum = strings.TrimPrefix(schema, "db")
+		}
+		cmd = fmt.Sprintf("docker exec %s redis-cli -n %s -a %s FLUSHDB 2>&1", containerName, dbNum, db.Password)
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to delete table: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// InsertRow inserts a new row or document into a table or collection
+func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema string, table string, data map[string]interface{}) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	switch db.Type {
+	case "mysql", "postgres", "sqlite", "pocketbase":
+		var cols []string
+		var vals []string
+		if db.Type == "pocketbase" {
+			if _, hasID := data["id"]; !hasID {
+				const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+				b := make([]byte, 15)
+				for i := range b {
+					b[i] = chars[time.Now().UnixNano()%int64(len(chars))]
+					time.Sleep(1 * time.Nanosecond)
+				}
+				data["id"] = string(b)
+			}
+		}
+
+		for k, v := range data {
+			colName := fmt.Sprintf("`%s`", k)
+			if db.Type == "postgres" || db.Type == "sqlite" || db.Type == "pocketbase" {
+				colName = fmt.Sprintf("\"%s\"", k)
+			}
+			cols = append(cols, colName)
+
+			valStr := fmt.Sprintf("%v", v)
+			escapedVal := strings.ReplaceAll(valStr, "'", "''")
+			vals = append(vals, fmt.Sprintf("'%s'", escapedVal))
+		}
+
+		if len(cols) == 0 {
+			return fmt.Errorf("no columns provided for insert")
+		}
+
+		if db.Type == "mysql" {
+			query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (%s);", schema, table, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			cmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, query)
+		} else if db.Type == "postgres" {
+			query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s);", table, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			cmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, schema, query)
+		} else if db.Type == "sqlite" { // sqlite
+			query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s);", table, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "%s" 2>&1`, db.ID, query)
+		} else { // pocketbase
+			query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s);", table, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`, db.ID, query)
+		}
+
+	case "mongodb":
+		jsonBytes, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("failed to marshal document data: %w", err)
+		}
+		jsonStr := string(jsonBytes)
+		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "db.getCollection('%s').insertOne(%s)" 2>&1`,
+			containerName, db.Username, db.Password, schema, table, jsonStr,
+		)
+	case "redis":
+		dbNum := "0"
+		if strings.HasPrefix(schema, "db") {
+			dbNum = strings.TrimPrefix(schema, "db")
+		}
+		keyVal := fmt.Sprintf("%v", data["key"])
+		typeVal := fmt.Sprintf("%v", data["type"])
+		valueVal := fmt.Sprintf("%v", data["value"])
+		ttlVal := 0
+		if t, ok := data["ttl"]; ok && t != nil && fmt.Sprintf("%v", t) != "" {
+			if tInt, err := strconv.Atoi(fmt.Sprintf("%v", t)); err == nil {
+				ttlVal = tInt
+			}
+		}
+
+		var redisCmd string
+		switch strings.ToLower(typeVal) {
+		case "hash":
+			redisCmd = fmt.Sprintf(`HSET "%s" "data" "%s"`, keyVal, valueVal)
+		case "list":
+			redisCmd = fmt.Sprintf(`RPUSH "%s" "%s"`, keyVal, valueVal)
+		case "set":
+			redisCmd = fmt.Sprintf(`SADD "%s" "%s"`, keyVal, valueVal)
+		case "zset":
+			redisCmd = fmt.Sprintf(`ZADD "%s" 0 "%s"`, keyVal, valueVal)
+		default: // string
+			redisCmd = fmt.Sprintf(`SET "%s" "%s"`, keyVal, valueVal)
+		}
+
+		if ttlVal > 0 {
+			cmd = fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s %s && docker exec %s redis-cli -n %s -a %s EXPIRE "%s" %d 2>&1`,
+				containerName, dbNum, db.Password, redisCmd,
+				containerName, dbNum, db.Password, keyVal, ttlVal,
+			)
+		} else {
+			cmd = fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s %s 2>&1`,
+				containerName, dbNum, db.Password, redisCmd,
+			)
+		}
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("insert failed: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// DeleteRow deletes an existing row or document from a table or collection
+func (s *DatabaseService) DeleteRow(ctx context.Context, id string, schema string, table string, pkCol string, pkVal string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmd string
+	escapedPkVal := strings.ReplaceAll(pkVal, "'", "''")
+
+	switch db.Type {
+	case "mysql":
+		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE `%s` = '%s';", schema, table, pkCol, escapedPkVal)
+		cmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, query)
+	case "postgres":
+		query := fmt.Sprintf("DELETE FROM \"%s\" WHERE \"%s\" = '%s';", table, pkCol, escapedPkVal)
+		cmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, schema, query)
+	case "sqlite":
+		query := fmt.Sprintf("DELETE FROM \"%s\" WHERE \"%s\" = '%s';", table, pkCol, escapedPkVal)
+		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/sqlite.db "%s" 2>&1`, db.ID, query)
+	case "pocketbase":
+		query := fmt.Sprintf("DELETE FROM \"%s\" WHERE \"%s\" = '%s';", table, pkCol, escapedPkVal)
+		cmd = fmt.Sprintf(`sqlite3 /var/lib/gopulse/databases/%s/pb_data/data.db "%s" 2>&1`, db.ID, query)
+	case "mongodb":
+		cmd = fmt.Sprintf(`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval "
+			let idVal = '%s';
+			try {
+				if (idVal.length === 24) {
+					db.getCollection('%s').deleteOne({_id: ObjectId(idVal)});
+				} else {
+					db.getCollection('%s').deleteOne({_id: idVal});
+				}
+			} catch(e) {
+				db.getCollection('%s').deleteOne({_id: idVal});
+			}
+		" 2>&1`, containerName, db.Username, db.Password, schema, escapedPkVal, table, table, table)
+	case "redis":
+		dbNum := "0"
+		if strings.HasPrefix(schema, "db") {
+			dbNum = strings.TrimPrefix(schema, "db")
+		}
+		cmd = fmt.Sprintf(`docker exec %s redis-cli -n %s -a %s DEL "%s" 2>&1`, containerName, dbNum, db.Password, pkVal)
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return fmt.Errorf("delete failed: %s (err: %w)", output, err)
+	}
+
+	return nil
+}
+
+// GetDatabaseTelemetry fetches dynamic connection count and disk usage size on-demand
+func (s *DatabaseService) GetDatabaseTelemetry(ctx context.Context, id string) (*models.DatabaseTelemetry, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+
+	telemetry := &models.DatabaseTelemetry{
+		ActiveConnections: 0,
+		DataSize:          0,
+	}
+
+	// 1. Get disk data directory size (in kilobytes, multiply by 1024)
+	sizeCmd := fmt.Sprintf("du -sk %s 2>/dev/null", volumePath)
+	sizeOut, err := client.RunCommand(sizeCmd)
+	if err == nil {
+		fields := strings.Fields(sizeOut)
+		if len(fields) > 0 {
+			if kb, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
+				telemetry.DataSize = kb * 1024
+			}
+		}
+	}
+
+	// 2. Get active database connections (non-blocking query)
+	var connCmd string
+	switch db.Type {
+	case "mysql":
+		connCmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s -B -N -e "SHOW STATUS LIKE 'Threads_connected';" 2>/dev/null`,
+			containerName, db.Username, db.Password,
+		)
+	case "postgres":
+		connCmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s -t -A -c "SELECT count(*) FROM pg_stat_activity;" 2>/dev/null`,
+			containerName, db.Username, db.DatabaseName,
+		)
+	case "mongodb":
+		connCmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin --eval "db.serverStatus().connections.current" 2>/dev/null`,
+			containerName, db.Username, db.Password,
+		)
+	case "redis":
+		connCmd = fmt.Sprintf(
+			`docker exec %s redis-cli -a %s INFO clients 2>/dev/null | grep connected_clients | cut -d: -f2`,
+			containerName, db.Password,
+		)
+	case "sqlite", "pocketbase":
+		// SQLite/PocketBase is a file-based database with no direct TCP connections tracked on the CLI
+		telemetry.ActiveConnections = 0
+	}
+
+	if connCmd != "" {
+		connOut, err := client.RunCommand(connCmd)
+		if err == nil {
+			trimmed := strings.TrimSpace(connOut)
+			if db.Type == "mysql" {
+				// Parse "Threads_connected \t 3"
+				lines := strings.Split(trimmed, "\n")
+				for _, line := range lines {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 && fields[0] == "Threads_connected" {
+						if c, err := strconv.Atoi(fields[1]); err == nil {
+							telemetry.ActiveConnections = c
+						}
+						break
+					}
+				}
+			} else {
+				if c, err := strconv.Atoi(trimmed); err == nil {
+					telemetry.ActiveConnections = c
+				}
+			}
+		}
+	}
+
+	return telemetry, nil
+}
+
+// ListDatabaseUsers returns all users in the target database cluster
+func (s *DatabaseService) ListDatabaseUsers(ctx context.Context, id string) ([]models.DatabaseUser, error) {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+
+	if db.Type == "redis" || db.Type == "sqlite" || db.Type == "pocketbase" {
+		return []models.DatabaseUser{}, nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return nil, err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	var cmd string
+	switch db.Type {
+	case "mysql":
+		cmd = fmt.Sprintf(
+			`docker exec %s mysql -u%s -p%s -B -N -e "SELECT User, Host FROM mysql.user WHERE User NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys', 'root');" 2>/dev/null`,
+			containerName, db.Username, db.Password,
+		)
+	case "postgres":
+		cmd = fmt.Sprintf(
+			`docker exec %s psql -U %s -d %s -t -A -F '	' -c "SELECT usename, usesuper FROM pg_catalog.pg_user WHERE usename NOT IN ('postgres');" 2>/dev/null`,
+			containerName, db.Username, db.DatabaseName,
+		)
+	case "mongodb":
+		cmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin admin --eval "JSON.stringify(db.getUsers())" 2>/dev/null`,
+			containerName, db.Username, db.Password,
+		)
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	output, err := client.RunCommand(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list database users: %w", err)
+	}
+
+	var users []models.DatabaseUser
+	trimmedOut := strings.TrimSpace(output)
+	if trimmedOut == "" {
+		return users, nil
+	}
+
+	switch db.Type {
+	case "mysql":
+		lines := strings.Split(trimmedOut, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) >= 2 {
+				username := parts[0]
+				host := parts[1]
+				users = append(users, models.DatabaseUser{
+					Username: username,
+					Host:     host,
+					Scope:    "readWrite",
+					Database: "* (All)",
+				})
+			}
+		}
+	case "postgres":
+		lines := strings.Split(trimmedOut, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			parts := strings.Split(line, "\t")
+			if len(parts) >= 2 {
+				username := parts[0]
+				isSuper := parts[1] == "t"
+				scope := "readWrite"
+				dbScope := db.DatabaseName
+				if isSuper {
+					scope = "admin"
+					dbScope = "* (All)"
+				}
+				users = append(users, models.DatabaseUser{
+					Username: username,
+					Scope:    scope,
+					Database: dbScope,
+				})
+			}
+		}
+	case "mongodb":
+		var mongoUsers []struct {
+			User  string `json:"user"`
+			Roles []struct {
+				Role string `json:"role"`
+				Db   string `json:"db"`
+			} `json:"roles"`
+		}
+		if err := json.Unmarshal([]byte(trimmedOut), &mongoUsers); err == nil {
+			for _, mu := range mongoUsers {
+				scope := "read"
+				dbScope := "admin"
+				if len(mu.Roles) > 0 {
+					r := mu.Roles[0].Role
+					dbScope = mu.Roles[0].Db
+					if dbScope == "admin" && (r == "root" || r == "readWriteAnyDatabase" || r == "readAnyDatabase") {
+						dbScope = "* (All)"
+					}
+					if r == "dbOwner" || r == "root" || r == "userAdminAnyDatabase" {
+						scope = "admin"
+					} else if r == "readWrite" || r == "readWriteAnyDatabase" {
+						scope = "readWrite"
+					}
+				}
+				users = append(users, models.DatabaseUser{
+					Username: mu.User,
+					Scope:    scope,
+					Database: dbScope,
+				})
+			}
+		}
+	}
+
+	return users, nil
+}
+
+// CreateDatabaseUser provisions a new database user inside the container
+func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, username string, password string, scope string, targetDb string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	if db.Type == "redis" || db.Type == "sqlite" || db.Type == "pocketbase" {
+		return nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+
+	var cmds []string
+	switch db.Type {
+	case "mysql":
+		cmds = append(cmds, fmt.Sprintf(`CREATE USER '%s'@'%%' IDENTIFIED BY '%s';`, username, password))
+		
+		dbScope := "*.*"
+		if targetDb != "" && targetDb != "*" && targetDb != "all" {
+			dbScope = fmt.Sprintf("`%s`.*", targetDb)
+		}
+
+		switch scope {
+		case "read":
+			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT ON %s TO '%s'@'%%';`, dbScope, username))
+		case "readWrite":
+			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO '%s'@'%%';`, dbScope, username))
+		case "admin":
+			cmds = append(cmds, fmt.Sprintf(`GRANT ALL PRIVILEGES ON %s TO '%s'@'%%';`, dbScope, username))
+		}
+		cmds = append(cmds, "FLUSH PRIVILEGES;")
+
+		for _, sql := range cmds {
+			execCmd := fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, sql)
+			out, err := client.RunCommand(execCmd)
+			if err != nil {
+				return fmt.Errorf("mysql error: %s (err: %w)", out, err)
+			}
+		}
+
+	case "postgres":
+		cmds = append(cmds, fmt.Sprintf(`CREATE USER "%s" WITH PASSWORD '%s';`, username, password))
+		
+		targetName := targetDb
+		if targetName == "" || targetName == "*" || targetName == "all" {
+			targetName = db.DatabaseName
+		}
+
+		switch scope {
+		case "read":
+			cmds = append(cmds, fmt.Sprintf(`GRANT CONNECT ON DATABASE "%s" TO "%s";`, targetName, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT USAGE ON SCHEMA public TO "%s";`, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO "%s";`, username))
+		case "readWrite":
+			cmds = append(cmds, fmt.Sprintf(`GRANT CONNECT ON DATABASE "%s" TO "%s";`, targetName, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT USAGE, CREATE ON SCHEMA public TO "%s";`, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "%s";`, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "%s";`, username))
+		case "admin":
+			cmds = append(cmds, fmt.Sprintf(`ALTER USER "%s" WITH SUPERUSER;`, username))
+		}
+
+		for _, sql := range cmds {
+			execCmd := fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, targetName, sql)
+			out, err := client.RunCommand(execCmd)
+			if err != nil {
+				return fmt.Errorf("postgres error: %s (err: %w)", out, err)
+			}
+		}
+
+	case "mongodb":
+		var evalJs string
+		isClusterWide := targetDb == "" || targetDb == "*" || targetDb == "all"
+		
+		if isClusterWide {
+			var role string
+			switch scope {
+			case "read":
+				role = "readAnyDatabase"
+			case "readWrite":
+				role = "readWriteAnyDatabase"
+			case "admin":
+				role = "root"
+			}
+			evalJs = fmt.Sprintf(
+				`db.getSiblingDB("admin").createUser({ user: "%s", pwd: "%s", roles: [{ role: "%s", db: "admin" }] })`,
+				username, password, role,
+			)
+		} else {
+			var role string
+			switch scope {
+			case "read":
+				role = "read"
+			case "readWrite":
+				role = "readWrite"
+			case "admin":
+				role = "dbOwner"
+			}
+			evalJs = fmt.Sprintf(
+				`db.getSiblingDB("admin").createUser({ user: "%s", pwd: "%s", roles: [{ role: "%s", db: "%s" }] })`,
+				username, password, role, targetDb,
+			)
+		}
+
+		execCmd := fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin admin --eval '%s' 2>&1`,
+			containerName, db.Username, db.Password, evalJs,
+		)
+		out, err := client.RunCommand(execCmd)
+		if err != nil {
+			return fmt.Errorf("mongodb error: %s (err: %w)", out, err)
+		}
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	return nil
+}
+
+// DeleteDatabaseUser removes a user from the target database cluster
+func (s *DatabaseService) DeleteDatabaseUser(ctx context.Context, id string, username string) error {
+	db, err := s.store.GetDatabase(id)
+	if err != nil {
+		return err
+	}
+
+	if db.Type == "redis" || db.Type == "sqlite" || db.Type == "pocketbase" {
+		return nil
+	}
+
+	client, err := s.manager.GetSSHClient(db.ServerID)
+	if err != nil {
+		return err
+	}
+
+	containerName := fmt.Sprintf("gopulse-%s", db.ID)
+	var execCmd string
+	switch db.Type {
+	case "mysql":
+		execCmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "DROP USER '%s'@'%%';" 2>&1`, containerName, db.Username, db.Password, username)
+	case "postgres":
+		execCmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "DROP OWNED BY \"%s\"; DROP USER \"%s\";" 2>&1`, containerName, db.Username, db.DatabaseName, username, username)
+	case "mongodb":
+		evalJs := fmt.Sprintf(`db.dropUser("%s")`, username)
+		execCmd = fmt.Sprintf(
+			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin %s --eval '%s' 2>&1`,
+			containerName, db.Username, db.Password, db.DatabaseName, evalJs,
+		)
+	default:
+		return fmt.Errorf("unsupported database type: %s", db.Type)
+	}
+
+	out, err := client.RunCommand(execCmd)
+	if err != nil {
+		return fmt.Errorf("delete user error: %s (err: %w)", out, err)
+	}
+
+	return nil
+}
+
+

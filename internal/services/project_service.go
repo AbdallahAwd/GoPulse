@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -120,6 +122,9 @@ func (s *ProjectService) SetupProject(ctx context.Context, projectID string) err
 
 	// If upload, files are expected to be there (handled by upload handler).
 
+	// Sync env vars to the cloned git directory
+	_ = s.SyncEnvFile(ctx, projectID)
+
 	return nil
 }
 
@@ -193,6 +198,9 @@ func (s *ProjectService) UploadProjectFile(ctx context.Context, projectID string
 			}
 		}
 	}
+
+	// Sync env vars to the new files directory
+	_ = s.SyncEnvFile(ctx, projectID)
 
 	return nil
 }
@@ -352,6 +360,27 @@ func (s *ProjectService) BuildProject(ctx context.Context, projectID string) err
 				s.store.UpdateProject(project)
 				return fmt.Errorf("build failed: %s\n%w", out, err)
 			}
+		} else if project.Type == "laravel" {
+			// Ensure PHP & Composer are installed
+			if err := s.ensureLaravelInstalled(client); err != nil {
+				project.Status = models.ProjectStatusError
+				s.store.UpdateProject(project)
+				return fmt.Errorf("failed to ensure Laravel environment: %w", err)
+			}
+
+			workDir := project.Path
+
+			// Run build command
+			if project.BuildCommand == "" {
+				project.BuildCommand = "composer install --no-dev --optimize-autoloader"
+			}
+
+			cmd := fmt.Sprintf("cd %s && %s", workDir, project.BuildCommand)
+			if out, err := client.RunCommand(cmd); err != nil {
+				project.Status = models.ProjectStatusError
+				s.store.UpdateProject(project)
+				return fmt.Errorf("build failed: %s\n%w", out, err)
+			}
 		} else {
 			// Node/Next.js Logic
 			// Ensure Node is installed
@@ -495,6 +524,25 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 				return fmt.Errorf("start failed: %w", err)
 			}
 
+		} else if project.Type == "laravel" {
+			if project.StartCommand == "" {
+				project.StartCommand = fmt.Sprintf("php artisan serve --port=%d --host=0.0.0.0", project.Port)
+			}
+
+			// Ensure PM2 is installed
+			nodePrefix := s.getNodeCommandPrefix()
+			checkPm2 := fmt.Sprintf("%spm2 -v", nodePrefix)
+			if _, err := client.RunCommand(checkPm2); err != nil {
+				s.ensureNodeInstalled(client)
+				installPm2 := fmt.Sprintf("%snpm install -g pm2", nodePrefix)
+				client.RunCommand(installPm2)
+			}
+
+			workDir := project.Path
+			cmd := fmt.Sprintf("cd %s && pm2 start --name \"%s\" -- php artisan serve --port=%d --host=0.0.0.0", workDir, project.Name, project.Port)
+			if _, err := client.RunCommand(cmd); err != nil {
+				return fmt.Errorf("start failed: %w", err)
+			}
 		} else {
 			// Node/Next.js Logic
 			// Use PM2 or Systemd?
@@ -731,6 +779,31 @@ func (s *ProjectService) ensureGoInstalled(client *remote.SSHClient) error {
 	return nil
 }
 
+// ensureLaravelInstalled checks for PHP and Composer and installs them if missing
+func (s *ProjectService) ensureLaravelInstalled(client *remote.SSHClient) error {
+	// Check if php is available
+	if _, err := client.RunCommand("php -v"); err == nil {
+		// Check if composer is available
+		if _, err := client.RunCommand("composer --version"); err == nil {
+			return nil // Both are installed
+		}
+	}
+
+	// Install PHP and extensions if missing
+	installCmd := "export DEBIAN_FRONTEND=noninteractive && (which apt-get && apt-get update && apt-get install -y php php-cli php-mbstring php-xml php-bcmath php-curl php-zip unzip curl || sudo apt-get update && sudo apt-get install -y php php-cli php-mbstring php-xml php-bcmath php-curl php-zip unzip curl)"
+	if _, err := client.RunCommand(installCmd); err != nil {
+		return fmt.Errorf("failed to install php and extensions: %w", err)
+	}
+
+	// Install Composer
+	composerCmd := "curl -sS https://getcomposer.org/installer | php && (mv composer.phar /usr/local/bin/composer || sudo mv composer.phar /usr/local/bin/composer)"
+	if _, err := client.RunCommand(composerCmd); err != nil {
+		// Log warning but proceed if composer already exists or let it fail downstream
+	}
+
+	return nil
+}
+
 // getGoCommandPrefix returns the prefix to ensure go is in path
 func (s *ProjectService) getGoCommandPrefix() string {
 	return "export PATH=$PATH:/usr/local/go/bin && "
@@ -809,4 +882,236 @@ func (s *ProjectService) CreateProjectFromRepo(ctx context.Context, project mode
 	}
 
 	return &project, nil
+}
+
+// RedeployProject performs a git pull → build → restart cycle (used by webhook CI/CD)
+func (s *ProjectService) RedeployProject(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return fmt.Errorf("failed to connect to server: %w", err)
+	}
+
+	// 1. Stop the running project
+	s.StopProject(ctx, projectID)
+
+	// 2. Git pull
+	if project.SourceType == "git" && project.Path != "" {
+		var cmdPrefix string
+		if project.Type == "go" {
+			cmdPrefix = s.getGoCommandPrefix()
+		} else {
+			cmdPrefix = s.getNodeCommandPrefix()
+		}
+		pullCmd := fmt.Sprintf("%scd %s && git pull", cmdPrefix, project.Path)
+		if out, err := client.RunCommand(pullCmd); err != nil {
+			return fmt.Errorf("git pull failed: %s: %w", out, err)
+		}
+	}
+
+	// 3. Sync env vars before build
+	s.SyncEnvFile(ctx, projectID)
+
+	// 4. Build
+	if err := s.BuildProject(ctx, projectID); err != nil {
+		return fmt.Errorf("build failed during redeploy: %w", err)
+	}
+
+	// 5. Start
+	if err := s.StartProject(ctx, projectID); err != nil {
+		return fmt.Errorf("start failed during redeploy: %w", err)
+	}
+
+	// 6. Update last deploy timestamp
+	project, _ = s.store.GetProject(projectID)
+	project.LastDeploy = time.Now()
+	s.store.UpdateProject(project)
+
+	return nil
+}
+
+// GenerateWebhookSecret generates a random 32-byte hex string for webhook HMAC verification
+func GenerateWebhookSecret() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// EnableWebhook generates a secret and enables the webhook for a project
+func (s *ProjectService) EnableWebhook(ctx context.Context, projectID string) (string, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return "", err
+	}
+
+	secret, err := GenerateWebhookSecret()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate secret: %w", err)
+	}
+
+	project.WebhookSecret = secret
+	project.WebhookEnabled = true
+	if err := s.store.UpdateProject(project); err != nil {
+		return "", err
+	}
+
+	return secret, nil
+}
+
+// DisableWebhook disables the webhook for a project
+func (s *ProjectService) DisableWebhook(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	project.WebhookEnabled = false
+	project.WebhookSecret = ""
+	return s.store.UpdateProject(project)
+}
+
+// parseEnvContent parses raw .env file contents into a key-value map
+func parseEnvContent(content string) map[string]string {
+	vars := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+
+		// Strip surrounding quotes if present
+		if len(val) >= 2 {
+			if (strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) ||
+				(strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) {
+				val = val[1 : len(val)-1]
+			}
+		}
+		vars[key] = val
+	}
+	return vars
+}
+
+// GetEnvVars returns the environment variables for a project, syncing with remote .env if available
+func (s *ProjectService) GetEnvVars(ctx context.Context, projectID string) (map[string]string, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Proactively sync from remote .env file if it exists, to allow loading manually uploaded environment variables
+	if project.Path != "" {
+		client, err := s.manager.GetSSHClient(project.ServerID)
+		if err == nil {
+			cmd := fmt.Sprintf("cat %s/.env 2>/dev/null", project.Path)
+			output, err := client.RunCommand(cmd)
+			if err == nil {
+				remoteVars := parseEnvContent(output)
+				
+				// Update metadata store if there are any differences
+				changed := false
+				if project.EnvVars == nil {
+					project.EnvVars = make(map[string]string)
+					changed = true
+				}
+
+				// Merge remote keys
+				for k, v := range remoteVars {
+					if project.EnvVars[k] != v {
+						project.EnvVars[k] = v
+						changed = true
+					}
+				}
+
+				// Remove deleted keys
+				for k := range project.EnvVars {
+					if _, exists := remoteVars[k]; !exists {
+						delete(project.EnvVars, k)
+						changed = true
+					}
+				}
+
+				if changed {
+					_ = s.store.UpdateProject(project)
+				}
+				return project.EnvVars, nil
+			}
+		}
+	}
+
+	if project.EnvVars == nil {
+		return map[string]string{}, nil
+	}
+	return project.EnvVars, nil
+}
+
+// UpdateEnvVars updates the environment variables for a project and syncs to remote
+func (s *ProjectService) UpdateEnvVars(ctx context.Context, projectID string, vars map[string]string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	project.EnvVars = vars
+	if err := s.store.UpdateProject(project); err != nil {
+		return err
+	}
+
+	// Sync to remote server
+	return s.SyncEnvFile(ctx, projectID)
+}
+
+// SyncEnvFile writes the project's env vars to a .env file on the remote server
+func (s *ProjectService) SyncEnvFile(ctx context.Context, projectID string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+
+	if project.Path == "" {
+		return nil
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return fmt.Errorf("SSH connection failed: %w", err)
+	}
+
+	// If no variables are defined, delete/truncate the .env file
+	if len(project.EnvVars) == 0 {
+		cmd := fmt.Sprintf("rm -f %s/.env", project.Path)
+		if _, err := client.RunCommand(cmd); err != nil {
+			return fmt.Errorf("failed to remove .env file: %w", err)
+		}
+		return nil
+	}
+
+	// Build .env content
+	var envContent strings.Builder
+	for key, value := range project.EnvVars {
+		// Escape single quotes in values
+		escapedValue := strings.ReplaceAll(value, "'", "'\\''")
+		envContent.WriteString(fmt.Sprintf("%s='%s'\n", key, escapedValue))
+	}
+
+	// Write to remote .env file
+	escaped := strings.ReplaceAll(envContent.String(), "'", "'\\''")
+	cmd := fmt.Sprintf("printf '%%s' '%s' > %s/.env", escaped, project.Path)
+	if _, err := client.RunCommand(cmd); err != nil {
+		return fmt.Errorf("failed to write .env file: %w", err)
+	}
+
+	return nil
 }

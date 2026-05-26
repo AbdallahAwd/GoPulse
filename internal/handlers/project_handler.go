@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -265,5 +266,73 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, models.APIResponse{
 		Success: true,
 		Message: "Project updated successfully",
+	})
+}
+
+// EnableWebhook handles POST /api/servers/{serverID}/projects/{id}/webhook/enable
+func (h *ProjectHandler) EnableWebhook(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	secret, err := h.service.EnableWebhook(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to enable webhook", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data: map[string]string{
+			"webhook_url":    fmt.Sprintf("/api/webhooks/github/%s", projectID),
+			"webhook_secret": secret,
+		},
+		Message: "Webhook enabled",
+	})
+}
+
+// DisableWebhook handles POST /api/servers/{serverID}/projects/{id}/webhook/disable
+func (h *ProjectHandler) DisableWebhook(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	if err := h.service.DisableWebhook(r.Context(), projectID); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to disable webhook", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Message: "Webhook disabled",
+	})
+}
+
+// GetEnvVars handles GET /api/servers/{serverID}/projects/{id}/env
+func (h *ProjectHandler) GetEnvVars(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	vars, err := h.service.GetEnvVars(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get env vars", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    vars,
+	})
+}
+
+// UpdateEnvVars handles PUT /api/servers/{serverID}/projects/{id}/env
+func (h *ProjectHandler) UpdateEnvVars(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	var vars map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&vars); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body", err)
+		return
+	}
+
+	if err := h.service.UpdateEnvVars(r.Context(), projectID, vars); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update env vars", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Message: "Environment variables updated and synced",
 	})
 }
