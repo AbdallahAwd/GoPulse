@@ -89,6 +89,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize domain store: %v", err)
 	}
+	projectService.SetDomainStore(domainStore)
 	domainService := services.NewDomainService(domainStore, serviceManager)
 	domainHandler := handlers.NewDomainHandler(domainService)
 
@@ -245,11 +246,18 @@ func main() {
 						r.Post("/build", projectHandler.BuildProject)
 						r.Post("/start", projectHandler.StartProject) // Fixed method name reference
 						r.Post("/stop", projectHandler.StopProject)
+						r.Post("/redeploy", projectHandler.RedeployProject)
 						r.Delete("/", projectHandler.DeleteProject)
 						r.Post("/webhook/enable", projectHandler.EnableWebhook)
 						r.Post("/webhook/disable", projectHandler.DisableWebhook)
 						r.Get("/env", projectHandler.GetEnvVars)
 						r.Put("/env", projectHandler.UpdateEnvVars)
+						r.Get("/ops/releases", projectHandler.GetReleases)
+						r.Get("/ops/logs", projectHandler.GetLogs)
+						r.Get("/ops/health", projectHandler.GetHealth)
+						r.Get("/ops/automation", projectHandler.GetAutomation)
+						r.Put("/ops/automation", projectHandler.UpdateAutomation)
+						r.Get("/ops/integrations", projectHandler.GetIntegrations)
 					})
 				})
 
@@ -337,7 +345,7 @@ func main() {
 
 		// Global Stats Snapshot
 		r.Get("/stats", statsHandler.GetStats)
-		
+
 		// Global Stats History
 		r.Get("/stats/history", statsHandler.GetStatsHistory)
 
@@ -380,4 +388,5 @@ func main() {
 
 	log.Println("Server exiting")
 }
+
 // Trigger rebuild for air hot-reload - dynamic authentication pool and system user filtering

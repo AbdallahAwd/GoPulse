@@ -12,27 +12,37 @@ import (
 )
 
 type GitHubService struct {
-	config *oauth2.Config
+	clientID     string
+	clientSecret string
+	scopes       []string
+	endpoint     oauth2.Endpoint
 }
 
 func NewGitHubService(cfg config.GitHubConfig) *GitHubService {
 	return &GitHubService{
-		config: &oauth2.Config{
-			ClientID:     cfg.ClientID,
-			ClientSecret: cfg.ClientSecret,
-			RedirectURL:  cfg.CallbackURL,
-			Scopes:       []string{"repo", "user:email"},
-			Endpoint:     github.Endpoint,
-		},
+		clientID:     cfg.ClientID,
+		clientSecret: cfg.ClientSecret,
+		scopes:       []string{"repo", "user:email"},
+		endpoint:     github.Endpoint,
 	}
 }
 
-func (s *GitHubService) GetAuthURL(state string) string {
-	return s.config.AuthCodeURL(state, oauth2.AccessTypeOffline)
+func (s *GitHubService) oauthConfig(redirectURL string) *oauth2.Config {
+	return &oauth2.Config{
+		ClientID:     s.clientID,
+		ClientSecret: s.clientSecret,
+		RedirectURL:  redirectURL,
+		Scopes:       s.scopes,
+		Endpoint:     s.endpoint,
+	}
 }
 
-func (s *GitHubService) Exchange(ctx context.Context, code string) (*oauth2.Token, error) {
-	return s.config.Exchange(ctx, code)
+func (s *GitHubService) GetAuthURL(state string, redirectURL string) string {
+	return s.oauthConfig(redirectURL).AuthCodeURL(state, oauth2.AccessTypeOffline)
+}
+
+func (s *GitHubService) Exchange(ctx context.Context, code string, redirectURL string) (*oauth2.Token, error) {
+	return s.oauthConfig(redirectURL).Exchange(ctx, code)
 }
 
 type GitHubRepo struct {
@@ -46,7 +56,7 @@ type GitHubRepo struct {
 }
 
 func (s *GitHubService) ListRepos(ctx context.Context, token *oauth2.Token) ([]GitHubRepo, error) {
-	client := s.config.Client(ctx, token)
+	client := s.oauthConfig("").Client(ctx, token)
 
 	// API call to list user repos
 	// Using basic HTTP client for now to avoid dragging in the full google/go-github dependency if not needed,

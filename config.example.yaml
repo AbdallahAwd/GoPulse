@@ -18,6 +18,8 @@ auth:
 github:
   client_id: "Ov23liocY6oaamvLoZdH"
   client_secret: ""
+  # Must exactly match the Authorization callback URL in the GitHub OAuth App.
+  # Leave empty to derive it from the current request host.
   callback_url: "http://localhost:8080/auth/github/callback"
 
 monitoring:

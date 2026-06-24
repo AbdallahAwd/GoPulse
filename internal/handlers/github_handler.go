@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/amaa/gopulse/internal/config"
 	"github.com/amaa/gopulse/internal/models"
@@ -10,6 +12,8 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
+
+const githubOAuthCallbackPath = "/auth/github/callback"
 
 type GitHubHandler struct {
 	service        *services.GitHubService
@@ -25,10 +29,38 @@ func NewGitHubHandler(cfg config.GitHubConfig, ps *services.ProjectService) *Git
 	}
 }
 
+func (h *GitHubHandler) getRedirectURL(r *http.Request) string {
+	if configuredURL := strings.TrimSpace(h.config.CallbackURL); configuredURL != "" {
+		return configuredURL
+	}
+
+	scheme := "http"
+	if forwardedProto := firstForwardedValue(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		scheme = forwardedProto
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
+	host := firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+
+	return fmt.Sprintf("%s://%s%s", scheme, host, githubOAuthCallbackPath)
+}
+
+func firstForwardedValue(value string) string {
+	if comma := strings.Index(value, ","); comma >= 0 {
+		value = value[:comma]
+	}
+	return strings.TrimSpace(value)
+}
+
 // 1. Redirect to GitHub
 func (h *GitHubHandler) Login(w http.ResponseWriter, r *http.Request) {
 	state := "random-state-string" // In production, use a random string and verify it in callback
-	url := h.service.GetAuthURL(state)
+	redirectURL := h.getRedirectURL(r)
+	url := h.service.GetAuthURL(state, redirectURL)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
@@ -40,7 +72,8 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.service.Exchange(r.Context(), code)
+	redirectURL := h.getRedirectURL(r)
+	token, err := h.service.Exchange(r.Context(), code, redirectURL)
 	if err != nil {
 		http.Error(w, "Failed to exchange token", http.StatusInternalServerError)
 		return

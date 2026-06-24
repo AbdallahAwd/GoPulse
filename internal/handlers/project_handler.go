@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/amaa/gopulse/internal/services"
@@ -335,4 +336,135 @@ func (h *ProjectHandler) UpdateEnvVars(w http.ResponseWriter, r *http.Request) {
 		Success: true,
 		Message: "Environment variables updated and synced",
 	})
+}
+
+// GetReleases handles GET /api/servers/{serverID}/projects/{id}/ops/releases
+func (h *ProjectHandler) GetReleases(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	releases, err := h.service.GetProjectReleaseInfo(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get releases", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    releases,
+	})
+}
+
+// RedeployProject handles POST /api/servers/{serverID}/projects/{id}/redeploy
+func (h *ProjectHandler) RedeployProject(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	if err := h.service.RedeployProject(r.Context(), projectID); err != nil {
+		respondError(w, http.StatusInternalServerError, "Redeploy failed", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Message: "Project redeployed",
+	})
+}
+
+// GetLogs handles GET /api/servers/{serverID}/projects/{id}/ops/logs
+func (h *ProjectHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	logs, err := h.service.GetProjectLogs(r.Context(), projectID, tail)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get project logs", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    logs,
+	})
+}
+
+// GetHealth handles GET /api/servers/{serverID}/projects/{id}/ops/health
+func (h *ProjectHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	health, err := h.service.CheckProjectHealth(r.Context(), projectID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to check project health", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    health,
+	})
+}
+
+// GetAutomation handles GET /api/servers/{serverID}/projects/{id}/ops/automation
+func (h *ProjectHandler) GetAutomation(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	automation, err := h.service.GetProjectAutomation(r.Context(), projectID, projectWebhookURL(r, projectID))
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get project automation", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    automation,
+	})
+}
+
+// UpdateAutomation handles PUT /api/servers/{serverID}/projects/{id}/ops/automation
+func (h *ProjectHandler) UpdateAutomation(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	var update models.ProjectAutomationUpdate
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body", err)
+		return
+	}
+
+	automation, err := h.service.UpdateProjectAutomation(r.Context(), projectID, update, projectWebhookURL(r, projectID))
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to update project automation", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    automation,
+		Message: "Project automation updated",
+	})
+}
+
+// GetIntegrations handles GET /api/servers/{serverID}/projects/{id}/ops/integrations
+func (h *ProjectHandler) GetIntegrations(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	integrations, err := h.service.GetProjectIntegrations(r.Context(), projectID, projectWebhookURL(r, projectID))
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to get project integrations", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Data:    integrations,
+	})
+}
+
+func projectWebhookURL(r *http.Request, projectID string) string {
+	protocol := r.Header.Get("X-Forwarded-Proto")
+	if protocol == "" {
+		if r.TLS != nil {
+			protocol = "https"
+		} else {
+			protocol = "http"
+		}
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" {
+		return fmt.Sprintf("/api/webhooks/github/%s", projectID)
+	}
+	return fmt.Sprintf("%s://%s/api/webhooks/github/%s", protocol, host, projectID)
 }

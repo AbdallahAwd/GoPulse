@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,9 +18,10 @@ import (
 
 // ProjectService manages project lifecycle
 type ProjectService struct {
-	store    *store.ProjectStore
-	manager  *ServiceManager
-	dataPath string
+	store       *store.ProjectStore
+	domainStore *store.DomainStore
+	manager     *ServiceManager
+	dataPath    string
 }
 
 // NewProjectService creates a new ProjectService
@@ -28,6 +31,11 @@ func NewProjectService(store *store.ProjectStore, manager *ServiceManager, dataP
 		manager:  manager,
 		dataPath: dataPath,
 	}
+}
+
+// SetDomainStore allows project integrations to resolve domain mappings.
+func (s *ProjectService) SetDomainStore(domainStore *store.DomainStore) {
+	s.domainStore = domainStore
 }
 
 // resolveRemoteProjectPath determines the project path on the remote server
@@ -284,7 +292,7 @@ func (s *ProjectService) ensureNodeInstalled(client *remote.SSHClient) error {
 
 // getNodeCommandPrefix returns the prefix to source nvm
 func (s *ProjectService) getNodeCommandPrefix() string {
-	return "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && "
+	return "export NVM_DIR=\"$HOME/.nvm\" && if [ -s \"$NVM_DIR/nvm.sh\" ]; then \\. \"$NVM_DIR/nvm.sh\"; fi && "
 }
 
 const laravelUIPresetStartCommand = "php artisan serve --port=8000 --host=0.0.0.0"
@@ -1028,6 +1036,452 @@ func (s *ProjectService) RedeployProject(ctx context.Context, projectID string) 
 	s.store.UpdateProject(project)
 
 	return nil
+}
+
+// GetProjectReleaseInfo returns build/deploy/source activity for the operations dialog.
+func (s *ProjectService) GetProjectReleaseInfo(ctx context.Context, projectID string) (models.ProjectReleaseInfo, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return models.ProjectReleaseInfo{}, err
+	}
+
+	info := models.ProjectReleaseInfo{
+		ProjectID: project.ID,
+		Releases:  []models.ProjectReleaseEvent{},
+	}
+
+	if project.Path != "" {
+		if client, err := s.manager.GetSSHClient(project.ServerID); err == nil {
+			info.Git = s.getProjectGitInfo(client, project.Path)
+		}
+	}
+
+	if projectTimestampValid(project.LastDeploy) {
+		info.Releases = append(info.Releases, models.ProjectReleaseEvent{
+			ID:        "last-deploy",
+			Type:      "deploy",
+			Status:    "completed",
+			Title:     "Last Deploy",
+			Detail:    "Webhook or redeploy cycle completed",
+			Timestamp: project.LastDeploy,
+		})
+	}
+
+	if projectTimestampValid(project.LastBuild) {
+		info.Releases = append(info.Releases, models.ProjectReleaseEvent{
+			ID:        "last-build",
+			Type:      "build",
+			Status:    "completed",
+			Title:     "Last Build",
+			Detail:    project.BuildCommand,
+			Timestamp: project.LastBuild,
+		})
+	}
+
+	if info.Git.IsRepository && info.Git.Commit != "" {
+		detail := info.Git.Message
+		if detail == "" {
+			detail = "Current source revision"
+		}
+		info.Releases = append(info.Releases, models.ProjectReleaseEvent{
+			ID:        "current-source",
+			Type:      "source",
+			Status:    "current",
+			Title:     fmt.Sprintf("Commit %s", info.Git.Commit),
+			Detail:    detail,
+			Timestamp: time.Now(),
+		})
+	}
+
+	if projectTimestampValid(project.CreatedAt) {
+		info.Releases = append(info.Releases, models.ProjectReleaseEvent{
+			ID:        "created",
+			Type:      "created",
+			Status:    "completed",
+			Title:     "Project Created",
+			Detail:    project.Path,
+			Timestamp: project.CreatedAt,
+		})
+	}
+
+	sort.SliceStable(info.Releases, func(i, j int) bool {
+		return info.Releases[i].Timestamp.After(info.Releases[j].Timestamp)
+	})
+
+	return info, nil
+}
+
+// GetProjectLogs returns recent runtime logs from PM2 or Docker.
+func (s *ProjectService) GetProjectLogs(ctx context.Context, projectID string, tail int) (models.ProjectLogInfo, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return models.ProjectLogInfo{}, err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return models.ProjectLogInfo{}, err
+	}
+
+	tail = clampProjectLogTail(tail)
+	source := "pm2"
+	var cmd string
+	if project.BuildType == "docker" {
+		source = "docker"
+		target := project.ContainerID
+		if strings.TrimSpace(target) == "" {
+			target = project.Name
+		}
+		cmd = fmt.Sprintf("docker logs --tail %d --timestamps %s 2>&1", tail, projectShellQuote(target))
+	} else {
+		cmd = fmt.Sprintf("%spm2 logs %s --nostream --lines %d 2>&1", s.getNodeCommandPrefix(), projectShellQuote(project.Name), tail)
+	}
+
+	raw, runErr := client.RunCommand(cmd)
+	if runErr != nil && strings.TrimSpace(raw) == "" {
+		return models.ProjectLogInfo{}, fmt.Errorf("failed to fetch %s logs: %w", source, runErr)
+	}
+	if runErr != nil {
+		raw = strings.TrimRight(raw, "\n") + "\n" + runErr.Error()
+	}
+
+	return models.ProjectLogInfo{
+		ProjectID: project.ID,
+		Source:    source,
+		Tail:      tail,
+		Raw:       raw,
+		Lines:     splitProjectLogLines(raw),
+		FetchedAt: time.Now(),
+	}, nil
+}
+
+// CheckProjectHealth runs operational checks against the project runtime.
+func (s *ProjectService) CheckProjectHealth(ctx context.Context, projectID string) (models.ProjectHealthReport, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return models.ProjectHealthReport{}, err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return models.ProjectHealthReport{}, err
+	}
+
+	expectedRunning := strings.EqualFold(string(project.Status), string(models.ProjectStatusRunning))
+	checks := []models.ProjectHealthCheck{}
+
+	pathOut, _ := client.RunCommand(fmt.Sprintf("test -d %s && echo ok || echo missing", projectShellQuote(project.Path)))
+	if strings.TrimSpace(pathOut) == "ok" {
+		checks = append(checks, models.ProjectHealthCheck{Name: "Project Path", Status: "healthy", Message: "Directory exists", Detail: project.Path})
+	} else {
+		checks = append(checks, models.ProjectHealthCheck{Name: "Project Path", Status: "unhealthy", Message: "Directory is missing", Detail: project.Path})
+	}
+
+	checks = append(checks, s.checkProjectRuntime(client, project, expectedRunning))
+
+	if project.Port > 0 {
+		portCmd := fmt.Sprintf("if command -v ss >/dev/null 2>&1; then ss -ltn | awk '{print $4}' | grep -Eq '(:|\\])%[1]d$'; elif command -v lsof >/dev/null 2>&1; then lsof -nP -iTCP:%[1]d -sTCP:LISTEN >/dev/null 2>&1; else nc -z 127.0.0.1 %[1]d >/dev/null 2>&1; fi && echo listening || echo closed", project.Port)
+		portOut, _ := client.RunCommand(portCmd)
+		if strings.TrimSpace(portOut) == "listening" {
+			checks = append(checks, models.ProjectHealthCheck{Name: "Port", Status: "healthy", Message: fmt.Sprintf("Port %d is listening", project.Port)})
+		} else if expectedRunning {
+			checks = append(checks, models.ProjectHealthCheck{Name: "Port", Status: "unhealthy", Message: fmt.Sprintf("Port %d is not listening", project.Port)})
+		} else {
+			checks = append(checks, models.ProjectHealthCheck{Name: "Port", Status: "warning", Message: fmt.Sprintf("Port %d is closed while project is not running", project.Port)})
+		}
+
+		probeCmd := fmt.Sprintf("if command -v curl >/dev/null 2>&1; then code=$(curl -sS -m 5 -o /dev/null -w '%%{http_code}' http://127.0.0.1:%d/ 2>/dev/null || true); echo ${code:-000}; else echo no-curl; fi", project.Port)
+		probeOut, _ := client.RunCommand(probeCmd)
+		code := strings.TrimSpace(probeOut)
+		switch {
+		case code == "no-curl":
+			checks = append(checks, models.ProjectHealthCheck{Name: "HTTP Probe", Status: "warning", Message: "curl is not installed on the remote server"})
+		case code >= "200" && code <= "399":
+			checks = append(checks, models.ProjectHealthCheck{Name: "HTTP Probe", Status: "healthy", Message: fmt.Sprintf("HTTP %s from localhost", code)})
+		case code >= "400" && code <= "599":
+			checks = append(checks, models.ProjectHealthCheck{Name: "HTTP Probe", Status: "warning", Message: fmt.Sprintf("Application responded with HTTP %s", code)})
+		case expectedRunning:
+			checks = append(checks, models.ProjectHealthCheck{Name: "HTTP Probe", Status: "unhealthy", Message: "No HTTP response from localhost"})
+		default:
+			checks = append(checks, models.ProjectHealthCheck{Name: "HTTP Probe", Status: "warning", Message: "No HTTP response while project is not running"})
+		}
+	} else {
+		checks = append(checks, models.ProjectHealthCheck{Name: "Port", Status: "warning", Message: "No project port configured"})
+	}
+
+	if project.SourceType == "git" || project.SourceURL != "" {
+		git := s.getProjectGitInfo(client, project.Path)
+		if git.IsRepository {
+			checks = append(checks, models.ProjectHealthCheck{Name: "Git", Status: "healthy", Message: "Repository available", Detail: git.Commit})
+		} else {
+			checks = append(checks, models.ProjectHealthCheck{Name: "Git", Status: "warning", Message: "Project is marked as Git source but no repository was detected"})
+		}
+	}
+
+	return models.ProjectHealthReport{
+		ProjectID: project.ID,
+		Status:    projectHealthStatus(checks),
+		CheckedAt: time.Now(),
+		Checks:    checks,
+	}, nil
+}
+
+// GetProjectAutomation returns currently supported automation settings.
+func (s *ProjectService) GetProjectAutomation(ctx context.Context, projectID string, webhookURL string) (models.ProjectAutomationInfo, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return models.ProjectAutomationInfo{}, err
+	}
+
+	return models.ProjectAutomationInfo{
+		ProjectID:      project.ID,
+		RestartOnBoot:  project.RestartOnBoot,
+		WebhookEnabled: project.WebhookEnabled,
+		WebhookURL:     webhookURL,
+		UpdatedAt:      time.Now(),
+	}, nil
+}
+
+// UpdateProjectAutomation updates currently supported automation settings.
+func (s *ProjectService) UpdateProjectAutomation(ctx context.Context, projectID string, update models.ProjectAutomationUpdate, webhookURL string) (models.ProjectAutomationInfo, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return models.ProjectAutomationInfo{}, err
+	}
+
+	if update.RestartOnBoot != nil {
+		project.RestartOnBoot = *update.RestartOnBoot
+	}
+
+	if update.WebhookEnabled != nil {
+		if *update.WebhookEnabled {
+			if !project.WebhookEnabled || project.WebhookSecret == "" {
+				secret, err := GenerateWebhookSecret()
+				if err != nil {
+					return models.ProjectAutomationInfo{}, fmt.Errorf("failed to generate webhook secret: %w", err)
+				}
+				project.WebhookSecret = secret
+			}
+			project.WebhookEnabled = true
+		} else {
+			project.WebhookEnabled = false
+			project.WebhookSecret = ""
+		}
+	}
+
+	if err := s.store.UpdateProject(project); err != nil {
+		return models.ProjectAutomationInfo{}, err
+	}
+
+	return models.ProjectAutomationInfo{
+		ProjectID:      project.ID,
+		RestartOnBoot:  project.RestartOnBoot,
+		WebhookEnabled: project.WebhookEnabled,
+		WebhookURL:     webhookURL,
+		UpdatedAt:      time.Now(),
+	}, nil
+}
+
+// GetProjectIntegrations returns project-adjacent dashboard integrations.
+func (s *ProjectService) GetProjectIntegrations(ctx context.Context, projectID string, webhookURL string) (models.ProjectIntegrationsInfo, error) {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return models.ProjectIntegrationsInfo{}, err
+	}
+
+	envCount := len(project.EnvVars)
+	domains := s.getProjectDomains(project)
+	domainNames := make([]string, 0, len(domains))
+	for _, domain := range domains {
+		domainNames = append(domainNames, domain.Domain)
+	}
+
+	domainStatus := "unconfigured"
+	domainMessage := "No domain linked"
+	domainData := map[string]interface{}{
+		"domain":  project.Domain,
+		"domains": domainNames,
+		"port":    project.Port,
+	}
+	if len(domainNames) > 0 {
+		domainStatus = "configured"
+		domainMessage = strings.Join(domainNames, ", ")
+		domainData["domain"] = domainNames[0]
+	} else if project.Domain != "" {
+		domainStatus = "configured"
+		domainMessage = project.Domain
+		domainData["domain"] = project.Domain
+	}
+
+	webhookStatus := "disabled"
+	if project.WebhookEnabled {
+		webhookStatus = "enabled"
+	}
+
+	return models.ProjectIntegrationsInfo{
+		ProjectID: project.ID,
+		Integrations: []models.ProjectIntegration{
+			{
+				Key:     "files",
+				Label:   "Files",
+				Status:  "available",
+				Message: project.Path,
+				Data:    map[string]interface{}{"path": project.Path},
+			},
+			{
+				Key:     "environment",
+				Label:   "Environment",
+				Status:  "available",
+				Message: fmt.Sprintf("%d variables", envCount),
+				Data:    map[string]interface{}{"count": envCount},
+			},
+			{
+				Key:     "webhook",
+				Label:   "Webhook",
+				Status:  webhookStatus,
+				Message: webhookURL,
+				Data:    map[string]interface{}{"url": webhookURL, "enabled": project.WebhookEnabled},
+			},
+			{
+				Key:     "domain",
+				Label:   "Domain",
+				Status:  domainStatus,
+				Message: domainMessage,
+				Data:    domainData,
+			},
+			{
+				Key:     "database",
+				Label:   "Database",
+				Status:  "available",
+				Message: "Open database clusters",
+				Data:    map[string]interface{}{"project": project.Name},
+			},
+			{
+				Key:     "terminal",
+				Label:   "Terminal",
+				Status:  "available",
+				Message: project.Path,
+				Data:    map[string]interface{}{"path": project.Path},
+			},
+		},
+	}, nil
+}
+
+func (s *ProjectService) getProjectGitInfo(client *remote.SSHClient, path string) models.ProjectGitInfo {
+	info := models.ProjectGitInfo{}
+	if strings.TrimSpace(path) == "" {
+		return info
+	}
+
+	cmd := fmt.Sprintf("cd %s 2>/dev/null && if [ -d .git ]; then printf 'commit=%%s\\nbranch=%%s\\nmessage=%%s\\nremote=%%s\\n' \"$(git rev-parse --short HEAD 2>/dev/null)\" \"$(git rev-parse --abbrev-ref HEAD 2>/dev/null)\" \"$(git log -1 --pretty=%%s 2>/dev/null)\" \"$(git config --get remote.origin.url 2>/dev/null)\"; fi", projectShellQuote(path))
+	out, err := client.RunCommand(cmd)
+	if err != nil && strings.TrimSpace(out) == "" {
+		return info
+	}
+
+	values := map[string]string{}
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		values[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+
+	info.Commit = values["commit"]
+	info.Branch = values["branch"]
+	info.Message = values["message"]
+	info.Remote = values["remote"]
+	info.IsRepository = info.Commit != "" || info.Branch != "" || info.Remote != ""
+	return info
+}
+
+func (s *ProjectService) getProjectDomains(project models.Project) []models.Domain {
+	if s.domainStore == nil || project.ServerID == "" {
+		return []models.Domain{}
+	}
+
+	ports := map[int]bool{}
+	if project.Port > 0 {
+		ports[project.Port] = true
+	}
+	if project.HostPort > 0 {
+		ports[project.HostPort] = true
+	}
+
+	if len(ports) == 0 {
+		return []models.Domain{}
+	}
+
+	matches := []models.Domain{}
+	for _, domain := range s.domainStore.ListDomainsByServer(project.ServerID) {
+		if ports[domain.Port] {
+			matches = append(matches, domain)
+		}
+	}
+	return matches
+}
+
+func (s *ProjectService) checkProjectRuntime(client *remote.SSHClient, project models.Project, expectedRunning bool) models.ProjectHealthCheck {
+	if project.BuildType == "docker" {
+		target := project.ContainerID
+		if strings.TrimSpace(target) == "" {
+			target = project.Name
+		}
+		out, _ := client.RunCommand(fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s 2>/dev/null || echo false", projectShellQuote(target)))
+		if strings.TrimSpace(out) == "true" {
+			return models.ProjectHealthCheck{Name: "Runtime", Status: "healthy", Message: "Docker container is running", Detail: target}
+		}
+		if expectedRunning {
+			return models.ProjectHealthCheck{Name: "Runtime", Status: "unhealthy", Message: "Docker container is not running", Detail: target}
+		}
+		return models.ProjectHealthCheck{Name: "Runtime", Status: "warning", Message: "Docker container is stopped", Detail: target}
+	}
+
+	out, _ := client.RunCommand(fmt.Sprintf("%spm2 pid %s 2>/dev/null || echo 0", s.getNodeCommandPrefix(), projectShellQuote(project.Name)))
+	pid := strings.TrimSpace(out)
+	if parsed, err := strconv.Atoi(pid); err == nil && parsed > 0 {
+		return models.ProjectHealthCheck{Name: "Runtime", Status: "healthy", Message: "PM2 process is running", Detail: pid}
+	}
+	if expectedRunning {
+		return models.ProjectHealthCheck{Name: "Runtime", Status: "unhealthy", Message: "PM2 process is not running"}
+	}
+	return models.ProjectHealthCheck{Name: "Runtime", Status: "warning", Message: "PM2 process is stopped"}
+}
+
+func projectTimestampValid(t time.Time) bool {
+	return !t.IsZero() && t.Year() > 1
+}
+
+func clampProjectLogTail(tail int) int {
+	if tail < 20 {
+		return 100
+	}
+	if tail > 1000 {
+		return 1000
+	}
+	return tail
+}
+
+func splitProjectLogLines(raw string) []string {
+	raw = strings.TrimRight(raw, "\n")
+	if raw == "" {
+		return []string{}
+	}
+	return strings.Split(raw, "\n")
+}
+
+func projectHealthStatus(checks []models.ProjectHealthCheck) string {
+	status := "healthy"
+	for _, check := range checks {
+		switch check.Status {
+		case "unhealthy":
+			return "unhealthy"
+		case "warning":
+			status = "warning"
+		}
+	}
+	return status
 }
 
 // GenerateWebhookSecret generates a random 32-byte hex string for webhook HMAC verification

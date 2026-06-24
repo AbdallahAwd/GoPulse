@@ -498,19 +498,20 @@
     </div>
 
     <!-- Projects Tab -->
-    <div id="projects-tab" class="tab-content hidden">
-        <div class="bg-gray-800 rounded-lg shadow-lg p-6 min-h-[400px]">
-            <div class="flex items-center justify-between mb-6">
+    <div id="projects-tab" class="tab-content hidden space-y-6">
+        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
                 <h2 class="text-xl font-bold text-white">Projects</h2>
-                <button onclick="App.Projects.showCreateModal()"
-                    class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
-                    <i class="fas fa-plus mr-2"></i>New Project
-                </button>
+                <div class="mt-1 h-1 w-12 rounded-full bg-blue-500"></div>
             </div>
+            <button onclick="App.Projects.showCreateModal()"
+                class="self-start md:self-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                <i class="fas fa-plus mr-2"></i>New Project
+            </button>
+        </div>
 
-            <div id="projects-list">
-                <!-- Project list content will be rendered here -->
-            </div>
+        <div id="projects-list">
+            <!-- Project list content will be rendered here -->
         </div>
     </div>
 

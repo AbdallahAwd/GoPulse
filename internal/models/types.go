@@ -167,29 +167,111 @@ const (
 
 // Project represents a user project (Node.js/Next.js)
 type Project struct {
-	ID           string        `json:"id"`
-	ServerID     string        `json:"server_id"`
-	Name         string        `json:"name"`
-	Type         string        `json:"type"`        // "nodejs", "nextjs"
-	SourceType   string        `json:"source_type"` // "upload", "git"
-	SourceURL    string        `json:"source_url"`  // For git
-	BuildType    string        `json:"build_type"`  // "docker", "process"
-	Port         int           `json:"port"`        // Internal app port
-	HostPort     int           `json:"host_port"`   // Exposed port
-	Status       ProjectStatus `json:"status"`
-	Path         string        `json:"path"`         // /home/projects/[Type]/[Name]
-	ContainerID  string        `json:"container_id"` // If docker
-	ProcessID    int           `json:"process_id"`   // If process
-	Domain       string        `json:"domain"`       // Future use
-	CreatedAt    time.Time     `json:"created_at"`
-	StartCommand string        `json:"start_command"` // e.g. "npm start"
-	BuildCommand   string            `json:"build_command"`              // e.g. "npm install && npm run build"
+	ID             string            `json:"id"`
+	ServerID       string            `json:"server_id"`
+	Name           string            `json:"name"`
+	Type           string            `json:"type"`        // "nodejs", "nextjs"
+	SourceType     string            `json:"source_type"` // "upload", "git"
+	SourceURL      string            `json:"source_url"`  // For git
+	BuildType      string            `json:"build_type"`  // "docker", "process"
+	Port           int               `json:"port"`        // Internal app port
+	HostPort       int               `json:"host_port"`   // Exposed port
+	Status         ProjectStatus     `json:"status"`
+	Path           string            `json:"path"`         // /home/projects/[Type]/[Name]
+	ContainerID    string            `json:"container_id"` // If docker
+	ProcessID      int               `json:"process_id"`   // If process
+	Domain         string            `json:"domain"`       // Future use
+	CreatedAt      time.Time         `json:"created_at"`
+	StartCommand   string            `json:"start_command"` // e.g. "npm start"
+	BuildCommand   string            `json:"build_command"` // e.g. "npm install && npm run build"
 	LastBuild      time.Time         `json:"last_build,omitempty"`
-	WebhookSecret  string            `json:"webhook_secret,omitempty"`   // HMAC secret for GitHub webhook verification
-	WebhookEnabled bool              `json:"webhook_enabled"`            // Toggle webhook auto-deploy
-	LastDeploy     time.Time         `json:"last_deploy,omitempty"`      // Timestamp of last auto-deploy
-	EnvVars        map[string]string `json:"env_vars,omitempty"`         // KEY=VALUE environment variables
-	RestartOnBoot  bool              `json:"restart_on_boot"`            // Auto-start project on system boot / server reboot
+	WebhookSecret  string            `json:"webhook_secret,omitempty"` // HMAC secret for GitHub webhook verification
+	WebhookEnabled bool              `json:"webhook_enabled"`          // Toggle webhook auto-deploy
+	LastDeploy     time.Time         `json:"last_deploy,omitempty"`    // Timestamp of last auto-deploy
+	EnvVars        map[string]string `json:"env_vars,omitempty"`       // KEY=VALUE environment variables
+	RestartOnBoot  bool              `json:"restart_on_boot"`          // Auto-start project on system boot / server reboot
+}
+
+// ProjectReleaseInfo describes deploy/build history that can be inferred for a project.
+type ProjectReleaseInfo struct {
+	ProjectID string                `json:"project_id"`
+	Git       ProjectGitInfo        `json:"git"`
+	Releases  []ProjectReleaseEvent `json:"releases"`
+}
+
+// ProjectGitInfo describes the current git state for a project directory.
+type ProjectGitInfo struct {
+	IsRepository bool   `json:"is_repository"`
+	Branch       string `json:"branch,omitempty"`
+	Commit       string `json:"commit,omitempty"`
+	Message      string `json:"message,omitempty"`
+	Remote       string `json:"remote,omitempty"`
+}
+
+// ProjectReleaseEvent is a timeline item for project build/deploy/source activity.
+type ProjectReleaseEvent struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Status    string    `json:"status"`
+	Title     string    `json:"title"`
+	Detail    string    `json:"detail"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// ProjectLogInfo contains recent runtime logs for a project.
+type ProjectLogInfo struct {
+	ProjectID string    `json:"project_id"`
+	Source    string    `json:"source"`
+	Tail      int       `json:"tail"`
+	Raw       string    `json:"raw"`
+	Lines     []string  `json:"lines"`
+	FetchedAt time.Time `json:"fetched_at"`
+}
+
+// ProjectHealthReport contains the latest runtime checks for a project.
+type ProjectHealthReport struct {
+	ProjectID string               `json:"project_id"`
+	Status    string               `json:"status"` // healthy, warning, unhealthy
+	CheckedAt time.Time            `json:"checked_at"`
+	Checks    []ProjectHealthCheck `json:"checks"`
+}
+
+// ProjectHealthCheck is one operational check in the health report.
+type ProjectHealthCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"` // healthy, warning, unhealthy
+	Message string `json:"message"`
+	Detail  string `json:"detail,omitempty"`
+}
+
+// ProjectAutomationInfo describes automation settings that are currently backed by the project model.
+type ProjectAutomationInfo struct {
+	ProjectID      string    `json:"project_id"`
+	RestartOnBoot  bool      `json:"restart_on_boot"`
+	WebhookEnabled bool      `json:"webhook_enabled"`
+	WebhookURL     string    `json:"webhook_url"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// ProjectAutomationUpdate updates project automation settings.
+type ProjectAutomationUpdate struct {
+	RestartOnBoot  *bool `json:"restart_on_boot,omitempty"`
+	WebhookEnabled *bool `json:"webhook_enabled,omitempty"`
+}
+
+// ProjectIntegrationsInfo describes project-adjacent app surfaces that can be opened from the operations dialog.
+type ProjectIntegrationsInfo struct {
+	ProjectID    string               `json:"project_id"`
+	Integrations []ProjectIntegration `json:"integrations"`
+}
+
+// ProjectIntegration describes one integration surface for a project.
+type ProjectIntegration struct {
+	Key     string                 `json:"key"`
+	Label   string                 `json:"label"`
+	Status  string                 `json:"status"`
+	Message string                 `json:"message"`
+	Data    map[string]interface{} `json:"data,omitempty"`
 }
 
 // StatsSnapshot represents a point-in-time system stats summary for history tracking
@@ -224,19 +306,19 @@ const (
 
 // Database represents a containerized database
 type Database struct {
-	ID           string         `json:"id"`
-	ServerID     string         `json:"server_id"`
-	Name         string         `json:"name"`          // Friendly name
-	Type         string         `json:"type"`          // "mysql", "postgres", "mongodb"
-	DatabaseName string         `json:"database_name"`  // Default database name
-	Username     string         `json:"username"`
-	Password     string         `json:"password"`
-	HostPort     int            `json:"host_port"`     // Port on host
-	ContainerID  string         `json:"container_id"`  // Docker container ID
-	Status       DatabaseStatus `json:"status"`
-	CreatedAt    time.Time      `json:"created_at"`
-	AutoBackup   bool           `json:"auto_backup"`    // Enable/disable daily automatic backups
-	RetentionDays int           `json:"retention_days"` // Number of days to keep backups (default: 7, 0 = keep forever)
+	ID            string         `json:"id"`
+	ServerID      string         `json:"server_id"`
+	Name          string         `json:"name"`          // Friendly name
+	Type          string         `json:"type"`          // "mysql", "postgres", "mongodb"
+	DatabaseName  string         `json:"database_name"` // Default database name
+	Username      string         `json:"username"`
+	Password      string         `json:"password"`
+	HostPort      int            `json:"host_port"`    // Port on host
+	ContainerID   string         `json:"container_id"` // Docker container ID
+	Status        DatabaseStatus `json:"status"`
+	CreatedAt     time.Time      `json:"created_at"`
+	AutoBackup    bool           `json:"auto_backup"`    // Enable/disable daily automatic backups
+	RetentionDays int            `json:"retention_days"` // Number of days to keep backups (default: 7, 0 = keep forever)
 }
 
 // DatabaseBackup represents a database backup dump
@@ -263,8 +345,7 @@ type DatabaseTelemetry struct {
 // DatabaseUser represents a database user and their privilege scope
 type DatabaseUser struct {
 	Username string `json:"username"`
-	Scope    string `json:"scope"` // "read", "readWrite", "admin"
-	Host     string `json:"host,omitempty"` // For SQL engines
+	Scope    string `json:"scope"`              // "read", "readWrite", "admin"
+	Host     string `json:"host,omitempty"`     // For SQL engines
 	Database string `json:"database,omitempty"` // Targeted database scope
 }
-
