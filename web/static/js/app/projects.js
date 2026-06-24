@@ -142,6 +142,9 @@ App.Projects = {
                             <button onclick="App.Projects.showEnvModal('${p.id}')" class="flex-1 bg-gray-700/60 hover:bg-gray-600 text-gray-300 py-2 rounded text-sm font-medium transition-colors flex items-center justify-center">
                                 <i class="fas fa-key mr-1.5"></i> Env Vars
                             </button>
+                            <button onclick="App.Projects.openFiles('${p.id}')" class="px-3 bg-gray-700/60 text-gray-400 hover:bg-gray-600 hover:text-yellow-300 rounded text-sm transition-colors" title="Open project files">
+                                <i class="fas fa-folder-open"></i>
+                            </button>
                             <button onclick="App.Projects.editProject('${p.id}')" class="px-3 bg-gray-700/60 text-gray-400 hover:bg-gray-600 rounded text-sm transition-colors" title="Edit">
                                 <i class="fas fa-edit"></i>
                             </button>
@@ -166,6 +169,26 @@ App.Projects = {
         `;
 
         container.innerHTML = html;
+    },
+
+    openFiles: function(id) {
+        const project = (this.list || []).find(p => p.id === id);
+        if (!project || !project.path) {
+            App.UI.toast('error', 'Project path is not available');
+            return;
+        }
+
+        App.state.currentPath = project.path;
+
+        const filesTab = document.querySelector('.tab-btn[data-tab="files"]');
+        if (filesTab) {
+            filesTab.click();
+            return;
+        }
+
+        if (App.Files && typeof App.Files.list === 'function') {
+            App.Files.list(project.path);
+        }
     },
 
     action: async function(id, action, btn) {

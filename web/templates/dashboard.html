@@ -415,14 +415,18 @@
                         <div id="file-breadcrumbs-display" class="flex items-center space-x-1 text-sm text-gray-400 select-none overflow-x-auto custom-scrollbar flex-1 whitespace-nowrap pr-2">
                             <span class="text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>Loading path...</span>
                         </div>
-                        <form id="file-path-form" class="hidden flex-1 w-full" onsubmit="App.Files.submitPath(event)">
-                            <input type="text" id="file-path-input" value="/"
+                        <form id="file-path-form" class="hidden flex-1 w-full" onsubmit="App.Files.submitPath(event)" autocomplete="off">
+                            <input type="text" id="file-path-input" name="gopulse-file-path" value="/"
                                 class="bg-transparent border-none text-gray-200 focus:outline-none w-full font-mono text-sm placeholder-gray-600 focus:ring-0"
-                                placeholder="/path/to/directory" onblur="App.Files.blurPathInput()">
+                                placeholder="/path/to/directory" onblur="App.Files.blurPathInput()" autocomplete="new-password"
+                                autocapitalize="off" autocorrect="off" spellcheck="false" readonly>
                         </form>
                         <div class="flex items-center space-x-2 text-gray-500 group-hover:text-gray-400 transition-colors ml-2 shrink-0 select-none">
                             <kbd class="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono bg-gray-800 border border-gray-750 rounded text-gray-500">⌘L</kbd>
                             <i class="fas fa-pen text-xs opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                        </div>
+                        <!-- Suggestions Dropdown -->
+                        <div id="file-path-suggestions" class="absolute top-full left-0 right-0 mt-1.5 bg-gray-900/95 backdrop-blur-md border border-gray-700/80 rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto hidden custom-scrollbar">
                         </div>
                     </div>
                 </div>

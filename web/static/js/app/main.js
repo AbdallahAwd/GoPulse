@@ -11,6 +11,7 @@ function init() {
 
     // Initialize System Settings and configurations
     App.System.init();
+    App.Files.init();
 
     // Tabs
     document.querySelectorAll('.tab-btn').forEach(btn => {

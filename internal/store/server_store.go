@@ -1,131 +1,204 @@
 package store
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/amaa/gopulse/internal/models"
 )
 
-// ServerStore handles storage and retrieval of server configurations
+// ServerStore handles storage and retrieval of server configurations.
 type ServerStore struct {
-	filePath string
-	mu       sync.RWMutex
-	servers  []models.Server
+	legacyPath string
+	db         *sql.DB
+	mu         sync.RWMutex
 }
 
-// NewServerStore creates a new ServerStore
-func NewServerStore(filePath string) (*ServerStore, error) {
-	store := &ServerStore{
-		filePath: filePath,
-		servers:  []models.Server{},
+// NewServerStore creates a SQLite-backed ServerStore and imports legacy JSON once.
+func NewServerStore(legacyPath string) (*ServerStore, error) {
+	db, err := openSQLiteStore(legacyPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Load existing servers if file exists
-	if _, err := os.Stat(filePath); err == nil {
-		if err := store.load(); err != nil {
-			return nil, fmt.Errorf("failed to load servers: %w", err)
-		}
+	store := &ServerStore{
+		legacyPath: legacyPath,
+		db:         db,
+	}
+
+	err = importJSONOnce[models.Server](db, "servers", legacyPath, `SELECT COUNT(*) FROM servers`, insertServerTx)
+	if err != nil {
+		return nil, err
 	}
 
 	return store, nil
 }
 
-// load reads servers from the JSON file
-func (s *ServerStore) load() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(data, &s.servers)
+func insertServerTx(tx *sql.Tx, server models.Server) error {
+	_, err := tx.Exec(
+		`INSERT OR IGNORE INTO servers (
+			id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		server.ID,
+		server.Name,
+		server.Host,
+		server.Port,
+		server.User,
+		server.AuthType,
+		server.KeyPath,
+		server.Password,
+		encodeJSON(server.Tags, "[]"),
+		boolToInt(server.IsDbOnly),
+	)
+	return err
 }
 
-// save writes servers to the JSON file
-func (s *ServerStore) save() error {
-	// Note: mu should be locked by caller
+func scanServer(scanner interface {
+	Scan(dest ...interface{}) error
+}) (models.Server, error) {
+	var server models.Server
+	var tagsRaw string
+	var isDbOnly int
 
-	data, err := json.MarshalIndent(s.servers, "", "  ")
+	err := scanner.Scan(
+		&server.ID,
+		&server.Name,
+		&server.Host,
+		&server.Port,
+		&server.User,
+		&server.AuthType,
+		&server.KeyPath,
+		&server.Password,
+		&tagsRaw,
+		&isDbOnly,
+	)
 	if err != nil {
-		return err
+		return models.Server{}, err
 	}
 
-	return os.WriteFile(s.filePath, data, 0644)
+	if err := decodeJSON(tagsRaw, &server.Tags); err != nil {
+		return models.Server{}, err
+	}
+	server.IsDbOnly = intToBool(isDbOnly)
+	return server, nil
 }
 
-// AddServer adds a new server
+// AddServer adds a new server.
 func (s *ServerStore) AddServer(server models.Server) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if ID already exists
-	for _, existing := range s.servers {
-		if existing.ID == server.ID {
-			return fmt.Errorf("server with ID %s already exists", server.ID)
-		}
+	var exists int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM servers WHERE id = ?`, server.ID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return fmt.Errorf("server with ID %s already exists", server.ID)
 	}
 
-	s.servers = append(s.servers, server)
-	return s.save()
+	_, err := s.db.Exec(
+		`INSERT INTO servers (
+			id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		server.ID,
+		server.Name,
+		server.Host,
+		server.Port,
+		server.User,
+		server.AuthType,
+		server.KeyPath,
+		server.Password,
+		encodeJSON(server.Tags, "[]"),
+		boolToInt(server.IsDbOnly),
+	)
+	return err
 }
 
-// RemoveServer removes a server by ID
+// RemoveServer removes a server by ID.
 func (s *ServerStore) RemoveServer(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, server := range s.servers {
-		if server.ID == id {
-			// Remove element at index i
-			s.servers = append(s.servers[:i], s.servers[i+1:]...)
-			return s.save()
-		}
+	result, err := s.db.Exec(`DELETE FROM servers WHERE id = ?`, id)
+	if err != nil {
+		return err
 	}
-
-	return fmt.Errorf("server not found")
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("server not found")
+	}
+	return nil
 }
 
-// GetServer returns a server by ID
+// GetServer returns a server by ID.
 func (s *ServerStore) GetServer(id string) (models.Server, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, server := range s.servers {
-		if server.ID == id {
-			return server, nil
-		}
+	row := s.db.QueryRow(
+		`SELECT id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
+		FROM servers WHERE id = ?`,
+		id,
+	)
+	server, err := scanServer(row)
+	if err == sql.ErrNoRows {
+		return models.Server{}, fmt.Errorf("server not found")
 	}
-
-	return models.Server{}, fmt.Errorf("server not found")
+	return server, err
 }
 
-// ListServers returns all servers
+// ListServers returns all servers.
 func (s *ServerStore) ListServers() []models.Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Return a copy to avoid race conditions if caller modifies the slice
-	result := make([]models.Server, len(s.servers))
-	copy(result, s.servers)
-	return result
+	rows, err := s.db.Query(
+		`SELECT id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
+		FROM servers ORDER BY rowid`,
+	)
+	if err != nil {
+		return []models.Server{}
+	}
+	defer rows.Close()
+
+	var servers []models.Server
+	for rows.Next() {
+		server, err := scanServer(rows)
+		if err == nil {
+			servers = append(servers, server)
+		}
+	}
+	return servers
 }
 
-// UpdateServer updates an existing server
+// UpdateServer updates an existing server.
 func (s *ServerStore) UpdateServer(server models.Server) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, existing := range s.servers {
-		if existing.ID == server.ID {
-			s.servers[i] = server
-			return s.save()
-		}
+	result, err := s.db.Exec(
+		`UPDATE servers SET
+			name = ?, host = ?, port = ?, user = ?, auth_type = ?, key_path = ?,
+			password = ?, tags = ?, is_db_only = ?
+		WHERE id = ?`,
+		server.Name,
+		server.Host,
+		server.Port,
+		server.User,
+		server.AuthType,
+		server.KeyPath,
+		server.Password,
+		encodeJSON(server.Tags, "[]"),
+		boolToInt(server.IsDbOnly),
+		server.ID,
+	)
+	if err != nil {
+		return err
 	}
-
-	return fmt.Errorf("server not found")
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("server not found")
+	}
+	return nil
 }

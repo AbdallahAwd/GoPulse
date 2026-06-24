@@ -1,134 +1,229 @@
 package store
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/amaa/gopulse/internal/models"
 )
 
-// DatabaseStore handles storage and retrieval of database configurations
+// DatabaseStore handles storage and retrieval of database configurations.
 type DatabaseStore struct {
-	filePath  string
-	mu        sync.RWMutex
-	databases []models.Database
+	legacyPath string
+	db         *sql.DB
+	mu         sync.RWMutex
 }
 
-// NewDatabaseStore creates a new DatabaseStore
-func NewDatabaseStore(filePath string) (*DatabaseStore, error) {
-	store := &DatabaseStore{
-		filePath:  filePath,
-		databases: []models.Database{},
+// NewDatabaseStore creates a SQLite-backed DatabaseStore and imports legacy JSON once.
+func NewDatabaseStore(legacyPath string) (*DatabaseStore, error) {
+	db, err := openSQLiteStore(legacyPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Load existing databases if file exists
-	if _, err := os.Stat(filePath); err == nil {
-		if err := store.load(); err != nil {
-			return nil, fmt.Errorf("failed to load databases: %w", err)
-		}
+	store := &DatabaseStore{
+		legacyPath: legacyPath,
+		db:         db,
+	}
+
+	err = importJSONOnce[models.Database](db, "databases", legacyPath, `SELECT COUNT(*) FROM databases`, insertDatabaseTx)
+	if err != nil {
+		return nil, err
 	}
 
 	return store, nil
 }
 
-// load reads databases from the JSON file
-func (s *DatabaseStore) load() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(data, &s.databases)
+func insertDatabaseTx(tx *sql.Tx, db models.Database) error {
+	_, err := tx.Exec(
+		`INSERT OR IGNORE INTO databases (
+			id, server_id, name, type, database_name, username, password, host_port,
+			container_id, status, created_at, auto_backup, retention_days
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		db.ID,
+		db.ServerID,
+		db.Name,
+		db.Type,
+		db.DatabaseName,
+		db.Username,
+		db.Password,
+		db.HostPort,
+		db.ContainerID,
+		string(db.Status),
+		timeToText(db.CreatedAt),
+		boolToInt(db.AutoBackup),
+		db.RetentionDays,
+	)
+	return err
 }
 
-// save writes databases to the JSON file
-func (s *DatabaseStore) save() error {
-	// Note: mu should be locked by caller
+func scanDatabase(scanner interface {
+	Scan(dest ...interface{}) error
+}) (models.Database, error) {
+	var db models.Database
+	var status string
+	var createdAtRaw string
+	var autoBackup int
 
-	data, err := json.MarshalIndent(s.databases, "", "  ")
+	err := scanner.Scan(
+		&db.ID,
+		&db.ServerID,
+		&db.Name,
+		&db.Type,
+		&db.DatabaseName,
+		&db.Username,
+		&db.Password,
+		&db.HostPort,
+		&db.ContainerID,
+		&status,
+		&createdAtRaw,
+		&autoBackup,
+		&db.RetentionDays,
+	)
 	if err != nil {
-		return err
+		return models.Database{}, err
 	}
 
-	return os.WriteFile(s.filePath, data, 0644)
+	db.Status = models.DatabaseStatus(status)
+	db.CreatedAt = timeFromText(createdAtRaw)
+	db.AutoBackup = intToBool(autoBackup)
+	return db, nil
 }
 
-// AddDatabase adds a new database record
+const databaseSelectColumns = `id, server_id, name, type, database_name, username, password, host_port,
+	container_id, status, created_at, auto_backup, retention_days`
+
+// AddDatabase adds a new database record.
 func (s *DatabaseStore) AddDatabase(db models.Database) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if ID already exists
-	for _, existing := range s.databases {
-		if existing.ID == db.ID {
-			return fmt.Errorf("database with ID %s already exists", db.ID)
-		}
+	var exists int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM databases WHERE id = ?`, db.ID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return fmt.Errorf("database with ID %s already exists", db.ID)
 	}
 
 	db.CreatedAt = time.Now()
-	s.databases = append(s.databases, db)
-	return s.save()
+	_, err := s.db.Exec(
+		`INSERT INTO databases (
+			id, server_id, name, type, database_name, username, password, host_port,
+			container_id, status, created_at, auto_backup, retention_days
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		db.ID,
+		db.ServerID,
+		db.Name,
+		db.Type,
+		db.DatabaseName,
+		db.Username,
+		db.Password,
+		db.HostPort,
+		db.ContainerID,
+		string(db.Status),
+		timeToText(db.CreatedAt),
+		boolToInt(db.AutoBackup),
+		db.RetentionDays,
+	)
+	return err
 }
 
-// RemoveDatabase removes a database record by ID
+// RemoveDatabase removes a database record by ID.
 func (s *DatabaseStore) RemoveDatabase(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, db := range s.databases {
-		if db.ID == id {
-			s.databases = append(s.databases[:i], s.databases[i+1:]...)
-			return s.save()
-		}
+	result, err := s.db.Exec(`DELETE FROM databases WHERE id = ?`, id)
+	if err != nil {
+		return err
 	}
-
-	return fmt.Errorf("database not found")
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("database not found")
+	}
+	return nil
 }
 
-// GetDatabase returns a database record by ID
+// GetDatabase returns a database record by ID.
 func (s *DatabaseStore) GetDatabase(id string) (models.Database, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, db := range s.databases {
-		if db.ID == id {
-			return db, nil
-		}
+	row := s.db.QueryRow(`SELECT `+databaseSelectColumns+` FROM databases WHERE id = ?`, id)
+	db, err := scanDatabase(row)
+	if err == sql.ErrNoRows {
+		return models.Database{}, fmt.Errorf("database not found")
 	}
-
-	return models.Database{}, fmt.Errorf("database not found")
+	return db, err
 }
 
-// ListDatabases returns all databases
+// ListDatabases returns all databases.
 func (s *DatabaseStore) ListDatabases() []models.Database {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	result := make([]models.Database, len(s.databases))
-	copy(result, s.databases)
-	return result
+	rows, err := s.db.Query(`SELECT ` + databaseSelectColumns + ` FROM databases ORDER BY rowid`)
+	if err != nil {
+		return []models.Database{}
+	}
+	defer rows.Close()
+
+	var databases []models.Database
+	for rows.Next() {
+		db, err := scanDatabase(rows)
+		if err == nil {
+			databases = append(databases, db)
+		}
+	}
+	return databases
 }
 
-// UpdateDatabase updates an existing database record
+// UpdateDatabase updates an existing database record.
 func (s *DatabaseStore) UpdateDatabase(db models.Database) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, existing := range s.databases {
-		if existing.ID == db.ID {
-			if db.CreatedAt.IsZero() {
-				db.CreatedAt = existing.CreatedAt
-			}
-			s.databases[i] = db
-			return s.save()
+	if db.CreatedAt.IsZero() {
+		var existingCreatedAt string
+		err := s.db.QueryRow(`SELECT created_at FROM databases WHERE id = ?`, db.ID).Scan(&existingCreatedAt)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("database not found")
 		}
+		if err != nil {
+			return err
+		}
+		db.CreatedAt = timeFromText(existingCreatedAt)
 	}
 
-	return fmt.Errorf("database not found")
+	result, err := s.db.Exec(
+		`UPDATE databases SET
+			server_id = ?, name = ?, type = ?, database_name = ?, username = ?,
+			password = ?, host_port = ?, container_id = ?, status = ?, created_at = ?,
+			auto_backup = ?, retention_days = ?
+		WHERE id = ?`,
+		db.ServerID,
+		db.Name,
+		db.Type,
+		db.DatabaseName,
+		db.Username,
+		db.Password,
+		db.HostPort,
+		db.ContainerID,
+		string(db.Status),
+		timeToText(db.CreatedAt),
+		boolToInt(db.AutoBackup),
+		db.RetentionDays,
+		db.ID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("database not found")
+	}
+	return nil
 }

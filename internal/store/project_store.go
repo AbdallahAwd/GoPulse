@@ -1,141 +1,287 @@
 package store
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/amaa/gopulse/internal/models"
 )
 
-// ProjectStore handles storage and retrieval of project configurations
+// ProjectStore handles storage and retrieval of project configurations.
 type ProjectStore struct {
-	filePath string
-	mu       sync.RWMutex
-	projects []models.Project
+	legacyPath string
+	db         *sql.DB
+	mu         sync.RWMutex
 }
 
-// NewProjectStore creates a new ProjectStore
-func NewProjectStore(filePath string) (*ProjectStore, error) {
-	store := &ProjectStore{
-		filePath: filePath,
-		projects: []models.Project{},
+// NewProjectStore creates a SQLite-backed ProjectStore and imports legacy JSON once.
+func NewProjectStore(legacyPath string) (*ProjectStore, error) {
+	db, err := openSQLiteStore(legacyPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Load existing projects if file exists
-	if _, err := os.Stat(filePath); err == nil {
-		if err := store.load(); err != nil {
-			return nil, fmt.Errorf("failed to load projects: %w", err)
-		}
-	} else {
-		// Create file if it doesn't exist to ensure we have write permissions/path exists
-		// Actually save() handles that, but good to check.
-		// We'll rely on save() creating it.
+	store := &ProjectStore{
+		legacyPath: legacyPath,
+		db:         db,
+	}
+
+	err = importJSONOnce[models.Project](db, "projects", legacyPath, `SELECT COUNT(*) FROM projects`, insertProjectTx)
+	if err != nil {
+		return nil, err
 	}
 
 	return store, nil
 }
 
-// load reads projects from the JSON file
-func (s *ProjectStore) load() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(data, &s.projects)
+func insertProjectTx(tx *sql.Tx, project models.Project) error {
+	_, err := tx.Exec(
+		`INSERT OR IGNORE INTO projects (
+			id, server_id, name, type, source_type, source_url, build_type, port,
+			host_port, status, path, container_id, process_id, domain, created_at,
+			start_command, build_command, last_build, webhook_secret, webhook_enabled,
+			last_deploy, env_vars, restart_on_boot
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		project.ID,
+		project.ServerID,
+		project.Name,
+		project.Type,
+		project.SourceType,
+		project.SourceURL,
+		project.BuildType,
+		project.Port,
+		project.HostPort,
+		string(project.Status),
+		project.Path,
+		project.ContainerID,
+		project.ProcessID,
+		project.Domain,
+		timeToText(project.CreatedAt),
+		project.StartCommand,
+		project.BuildCommand,
+		timeToText(project.LastBuild),
+		project.WebhookSecret,
+		boolToInt(project.WebhookEnabled),
+		timeToText(project.LastDeploy),
+		encodeJSON(project.EnvVars, "{}"),
+		boolToInt(project.RestartOnBoot),
+	)
+	return err
 }
 
-// save writes projects to the JSON file
-func (s *ProjectStore) save() error {
-	// Note: mu should be locked by caller
+func scanProject(scanner interface {
+	Scan(dest ...interface{}) error
+}) (models.Project, error) {
+	var project models.Project
+	var status string
+	var createdAtRaw string
+	var lastBuildRaw string
+	var lastDeployRaw string
+	var envVarsRaw string
+	var webhookEnabled int
+	var restartOnBoot int
 
-	data, err := json.MarshalIndent(s.projects, "", "  ")
+	err := scanner.Scan(
+		&project.ID,
+		&project.ServerID,
+		&project.Name,
+		&project.Type,
+		&project.SourceType,
+		&project.SourceURL,
+		&project.BuildType,
+		&project.Port,
+		&project.HostPort,
+		&status,
+		&project.Path,
+		&project.ContainerID,
+		&project.ProcessID,
+		&project.Domain,
+		&createdAtRaw,
+		&project.StartCommand,
+		&project.BuildCommand,
+		&lastBuildRaw,
+		&project.WebhookSecret,
+		&webhookEnabled,
+		&lastDeployRaw,
+		&envVarsRaw,
+		&restartOnBoot,
+	)
 	if err != nil {
-		return err
+		return models.Project{}, err
 	}
 
-	return os.WriteFile(s.filePath, data, 0644)
+	project.Status = models.ProjectStatus(status)
+	project.CreatedAt = timeFromText(createdAtRaw)
+	project.LastBuild = timeFromText(lastBuildRaw)
+	project.LastDeploy = timeFromText(lastDeployRaw)
+	project.WebhookEnabled = intToBool(webhookEnabled)
+	project.RestartOnBoot = intToBool(restartOnBoot)
+	if err := decodeJSON(envVarsRaw, &project.EnvVars); err != nil {
+		return models.Project{}, err
+	}
+	return project, nil
 }
 
-// AddProject adds a new project
+const projectSelectColumns = `id, server_id, name, type, source_type, source_url, build_type, port,
+	host_port, status, path, container_id, process_id, domain, created_at,
+	start_command, build_command, last_build, webhook_secret, webhook_enabled,
+	last_deploy, env_vars, restart_on_boot`
+
+// AddProject adds a new project.
 func (s *ProjectStore) AddProject(project models.Project) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if ID already exists
-	for _, existing := range s.projects {
-		if existing.ID == project.ID {
-			return fmt.Errorf("project with ID %s already exists", project.ID)
-		}
+	var exists int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects WHERE id = ?`, project.ID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return fmt.Errorf("project with ID %s already exists", project.ID)
 	}
 
 	project.CreatedAt = time.Now()
-	s.projects = append(s.projects, project)
-	return s.save()
+	_, err := s.db.Exec(
+		`INSERT INTO projects (
+			id, server_id, name, type, source_type, source_url, build_type, port,
+			host_port, status, path, container_id, process_id, domain, created_at,
+			start_command, build_command, last_build, webhook_secret, webhook_enabled,
+			last_deploy, env_vars, restart_on_boot
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		project.ID,
+		project.ServerID,
+		project.Name,
+		project.Type,
+		project.SourceType,
+		project.SourceURL,
+		project.BuildType,
+		project.Port,
+		project.HostPort,
+		string(project.Status),
+		project.Path,
+		project.ContainerID,
+		project.ProcessID,
+		project.Domain,
+		timeToText(project.CreatedAt),
+		project.StartCommand,
+		project.BuildCommand,
+		timeToText(project.LastBuild),
+		project.WebhookSecret,
+		boolToInt(project.WebhookEnabled),
+		timeToText(project.LastDeploy),
+		encodeJSON(project.EnvVars, "{}"),
+		boolToInt(project.RestartOnBoot),
+	)
+	return err
 }
 
-// RemoveProject removes a project by ID
+// RemoveProject removes a project by ID.
 func (s *ProjectStore) RemoveProject(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, project := range s.projects {
-		if project.ID == id {
-			// Remove element at index i
-			s.projects = append(s.projects[:i], s.projects[i+1:]...)
-			return s.save()
-		}
+	result, err := s.db.Exec(`DELETE FROM projects WHERE id = ?`, id)
+	if err != nil {
+		return err
 	}
-
-	return fmt.Errorf("project not found")
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("project not found")
+	}
+	return nil
 }
 
-// GetProject returns a project by ID
+// GetProject returns a project by ID.
 func (s *ProjectStore) GetProject(id string) (models.Project, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, project := range s.projects {
-		if project.ID == id {
-			return project, nil
-		}
+	row := s.db.QueryRow(`SELECT `+projectSelectColumns+` FROM projects WHERE id = ?`, id)
+	project, err := scanProject(row)
+	if err == sql.ErrNoRows {
+		return models.Project{}, fmt.Errorf("project not found")
 	}
-
-	return models.Project{}, fmt.Errorf("project not found")
+	return project, err
 }
 
-// ListProjects returns all projects
+// ListProjects returns all projects.
 func (s *ProjectStore) ListProjects() []models.Project {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Return a copy to avoid race conditions if caller modifies the slice
-	result := make([]models.Project, len(s.projects))
-	copy(result, s.projects)
-	return result
+	rows, err := s.db.Query(`SELECT ` + projectSelectColumns + ` FROM projects ORDER BY rowid`)
+	if err != nil {
+		return []models.Project{}
+	}
+	defer rows.Close()
+
+	var projects []models.Project
+	for rows.Next() {
+		project, err := scanProject(rows)
+		if err == nil {
+			projects = append(projects, project)
+		}
+	}
+	return projects
 }
 
-// UpdateProject updates an existing project
+// UpdateProject updates an existing project.
 func (s *ProjectStore) UpdateProject(project models.Project) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, existing := range s.projects {
-		if existing.ID == project.ID {
-			// Preserve CreatedAt if not set in update (though usually update replaces all)
-			if project.CreatedAt.IsZero() {
-				project.CreatedAt = existing.CreatedAt
-			}
-			s.projects[i] = project
-			return s.save()
+	if project.CreatedAt.IsZero() {
+		var existingCreatedAt string
+		err := s.db.QueryRow(`SELECT created_at FROM projects WHERE id = ?`, project.ID).Scan(&existingCreatedAt)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("project not found")
 		}
+		if err != nil {
+			return err
+		}
+		project.CreatedAt = timeFromText(existingCreatedAt)
 	}
 
-	return fmt.Errorf("project not found")
+	result, err := s.db.Exec(
+		`UPDATE projects SET
+			server_id = ?, name = ?, type = ?, source_type = ?, source_url = ?,
+			build_type = ?, port = ?, host_port = ?, status = ?, path = ?,
+			container_id = ?, process_id = ?, domain = ?, created_at = ?,
+			start_command = ?, build_command = ?, last_build = ?, webhook_secret = ?,
+			webhook_enabled = ?, last_deploy = ?, env_vars = ?, restart_on_boot = ?
+		WHERE id = ?`,
+		project.ServerID,
+		project.Name,
+		project.Type,
+		project.SourceType,
+		project.SourceURL,
+		project.BuildType,
+		project.Port,
+		project.HostPort,
+		string(project.Status),
+		project.Path,
+		project.ContainerID,
+		project.ProcessID,
+		project.Domain,
+		timeToText(project.CreatedAt),
+		project.StartCommand,
+		project.BuildCommand,
+		timeToText(project.LastBuild),
+		project.WebhookSecret,
+		boolToInt(project.WebhookEnabled),
+		timeToText(project.LastDeploy),
+		encodeJSON(project.EnvVars, "{}"),
+		boolToInt(project.RestartOnBoot),
+		project.ID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("project not found")
+	}
+	return nil
 }

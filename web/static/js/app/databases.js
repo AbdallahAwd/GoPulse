@@ -395,6 +395,10 @@ App.Databases = (function() {
         // Reset form fields
         const nameEl = App.UI.el('db-prov-name');
         if (nameEl) nameEl.value = '';
+        const userEl = App.UI.el('db-prov-user');
+        if (userEl) userEl.value = '';
+        const dbNameEl = App.UI.el('db-prov-dbname');
+        if (dbNameEl) dbNameEl.value = '';
 
         const typeSelect = App.UI.el('db-prov-type');
         const titleEl = modal.querySelector('h3');
@@ -504,7 +508,7 @@ App.Databases = (function() {
                         userEl.value = 'admin@example.com';
                     }
                 } else {
-                    if (userEl.value === 'admin@example.com' || userEl.value === 'admin@gopulse.local') {
+                    if (!userEl.value || userEl.value === 'admin@example.com' || userEl.value === 'admin@gopulse.local') {
                         userEl.value = config.defaultUser;
                     }
                 }
@@ -531,7 +535,7 @@ App.Databases = (function() {
             } else if (isBaaS) {
                 dbNameEl.value = type; // 'pocketbase' or 'appwrite'
             } else {
-                if (dbNameEl.value === 'sqlite' || dbNameEl.value === 'pocketbase' || dbNameEl.value === 'appwrite') {
+                if (!dbNameEl.value || dbNameEl.value === 'sqlite' || dbNameEl.value === 'pocketbase' || dbNameEl.value === 'appwrite') {
                     dbNameEl.value = (type === 'mongodb') ? 'admin' : ((type === 'redis') ? 'db0' : 'gopulse');
                 }
             }

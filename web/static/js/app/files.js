@@ -13,6 +13,8 @@ App.Files = {
             if (response.success) {
                 App.state.currentPath = response.data.path;
                 App.state.lastFilesList = response.data.files || [];
+                this.suggestionsCache = this.suggestionsCache || {};
+                this.suggestionsCache[App.state.currentPath] = App.state.lastFilesList;
                 this.render(response.data.files);
                 this.renderBreadcrumbs(App.state.currentPath);
             }
@@ -384,8 +386,12 @@ App.Files = {
 
         display.classList.add('hidden');
         form.classList.remove('hidden');
-        input.focus();
+        input.setAttribute('readonly', 'readonly');
+        input.focus({ preventScroll: true });
         input.select();
+        requestAnimationFrame(() => {
+            input.removeAttribute('readonly');
+        });
     },
 
     blurPathInput() {
@@ -397,6 +403,7 @@ App.Files = {
 
             form.classList.add('hidden');
             display.classList.remove('hidden');
+            this.closeSuggestions();
         }, 150);
     },
 
@@ -414,6 +421,7 @@ App.Files = {
             form.classList.add('hidden');
             display.classList.remove('hidden');
         }
+        this.closeSuggestions();
     },
 
     attachContextMenu() {
@@ -582,6 +590,7 @@ App.Files = {
                  await App.API.post('/files/save', { path: fullPath, content: "" });
             }
             App.UI.toast('success', `${type === 'directory' ? 'Folder' : 'File'} created`);
+            this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
             this.closeCreateModal();
         } catch (e) { 
@@ -597,6 +606,7 @@ App.Files = {
         try {
             await App.API.post('/files/action', { action: 'delete', path });
             App.UI.toast('success', 'Item deleted');
+            this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
         } catch (e) { /* Handled */ }
     },
@@ -608,6 +618,7 @@ App.Files = {
             
             await App.API.post('/files/action', { action: 'compress', path });
             App.UI.toast('success', 'Folder zipped successfully');
+            this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
         } catch (e) { 
              App.UI.toast('error', 'Failed to zip folder');
@@ -621,6 +632,7 @@ App.Files = {
 
             await App.API.post('/files/action', { action: 'decompress', path });
             App.UI.toast('success', 'File unzipped successfully');
+            this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
         } catch (e) {
             App.UI.toast('error', 'Failed to unzip file');
@@ -654,6 +666,7 @@ App.Files = {
             const uploadUrl = `/files/upload?path=${encodeURIComponent(App.state.currentPath)}`;
             await App.API.upload(uploadUrl, formData, onProgress);
             App.UI.toast('success', 'File uploaded');
+            this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
             input.value = '';
         } catch (e) { /* Handled */ } 
@@ -748,8 +761,316 @@ App.Files = {
         } catch (e) {
             this.appendTerminalOutput(`Execution failed: ${e.message}`, 'text-red-500');
         }
+    },
+
+    init() {
+        if (this.initialized) return;
+        this.initialized = true;
+        this.suggestionsCache = {};
+        this.activeSuggestionIndex = -1;
+        this.currentSuggestions = [];
+        this.suggestionTimeout = null;
+        this.suggestionRequestSeq = 0;
+        this.initSuggestions();
+    },
+
+    initSuggestions() {
+        const input = App.UI.el('file-path-input');
+        const suggestionsEl = App.UI.el('file-path-suggestions');
+        if (!input || !suggestionsEl) return;
+        if (input.dataset.suggestionsBound === 'true') return;
+        input.dataset.suggestionsBound = 'true';
+        input.setAttribute('autocomplete', 'new-password');
+        input.setAttribute('name', `gopulse-file-path-${Date.now()}`);
+        input.setAttribute('autocapitalize', 'off');
+        input.setAttribute('autocorrect', 'off');
+        input.setAttribute('spellcheck', 'false');
+
+        input.addEventListener('input', () => {
+            this.handlePathInput();
+        });
+
+        input.addEventListener('focus', () => {
+            this.handlePathInput();
+        });
+
+        input.addEventListener('keydown', (e) => {
+            this.handleSuggestionsKeydown(e);
+        });
+
+        suggestionsEl.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+
+        suggestionsEl.addEventListener('click', (e) => {
+            const item = e.target.closest('.suggestion-item');
+            if (!item) return;
+
+            e.preventDefault();
+            e.stopPropagation();
+
+            const index = Number(item.dataset.index);
+            const suggestion = this.currentSuggestions[index];
+            if (suggestion) {
+                this.selectSuggestion(suggestion.path, suggestion.isDir);
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#file-breadcrumbs-container')) {
+                this.closeSuggestions();
+            }
+        });
+    },
+
+    invalidatePathSuggestions(path = App.state.currentPath) {
+        if (!this.suggestionsCache) return;
+
+        delete this.suggestionsCache[path || '/'];
+        const parentPath = this.getPathSuggestionState(path || '/').parentPath;
+        delete this.suggestionsCache[parentPath];
+    },
+
+    getPathSuggestionState(value) {
+        let fullPath = (value || '').trim();
+        if (fullPath === '') fullPath = '/';
+
+        if (!fullPath.startsWith('/')) {
+            const base = App.state.currentPath || '/';
+            fullPath = base === '/' ? `/${fullPath}` : `${base.replace(/\/$/, '')}/${fullPath}`;
+        }
+
+        fullPath = fullPath.replace(/\/+/g, '/');
+
+        const lastSlash = fullPath.lastIndexOf('/');
+        const parentPath = lastSlash <= 0 ? '/' : fullPath.substring(0, lastSlash);
+        const prefix = fullPath.substring(lastSlash + 1);
+
+        return { fullPath, parentPath, prefix };
+    },
+
+    handlePathInput() {
+        const input = App.UI.el('file-path-input');
+        if (!input) return;
+
+        const form = App.UI.el('file-path-form');
+        if (form && form.classList.contains('hidden')) return;
+
+        const { parentPath, prefix } = this.getPathSuggestionState(input.value);
+        const normalizedPrefix = prefix.toLowerCase();
+
+        if (this.suggestionsCache && this.suggestionsCache[parentPath]) {
+            this.showMatchingSuggestions(this.suggestionsCache[parentPath], normalizedPrefix, parentPath);
+            return;
+        }
+
+        if (parentPath === App.state.currentPath && App.state.lastFilesList) {
+            this.suggestionsCache = this.suggestionsCache || {};
+            this.suggestionsCache[parentPath] = App.state.lastFilesList;
+            this.showMatchingSuggestions(App.state.lastFilesList, normalizedPrefix, parentPath);
+            return;
+        }
+
+        clearTimeout(this.suggestionTimeout);
+        const requestSeq = ++this.suggestionRequestSeq;
+        this.suggestionTimeout = setTimeout(async () => {
+            try {
+                const response = await App.API.get(`/files/list?path=${encodeURIComponent(parentPath)}`);
+                if (requestSeq !== this.suggestionRequestSeq) return;
+
+                if (response.success && response.data && response.data.files) {
+                    const files = response.data.files;
+                    this.suggestionsCache = this.suggestionsCache || {};
+                    this.suggestionsCache[parentPath] = files;
+
+                    const currentState = this.getPathSuggestionState(input.value);
+                    if (currentState.parentPath === parentPath) {
+                        this.showMatchingSuggestions(files, currentState.prefix.toLowerCase(), parentPath);
+                    }
+                }
+            } catch (e) {
+                this.closeSuggestions();
+            }
+        }, 120);
+    },
+
+    showMatchingSuggestions(files, prefix, parentPath) {
+        const suggestionsEl = App.UI.el('file-path-suggestions');
+        if (!suggestionsEl) return;
+
+        const matches = (files || []).filter(f => {
+            if (f.name === '.' || f.name === '..') return false;
+            return f.name.toLowerCase().startsWith(prefix);
+        }).sort((a, b) => {
+            if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+            return a.name.localeCompare(b.name);
+        }).slice(0, 15);
+
+        if (matches.length === 0) {
+            this.closeSuggestions();
+            return;
+        }
+
+        this.currentSuggestions = matches.map(f => {
+            const sep = parentPath.endsWith('/') ? '' : '/';
+            return {
+                name: f.name,
+                isDir: !!f.is_dir,
+                path: parentPath + sep + f.name + (f.is_dir ? '/' : '')
+            };
+        });
+        this.activeSuggestionIndex = -1;
+
+        suggestionsEl.innerHTML = '';
+        const fragment = document.createDocumentFragment();
+
+        this.currentSuggestions.forEach((suggestion, idx) => {
+            const fileMeta = this.getFileIcon(suggestion.name, suggestion.isDir);
+            const name = suggestion.name;
+            const typedLen = prefix.length;
+            const matchPart = name.substring(0, typedLen);
+            const restPart = name.substring(typedLen);
+
+            const item = document.createElement('div');
+            item.className = 'suggestion-item flex items-center px-4 py-2 hover:bg-gray-800/80 cursor-pointer text-sm font-mono transition-all border-b border-gray-800/40 last:border-0';
+            item.dataset.index = String(idx);
+
+            const iconWrap = document.createElement('div');
+            iconWrap.className = `w-6 h-6 flex items-center justify-center rounded ${fileMeta.bgColor} ${fileMeta.color} mr-3`;
+            const icon = document.createElement('i');
+            icon.className = `fas ${fileMeta.icon} text-xs`;
+            iconWrap.appendChild(icon);
+
+            const label = document.createElement('span');
+            label.className = 'flex-1 truncate font-medium';
+
+            if (typedLen > 0) {
+                const typed = document.createElement('span');
+                typed.className = 'text-blue-400 font-bold';
+                typed.textContent = matchPart;
+
+                const rest = document.createElement('span');
+                rest.className = 'text-gray-300';
+                rest.textContent = restPart;
+
+                label.appendChild(typed);
+                label.appendChild(rest);
+            } else {
+                label.textContent = name;
+                label.classList.add('text-gray-300');
+            }
+
+            const badge = document.createElement('span');
+            badge.className = suggestion.isDir
+                ? 'text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded font-sans uppercase font-bold tracking-wider'
+                : 'text-[10px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded font-sans uppercase font-bold tracking-wider';
+            badge.textContent = suggestion.isDir ? 'dir' : 'file';
+
+            item.appendChild(iconWrap);
+            item.appendChild(label);
+            item.appendChild(badge);
+            fragment.appendChild(item);
+        });
+
+        suggestionsEl.appendChild(fragment);
+        suggestionsEl.classList.remove('hidden');
+    },
+
+    selectSuggestion(completedPath, isDir, event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        const input = App.UI.el('file-path-input');
+        if (!input) return;
+
+        input.value = completedPath;
+
+        if (isDir) {
+            input.focus();
+            input.setSelectionRange(completedPath.length, completedPath.length);
+            this.handlePathInput();
+        } else {
+            this.closeSuggestions();
+            const form = App.UI.el('file-path-form');
+            const display = App.UI.el('file-breadcrumbs-display');
+            if (form && display) {
+                form.classList.add('hidden');
+                display.classList.remove('hidden');
+            }
+            App.Editor.open(completedPath);
+        }
+    },
+
+    handleSuggestionsKeydown(e) {
+        const suggestionsEl = App.UI.el('file-path-suggestions');
+        if (!suggestionsEl || suggestionsEl.classList.contains('hidden')) {
+            return;
+        }
+
+        const items = suggestionsEl.querySelectorAll('.suggestion-item');
+        if (items.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            this.activeSuggestionIndex = (this.activeSuggestionIndex + 1) % items.length;
+            this.highlightSuggestion(items);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            this.activeSuggestionIndex = (this.activeSuggestionIndex - 1 + items.length) % items.length;
+            this.highlightSuggestion(items);
+        } else if (e.key === 'Tab') {
+            e.preventDefault();
+            const index = this.activeSuggestionIndex >= 0 ? this.activeSuggestionIndex : 0;
+            const item = items[index];
+            const suggestion = this.currentSuggestions[index];
+            if (item && suggestion) {
+                this.selectSuggestion(suggestion.path, suggestion.isDir);
+            }
+        } else if (e.key === 'Enter') {
+            if (this.activeSuggestionIndex >= 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                const item = items[this.activeSuggestionIndex];
+                const suggestion = this.currentSuggestions[this.activeSuggestionIndex];
+                if (item && suggestion) {
+                    this.selectSuggestion(suggestion.path, suggestion.isDir);
+                }
+            }
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            this.closeSuggestions();
+        }
+    },
+
+    highlightSuggestion(items) {
+        items.forEach((item, idx) => {
+            if (idx === this.activeSuggestionIndex) {
+                item.classList.add('bg-blue-600/20', 'border-l-2', 'border-blue-500');
+                item.scrollIntoView({ block: 'nearest' });
+            } else {
+                item.classList.remove('bg-blue-600/20', 'border-l-2', 'border-blue-500');
+            }
+        });
+    },
+
+    closeSuggestions() {
+        clearTimeout(this.suggestionTimeout);
+        const suggestionsEl = App.UI.el('file-path-suggestions');
+        if (suggestionsEl) {
+            suggestionsEl.classList.add('hidden');
+            suggestionsEl.innerHTML = '';
+        }
+        this.activeSuggestionIndex = -1;
+        this.currentSuggestions = [];
     }
 };
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    App.Files.init();
+});
 
 window.loadFileBrowser = (path) => App.Files.list(path);
 window.createDirectory = () => App.Files.create('directory');

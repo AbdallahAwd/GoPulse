@@ -287,6 +287,28 @@ func (s *ProjectService) getNodeCommandPrefix() string {
 	return "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && "
 }
 
+const laravelUIPresetStartCommand = "php artisan serve --port=8000 --host=0.0.0.0"
+
+func normalizeLaravelStartCommand(startCommand string, port int) string {
+	startCommand = strings.TrimSpace(startCommand)
+	if startCommand == "" || startCommand == laravelUIPresetStartCommand {
+		return fmt.Sprintf("php artisan serve --port=%d --host=0.0.0.0", port)
+	}
+	return startCommand
+}
+
+func projectShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func pm2ShellStartCommand(projectName string, startCommand string) string {
+	return fmt.Sprintf(
+		"pm2 start /bin/sh --name %s -- -c %s",
+		projectShellQuote(projectName),
+		projectShellQuote("exec "+startCommand),
+	)
+}
+
 // findProjectRoot looks for package.json to determine the actual project root
 func (s *ProjectService) findProjectRoot(client *remote.SSHClient, basePath string) (string, error) {
 	// Check if package.json exists in basePath
@@ -315,6 +337,48 @@ func (s *ProjectService) findProjectRoot(client *remote.SSHClient, basePath stri
 	return basePath, nil // Default to base path if not found
 }
 
+// findGoProjectRoot looks for go.mod or main.go to determine the actual Go project root
+func (s *ProjectService) findGoProjectRoot(client *remote.SSHClient, basePath string) (string, error) {
+	// Check if go.mod exists in basePath
+	checkCmd := fmt.Sprintf("[ -f \"%s/go.mod\" ] && echo 'found'", basePath)
+	out, _ := client.RunCommand(checkCmd)
+	if strings.TrimSpace(out) == "found" {
+		return basePath, nil
+	}
+
+	// If not found, look for go.mod in subdirectories (maxdepth 2)
+	findCmd := fmt.Sprintf("find %s -maxdepth 2 -name go.mod | head -n 1", basePath)
+	out, err := client.RunCommand(findCmd)
+	if err == nil && strings.TrimSpace(out) != "" {
+		fullPath := strings.TrimSpace(out)
+		dirCmd := fmt.Sprintf("dirname \"%s\"", fullPath)
+		dirOut, err := client.RunCommand(dirCmd)
+		if err == nil && strings.TrimSpace(dirOut) != "" {
+			return strings.TrimSpace(dirOut), nil
+		}
+	}
+
+	// If go.mod is not found at all, look for main.go
+	checkMainCmd := fmt.Sprintf("[ -f \"%s/main.go\" ] && echo 'found'", basePath)
+	outMain, _ := client.RunCommand(checkMainCmd)
+	if strings.TrimSpace(outMain) == "found" {
+		return basePath, nil
+	}
+
+	findMainCmd := fmt.Sprintf("find %s -maxdepth 2 -name main.go | head -n 1", basePath)
+	outMain2, err := client.RunCommand(findMainCmd)
+	if err == nil && strings.TrimSpace(outMain2) != "" {
+		fullPath := strings.TrimSpace(outMain2)
+		dirCmd := fmt.Sprintf("dirname \"%s\"", fullPath)
+		dirOut, err := client.RunCommand(dirCmd)
+		if err == nil && strings.TrimSpace(dirOut) != "" {
+			return strings.TrimSpace(dirOut), nil
+		}
+	}
+
+	return basePath, nil
+}
+
 // BuildProject executes the build
 func (s *ProjectService) BuildProject(ctx context.Context, projectID string) error {
 	project, err := s.store.GetProject(projectID)
@@ -340,12 +404,30 @@ func (s *ProjectService) BuildProject(ctx context.Context, projectID string) err
 			}
 
 			// Find actual root (where go.mod or main.go is)
-			// For now assume project.Path
-			workDir := project.Path
+			workDir, err := s.findGoProjectRoot(client, project.Path)
+			if err != nil {
+				workDir = project.Path
+			}
 
 			// Run build command
-			if project.BuildCommand == "" {
-				project.BuildCommand = "go build -o app"
+			buildCommand := project.BuildCommand
+			if buildCommand == "" {
+				buildCommand = "go build -o app"
+			}
+
+			// If build command is default "go build -o app", check for root Go files to prevent "no Go files" error
+			if buildCommand == "go build -o app" {
+				checkGoFiles := fmt.Sprintf("find %s -maxdepth 1 -name \"*.go\" | grep -q . && echo \"yes\" || echo \"no\"", workDir)
+				hasGoFilesOut, _ := client.RunCommand(checkGoFiles)
+				if strings.TrimSpace(hasGoFilesOut) != "yes" {
+					// Look for main.go in subdirectories
+					findMain := fmt.Sprintf("find %s -name \"main.go\" | head -n 1", workDir)
+					mainFileOut, err := client.RunCommand(findMain)
+					if err == nil && strings.TrimSpace(mainFileOut) != "" {
+						mainFilePath := strings.TrimSpace(mainFileOut)
+						buildCommand = fmt.Sprintf("go build -o app %s", mainFilePath)
+					}
+				}
 			}
 
 			cmdPrefix := s.getGoCommandPrefix()
@@ -354,7 +436,7 @@ func (s *ProjectService) BuildProject(ctx context.Context, projectID string) err
 				// Ignore error, maybe no go.mod
 			}
 
-			cmd := fmt.Sprintf("%scd %s && %s", cmdPrefix, workDir, project.BuildCommand)
+			cmd := fmt.Sprintf("%scd %s && %s", cmdPrefix, workDir, buildCommand)
 			if out, err := client.RunCommand(cmd); err != nil {
 				project.Status = models.ProjectStatusError
 				s.store.UpdateProject(project)
@@ -515,7 +597,10 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 			// Start with pm2
 			// pm2 start ./app --name "name" --no-autorestart (maybe?)
 			// Need execution permissions
-			workDir := project.Path
+			workDir, err := s.findGoProjectRoot(client, project.Path)
+			if err != nil {
+				workDir = project.Path
+			}
 			chmodCmd := fmt.Sprintf("chmod +x %s/%s", workDir, strings.Split(project.StartCommand, " ")[0])
 			client.RunCommand(chmodCmd)
 
@@ -526,9 +611,11 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 			}
 
 		} else if project.Type == "laravel" {
-			if project.StartCommand == "" {
-				project.StartCommand = fmt.Sprintf("php artisan serve --port=%d --host=0.0.0.0", project.Port)
+			if err := s.ensureLaravelInstalled(client); err != nil {
+				return fmt.Errorf("failed to ensure Laravel environment: %w", err)
 			}
+
+			project.StartCommand = normalizeLaravelStartCommand(project.StartCommand, project.Port)
 
 			// Ensure PM2 is installed
 			nodePrefix := s.getNodeCommandPrefix()
@@ -540,10 +627,10 @@ func (s *ProjectService) StartProject(ctx context.Context, projectID string) err
 			}
 
 			workDir := project.Path
-			client.RunCommand(fmt.Sprintf("%spm2 delete \"%s\"", nodePrefix, project.Name))
-			cmd := fmt.Sprintf("cd %s && pm2 start --name \"%s\" -- php artisan serve --port=%d --host=0.0.0.0", workDir, project.Name, project.Port)
-			if _, err := client.RunCommand(cmd); err != nil {
-				return fmt.Errorf("start failed: %w", err)
+			client.RunCommand(fmt.Sprintf("%spm2 delete %s", nodePrefix, projectShellQuote(project.Name)))
+			cmd := fmt.Sprintf("%scd %s && %s", nodePrefix, projectShellQuote(workDir), pm2ShellStartCommand(project.Name, project.StartCommand))
+			if out, err := client.RunCommand(cmd); err != nil {
+				return fmt.Errorf("start failed: %s\n%w", strings.TrimSpace(out), err)
 			}
 		} else {
 			// Node/Next.js Logic
@@ -1028,7 +1115,7 @@ func (s *ProjectService) GetEnvVars(ctx context.Context, projectID string) (map[
 			output, err := client.RunCommand(cmd)
 			if err == nil {
 				remoteVars := parseEnvContent(output)
-				
+
 				// Update metadata store if there are any differences
 				changed := false
 				if project.EnvVars == nil {

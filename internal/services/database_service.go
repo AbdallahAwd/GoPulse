@@ -17,6 +17,65 @@ import (
 // jsonUnmarshal is an alias to avoid import confusion
 var jsonUnmarshal = json.Unmarshal
 
+const (
+	mysqlInternalAdminUser   = "root"
+	mysqlDefaultCharacterSet = "utf8mb4"
+	mysqlDefaultCollation    = "utf8mb4_unicode_ci"
+)
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func sqlStringLiteral(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func mysqlIdentifier(value string) string {
+	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+}
+
+func mysqlExecCommand(containerName string, db models.Database, database string, options string, query string, stderrRedirect string) string {
+	parts := []string{
+		"docker exec",
+		fmt.Sprintf("-e MYSQL_PWD=%s", shellQuote(db.Password)),
+		shellQuote(containerName),
+		"mysql",
+		fmt.Sprintf("--default-character-set=%s", mysqlDefaultCharacterSet),
+		fmt.Sprintf("--user=%s", shellQuote(mysqlInternalAdminUser)),
+	}
+	if database != "" {
+		parts = append(parts, fmt.Sprintf("--database=%s", shellQuote(database)))
+	}
+	if options != "" {
+		parts = append(parts, options)
+	}
+	if query != "" {
+		parts = append(parts, "-e", shellQuote(query))
+	}
+	if stderrRedirect != "" {
+		parts = append(parts, stderrRedirect)
+	}
+	return strings.Join(parts, " ")
+}
+
+func mysqlAdminCommand(containerName string, db models.Database, args string, stderrRedirect string) string {
+	parts := []string{
+		"docker exec",
+		fmt.Sprintf("-e MYSQL_PWD=%s", shellQuote(db.Password)),
+		shellQuote(containerName),
+		"mysqladmin",
+		fmt.Sprintf("--user=%s", shellQuote(mysqlInternalAdminUser)),
+	}
+	if args != "" {
+		parts = append(parts, args)
+	}
+	if stderrRedirect != "" {
+		parts = append(parts, stderrRedirect)
+	}
+	return strings.Join(parts, " ")
+}
+
 // DatabaseService handles containerized database operations on remote servers via SSH
 type DatabaseService struct {
 	store   *store.DatabaseStore
@@ -79,9 +138,20 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	var runCmd string
 	switch dbType {
 	case "mysql":
+		mysqlEnv := []string{
+			fmt.Sprintf("-e MYSQL_ROOT_PASSWORD=%s", shellQuote(password)),
+			fmt.Sprintf("-e MYSQL_DATABASE=%s", shellQuote(dbName)),
+		}
+		if username != "" && username != mysqlInternalAdminUser {
+			mysqlEnv = append(mysqlEnv,
+				fmt.Sprintf("-e MYSQL_USER=%s", shellQuote(username)),
+				fmt.Sprintf("-e MYSQL_PASSWORD=%s", shellQuote(password)),
+			)
+		}
 		runCmd = fmt.Sprintf(
-			"docker run -d --name %s -p %d:3306 -v %s:/var/lib/mysql -e MYSQL_ROOT_PASSWORD=%s -e MYSQL_DATABASE=%s --restart unless-stopped mysql:8.0",
-			containerName, hostPort, volumePath, password, dbName,
+			"docker run -d --name %s -p %d:3306 -v %s:/var/lib/mysql %s --restart unless-stopped mysql:8.0 --character-set-server=%s --collation-server=%s",
+			shellQuote(containerName), hostPort, shellQuote(volumePath), strings.Join(mysqlEnv, " "),
+			mysqlDefaultCharacterSet, mysqlDefaultCollation,
 		)
 	case "postgres":
 		runCmd = fmt.Sprintf(
@@ -272,7 +342,7 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 		// Bootstrap PocketBase admin superuser if provided
 		if dbType == "pocketbase" && username != "" && password != "" && password != "none" {
 			time.Sleep(1500 * time.Millisecond)
-			
+
 			// Try new version "superuser upsert" first (PocketBase 0.22+)
 			adminCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase superuser upsert %s %s --dir=/pb_data", containerName, username, password)
 			_, err = client.RunCommand(adminCmd)
@@ -361,7 +431,7 @@ func (s *DatabaseService) UpdateStatus(ctx context.Context, id string) (models.D
 	var healthCmd string
 	switch db.Type {
 	case "mysql":
-		healthCmd = fmt.Sprintf("docker exec %s mysqladmin -u%s -p%s ping 2>/dev/null | grep -q 'alive' && echo 'healthy' || echo 'starting'", containerName, db.Username, db.Password)
+		healthCmd = fmt.Sprintf("%s | grep -q 'alive' && echo 'healthy' || echo 'starting'", mysqlAdminCommand(containerName, db, "ping", "2>/dev/null"))
 	case "postgres":
 		healthCmd = fmt.Sprintf("docker exec %s pg_isready -U %s -d %s >/dev/null 2>&1 && echo 'healthy' || echo 'starting'", containerName, db.Username, db.DatabaseName)
 	case "mongodb":
@@ -600,10 +670,7 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, id string, schema st
 	switch db.Type {
 	case "mysql":
 		// MySQL tabular output with -B (batch/tab-separated)
-		execCmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s %s -B -e "%s" 2>&1`,
-			containerName, db.Username, db.Password, targetSchema, safeQuery,
-		)
+		execCmd = mysqlExecCommand(containerName, db, targetSchema, "-B", query, "2>&1")
 	case "postgres":
 		// For SELECT queries, use --csv for clean parseable output
 		// For non-SELECT (INSERT/UPDATE/CREATE/DROP), use plain -c
@@ -777,57 +844,57 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.
 	}
 
 	backupName := fmt.Sprintf("backup-%s-%s.sql.gz", db.ID, time.Now().Format("20060102-150405"))
-		if db.Type == "mongodb" {
-			backupName = fmt.Sprintf("backup-%s-%s.archive.gz", db.ID, time.Now().Format("20060102-150405"))
-		} else if db.Type == "redis" {
-			backupName = fmt.Sprintf("backup-%s-%s.rdb.gz", db.ID, time.Now().Format("20060102-150405"))
-		} else if db.Type == "sqlite" {
-			backupName = fmt.Sprintf("backup-%s-%s.db.gz", db.ID, time.Now().Format("20060102-150405"))
-		} else if db.Type == "pocketbase" {
-			backupName = fmt.Sprintf("backup-%s-%s.tar.gz", db.ID, time.Now().Format("20060102-150405"))
-		}
-	
-		var dumpCmd string
-		switch db.Type {
-		case "mysql":
-			dumpCmd = fmt.Sprintf(
-				"docker exec %s mysqldump -u%s -p%s --single-transaction --quick %s | gzip > %s/%s",
-				containerName, db.Username, db.Password, db.DatabaseName, backupDir, backupName,
-			)
-		case "postgres":
-			dumpCmd = fmt.Sprintf(
-				"docker exec %s pg_dump -U %s -d %s --clean --if-exists | gzip > %s/%s",
-				containerName, db.Username, db.DatabaseName, backupDir, backupName,
-			)
-		case "mongodb":
-			dumpCmd = fmt.Sprintf(
-				"docker exec %s mongodump --username %s --password %s --authenticationDatabase admin --archive | gzip > %s/%s",
-				containerName, db.Username, db.Password, backupDir, backupName,
-			)
-		case "redis":
-			escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
-			dumpCmd = fmt.Sprintf(
-				"docker exec -e REDISCLI_AUTH=%s %s redis-cli SAVE && gzip -c /var/lib/gopulse/databases/%s/dump.rdb > %s/%s",
-				escapedPassword, containerName, db.ID, backupDir, backupName,
-			)
-		case "sqlite":
-			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-			dumpCmd = fmt.Sprintf(
-				"gzip -c %s/sqlite.db > %s/%s",
-				volumePath, backupDir, backupName,
-			)
-		case "pocketbase":
-			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-			dumpCmd = fmt.Sprintf(
-				"tar -czf %s/%s -C %s pb_data",
-				backupDir, backupName, volumePath,
-			)
-		case "appwrite":
-			dumpCmd = fmt.Sprintf(
-				"docker exec %s-mariadb mysqldump -uappwrite -p%s appwrite | gzip > %s/%s",
-				containerName, db.Password, backupDir, backupName,
-			)
-		}
+	if db.Type == "mongodb" {
+		backupName = fmt.Sprintf("backup-%s-%s.archive.gz", db.ID, time.Now().Format("20060102-150405"))
+	} else if db.Type == "redis" {
+		backupName = fmt.Sprintf("backup-%s-%s.rdb.gz", db.ID, time.Now().Format("20060102-150405"))
+	} else if db.Type == "sqlite" {
+		backupName = fmt.Sprintf("backup-%s-%s.db.gz", db.ID, time.Now().Format("20060102-150405"))
+	} else if db.Type == "pocketbase" {
+		backupName = fmt.Sprintf("backup-%s-%s.tar.gz", db.ID, time.Now().Format("20060102-150405"))
+	}
+
+	var dumpCmd string
+	switch db.Type {
+	case "mysql":
+		dumpCmd = fmt.Sprintf(
+			"docker exec -e MYSQL_PWD=%s %s mysqldump --default-character-set=%s --user=%s --single-transaction --quick %s | gzip > %s",
+			shellQuote(db.Password), shellQuote(containerName), mysqlDefaultCharacterSet, shellQuote(mysqlInternalAdminUser), shellQuote(db.DatabaseName), shellQuote(backupDir+"/"+backupName),
+		)
+	case "postgres":
+		dumpCmd = fmt.Sprintf(
+			"docker exec %s pg_dump -U %s -d %s --clean --if-exists | gzip > %s/%s",
+			containerName, db.Username, db.DatabaseName, backupDir, backupName,
+		)
+	case "mongodb":
+		dumpCmd = fmt.Sprintf(
+			"docker exec %s mongodump --username %s --password %s --authenticationDatabase admin --archive | gzip > %s/%s",
+			containerName, db.Username, db.Password, backupDir, backupName,
+		)
+	case "redis":
+		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
+		dumpCmd = fmt.Sprintf(
+			"docker exec -e REDISCLI_AUTH=%s %s redis-cli SAVE && gzip -c /var/lib/gopulse/databases/%s/dump.rdb > %s/%s",
+			escapedPassword, containerName, db.ID, backupDir, backupName,
+		)
+	case "sqlite":
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		dumpCmd = fmt.Sprintf(
+			"gzip -c %s/sqlite.db > %s/%s",
+			volumePath, backupDir, backupName,
+		)
+	case "pocketbase":
+		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
+		dumpCmd = fmt.Sprintf(
+			"tar -czf %s/%s -C %s pb_data",
+			backupDir, backupName, volumePath,
+		)
+	case "appwrite":
+		dumpCmd = fmt.Sprintf(
+			"docker exec %s-mariadb mysqldump -uappwrite -p%s appwrite | gzip > %s/%s",
+			containerName, db.Password, backupDir, backupName,
+		)
+	}
 
 	output, err := client.RunCommand(dumpCmd)
 	if err != nil {
@@ -923,7 +990,7 @@ func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename
 	backupPath := fmt.Sprintf("%s/%s", backupDir, filename)
 
 	// Confirm that the file exists on host
-	checkCmd := fmt.Sprintf("[ -f %s ] && echo 'exists' || echo 'missing'", backupPath)
+	checkCmd := fmt.Sprintf("[ -f %s ] && echo 'exists' || echo 'missing'", shellQuote(backupPath))
 	checkOut, _ := client.RunCommand(checkCmd)
 	if strings.TrimSpace(checkOut) != "exists" {
 		return fmt.Errorf("backup file %s does not exist on remote host", filename)
@@ -936,13 +1003,13 @@ func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename
 	case "mysql":
 		if isGzipped {
 			restoreCmd = fmt.Sprintf(
-				"gzip -d -c %s | docker exec -i %s mysql -u%s -p%s %s 2>&1",
-				backupPath, containerName, db.Username, db.Password, db.DatabaseName,
+				"gzip -d -c %s | docker exec -i -e MYSQL_PWD=%s %s mysql --default-character-set=%s --user=%s --database=%s 2>&1",
+				shellQuote(backupPath), shellQuote(db.Password), shellQuote(containerName), mysqlDefaultCharacterSet, shellQuote(mysqlInternalAdminUser), shellQuote(db.DatabaseName),
 			)
 		} else {
 			restoreCmd = fmt.Sprintf(
-				"cat %s | docker exec -i %s mysql -u%s -p%s %s 2>&1",
-				backupPath, containerName, db.Username, db.Password, db.DatabaseName,
+				"cat %s | docker exec -i -e MYSQL_PWD=%s %s mysql --default-character-set=%s --user=%s --database=%s 2>&1",
+				shellQuote(backupPath), shellQuote(db.Password), shellQuote(containerName), mysqlDefaultCharacterSet, shellQuote(mysqlInternalAdminUser), shellQuote(db.DatabaseName),
 			)
 		}
 	case "postgres":
@@ -1101,10 +1168,7 @@ func (s *DatabaseService) ListSchemas(ctx context.Context, id string) ([]string,
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s -B -N -e "SHOW DATABASES;" 2>/dev/null`,
-			containerName, db.Username, db.Password,
-		)
+		cmd = mysqlExecCommand(containerName, db, "", "-B -N", "SHOW DATABASES;", "2>/dev/null")
 	case "postgres":
 		cmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s -t -A -c "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;" 2>/dev/null`,
@@ -1156,10 +1220,7 @@ func (s *DatabaseService) ListTables(ctx context.Context, id string, schema stri
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s %s -B -N -e "SHOW TABLES;" 2>/dev/null`,
-			containerName, db.Username, db.Password, schema,
-		)
+		cmd = mysqlExecCommand(containerName, db, schema, "-B -N", "SHOW TABLES;", "2>/dev/null")
 	case "postgres":
 		cmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s -t -A -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;" 2>/dev/null`,
@@ -1232,10 +1293,11 @@ func (s *DatabaseService) DescribeTable(ctx context.Context, id string, schema s
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s %s -B -N -e "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='%s' AND TABLE_NAME='%s' ORDER BY ORDINAL_POSITION;" 2>/dev/null`,
-			containerName, db.Username, db.Password, schema, schema, table,
+		query := fmt.Sprintf(
+			"SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s ORDER BY ORDINAL_POSITION;",
+			sqlStringLiteral(schema), sqlStringLiteral(table),
 		)
+		cmd = mysqlExecCommand(containerName, db, schema, "-B -N", query, "2>/dev/null")
 	case "postgres":
 		cmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s -t -A -F '	' -c "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '%s' ORDER BY ordinal_position;" 2>/dev/null`,
@@ -1424,10 +1486,7 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 	var countCmd string
 	switch db.Type {
 	case "mysql":
-		countCmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s %s -B -N -e "SELECT COUNT(*) FROM %s;" 2>/dev/null`,
-			containerName, db.Username, db.Password, schema, table,
-		)
+		countCmd = mysqlExecCommand(containerName, db, schema, "-B -N", fmt.Sprintf("SELECT COUNT(*) FROM %s;", mysqlIdentifier(table)), "2>/dev/null")
 	case "postgres":
 		countCmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s -t -A -c "SELECT COUNT(*) FROM \"%s\";" 2>/dev/null`,
@@ -1457,10 +1516,7 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 	var dataCmd string
 	switch db.Type {
 	case "mysql":
-		dataCmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s %s -B -e "SELECT * FROM %s LIMIT %d OFFSET %d;" 2>/dev/null`,
-			containerName, db.Username, db.Password, schema, table, limit, offset,
-		)
+		dataCmd = mysqlExecCommand(containerName, db, schema, "-B", fmt.Sprintf("SELECT * FROM %s LIMIT %d OFFSET %d;", mysqlIdentifier(table), limit, offset), "2>/dev/null")
 	case "postgres":
 		dataCmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s --csv -c "SELECT * FROM \"%s\" LIMIT %d OFFSET %d;" 2>/dev/null`,
@@ -1601,7 +1657,7 @@ func (s *DatabaseService) CreateSchema(ctx context.Context, id string, name stri
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s -e \"CREATE DATABASE `%s`;\" 2>&1", containerName, db.Username, db.Password, name)
+		cmd = mysqlExecCommand(containerName, db, "", "", fmt.Sprintf("CREATE DATABASE %s CHARACTER SET %s COLLATE %s;", mysqlIdentifier(name), mysqlDefaultCharacterSet, mysqlDefaultCollation), "2>&1")
 	case "postgres":
 		cmd = fmt.Sprintf("docker exec %s psql -U %s -d postgres -c \"CREATE DATABASE \\\"%s\\\";\" 2>&1", containerName, db.Username, name)
 	case "mongodb":
@@ -1638,7 +1694,7 @@ func (s *DatabaseService) DeleteSchema(ctx context.Context, id string, name stri
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s -e \"DROP DATABASE `%s`;\" 2>&1", containerName, db.Username, db.Password, name)
+		cmd = mysqlExecCommand(containerName, db, "", "", fmt.Sprintf("DROP DATABASE %s;", mysqlIdentifier(name)), "2>&1")
 	case "postgres":
 		cmd = fmt.Sprintf("docker exec %s psql -U %s -d postgres -c \"DROP DATABASE \\\"%s\\\";\" 2>&1", containerName, db.Username, name)
 	case "mongodb":
@@ -1683,7 +1739,7 @@ func (s *DatabaseService) CreateTable(ctx context.Context, id string, schema str
 	switch db.Type {
 	case "mysql":
 		var colDefs []string
-		colDefs = append(colDefs, "`id` INT AUTO_INCREMENT PRIMARY KEY")
+		colDefs = append(colDefs, mysqlIdentifier("id")+" INT AUTO_INCREMENT PRIMARY KEY")
 		for _, col := range columns {
 			nullableStr := "NOT NULL"
 			if col.Nullable {
@@ -1693,10 +1749,10 @@ func (s *DatabaseService) CreateTable(ctx context.Context, id string, schema str
 			if col.Unique {
 				uniqueStr = "UNIQUE"
 			}
-			colDefs = append(colDefs, fmt.Sprintf("`%s` %s %s %s", col.Name, col.Type, nullableStr, uniqueStr))
+			colDefs = append(colDefs, fmt.Sprintf("%s %s %s %s", mysqlIdentifier(col.Name), col.Type, nullableStr, uniqueStr))
 		}
-		query := fmt.Sprintf("CREATE TABLE `%s` (%s);", name, strings.Join(colDefs, ", "))
-		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s %s -e \"%s\" 2>&1", containerName, db.Username, db.Password, schema, query)
+		query := fmt.Sprintf("CREATE TABLE %s (%s) DEFAULT CHARSET=%s COLLATE=%s;", mysqlIdentifier(name), strings.Join(colDefs, ", "), mysqlDefaultCharacterSet, mysqlDefaultCollation)
+		cmd = mysqlExecCommand(containerName, db, schema, "", query, "2>&1")
 	case "postgres":
 		var colDefs []string
 		colDefs = append(colDefs, "\"id\" SERIAL PRIMARY KEY")
@@ -1779,7 +1835,7 @@ func (s *DatabaseService) DeleteTable(ctx context.Context, id string, schema str
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf("docker exec %s mysql -u%s -p%s %s -e \"DROP TABLE `%s`;\" 2>&1", containerName, db.Username, db.Password, schema, name)
+		cmd = mysqlExecCommand(containerName, db, schema, "", fmt.Sprintf("DROP TABLE %s;", mysqlIdentifier(name)), "2>&1")
 	case "postgres":
 		cmd = fmt.Sprintf("docker exec %s psql -U %s -d %s -c \"DROP TABLE \\\"%s\\\";\" 2>&1", containerName, db.Username, schema, name)
 	case "sqlite":
@@ -1839,7 +1895,7 @@ func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema strin
 		}
 
 		for k, v := range data {
-			colName := fmt.Sprintf("`%s`", k)
+			colName := mysqlIdentifier(k)
 			if db.Type == "postgres" || db.Type == "sqlite" || db.Type == "pocketbase" {
 				colName = fmt.Sprintf("\"%s\"", k)
 			}
@@ -1855,8 +1911,8 @@ func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema strin
 		}
 
 		if db.Type == "mysql" {
-			query := fmt.Sprintf("INSERT INTO `%s`.`%s` (%s) VALUES (%s);", schema, table, strings.Join(cols, ", "), strings.Join(vals, ", "))
-			cmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, query)
+			query := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s);", mysqlIdentifier(schema), mysqlIdentifier(table), strings.Join(cols, ", "), strings.Join(vals, ", "))
+			cmd = mysqlExecCommand(containerName, db, "", "", query, "2>&1")
 		} else if db.Type == "postgres" {
 			query := fmt.Sprintf("INSERT INTO \"%s\" (%s) VALUES (%s);", table, strings.Join(cols, ", "), strings.Join(vals, ", "))
 			cmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, schema, query)
@@ -1957,8 +2013,8 @@ func (s *DatabaseService) DeleteRow(ctx context.Context, id string, schema strin
 
 	switch db.Type {
 	case "mysql":
-		query := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE `%s` = '%s';", schema, table, pkCol, escapedPkVal)
-		cmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, query)
+		query := fmt.Sprintf("DELETE FROM %s.%s WHERE %s = %s;", mysqlIdentifier(schema), mysqlIdentifier(table), mysqlIdentifier(pkCol), sqlStringLiteral(pkVal))
+		cmd = mysqlExecCommand(containerName, db, "", "", query, "2>&1")
 	case "postgres":
 		query := fmt.Sprintf("DELETE FROM \"%s\" WHERE \"%s\" = '%s';", table, pkCol, escapedPkVal)
 		cmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, schema, query)
@@ -2034,7 +2090,9 @@ func (s *DatabaseService) UpdateRow(ctx context.Context, id string, schema strin
 				continue // Skip primary key column updates
 			}
 			colName := fmt.Sprintf("`%s`", k)
-			if db.Type == "postgres" || db.Type == "sqlite" || db.Type == "pocketbase" {
+			if db.Type == "mysql" {
+				colName = mysqlIdentifier(k)
+			} else if db.Type == "postgres" || db.Type == "sqlite" || db.Type == "pocketbase" {
 				colName = fmt.Sprintf("\"%s\"", k)
 			}
 
@@ -2048,8 +2106,8 @@ func (s *DatabaseService) UpdateRow(ctx context.Context, id string, schema strin
 		}
 
 		if db.Type == "mysql" {
-			query := fmt.Sprintf("UPDATE `%s`.`%s` SET %s WHERE `%s` = '%s';", schema, table, strings.Join(sets, ", "), pkCol, strings.ReplaceAll(pkVal, "'", "''"))
-			cmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, query)
+			query := fmt.Sprintf("UPDATE %s.%s SET %s WHERE %s = %s;", mysqlIdentifier(schema), mysqlIdentifier(table), strings.Join(sets, ", "), mysqlIdentifier(pkCol), sqlStringLiteral(pkVal))
+			cmd = mysqlExecCommand(containerName, db, "", "", query, "2>&1")
 		} else if db.Type == "postgres" {
 			query := fmt.Sprintf("UPDATE \"%s\" SET %s WHERE \"%s\" = '%s';", table, strings.Join(sets, ", "), pkCol, strings.ReplaceAll(pkVal, "'", "''"))
 			cmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, schema, query)
@@ -2180,10 +2238,7 @@ func (s *DatabaseService) GetDatabaseTelemetry(ctx context.Context, id string) (
 	var connCmd string
 	switch db.Type {
 	case "mysql":
-		connCmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s -B -N -e "SHOW STATUS LIKE 'Threads_connected';" 2>/dev/null`,
-			containerName, db.Username, db.Password,
-		)
+		connCmd = mysqlExecCommand(containerName, db, "", "-B -N", "SHOW STATUS LIKE 'Threads_connected';", "2>/dev/null")
 	case "postgres":
 		connCmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s -t -A -c "SELECT count(*) FROM pg_stat_activity;" 2>/dev/null`,
@@ -2252,10 +2307,7 @@ func (s *DatabaseService) ListDatabaseUsers(ctx context.Context, id string) ([]m
 	var cmd string
 	switch db.Type {
 	case "mysql":
-		cmd = fmt.Sprintf(
-			`docker exec %s mysql -u%s -p%s -B -N -e "SELECT User, Host FROM mysql.user WHERE User NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys', 'root');" 2>/dev/null`,
-			containerName, db.Username, db.Password,
-		)
+		cmd = mysqlExecCommand(containerName, db, "", "-B -N", "SELECT User, Host FROM mysql.user WHERE User NOT IN ('mysql.infoschema', 'mysql.session', 'mysql.sys', 'root');", "2>/dev/null")
 	case "postgres":
 		cmd = fmt.Sprintf(
 			`docker exec %s psql -U %s -d %s -t -A -F '	' -c "SELECT usename, usesuper FROM pg_catalog.pg_user WHERE usename NOT IN ('postgres');" 2>/dev/null`,
@@ -2382,25 +2434,26 @@ func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, use
 	var cmds []string
 	switch db.Type {
 	case "mysql":
-		cmds = append(cmds, fmt.Sprintf(`CREATE USER '%s'@'%%' IDENTIFIED BY '%s';`, username, password))
-		
+		mysqlUser := fmt.Sprintf("%s@'%%'", sqlStringLiteral(username))
+		cmds = append(cmds, fmt.Sprintf(`CREATE USER %s IDENTIFIED BY %s;`, mysqlUser, sqlStringLiteral(password)))
+
 		dbScope := "*.*"
 		if targetDb != "" && targetDb != "*" && targetDb != "all" {
-			dbScope = fmt.Sprintf("`%s`.*", targetDb)
+			dbScope = fmt.Sprintf("%s.*", mysqlIdentifier(targetDb))
 		}
 
 		switch scope {
 		case "read":
-			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT ON %s TO '%s'@'%%';`, dbScope, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT ON %s TO %s;`, dbScope, mysqlUser))
 		case "readWrite":
-			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO '%s'@'%%';`, dbScope, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT SELECT, INSERT, UPDATE, DELETE ON %s TO %s;`, dbScope, mysqlUser))
 		case "admin":
-			cmds = append(cmds, fmt.Sprintf(`GRANT ALL PRIVILEGES ON %s TO '%s'@'%%';`, dbScope, username))
+			cmds = append(cmds, fmt.Sprintf(`GRANT ALL PRIVILEGES ON %s TO %s;`, dbScope, mysqlUser))
 		}
 		cmds = append(cmds, "FLUSH PRIVILEGES;")
 
 		for _, sql := range cmds {
-			execCmd := fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "%s" 2>&1`, containerName, db.Username, db.Password, sql)
+			execCmd := mysqlExecCommand(containerName, db, "", "", sql, "2>&1")
 			out, err := client.RunCommand(execCmd)
 			if err != nil {
 				return fmt.Errorf("mysql error: %s (err: %w)", out, err)
@@ -2409,7 +2462,7 @@ func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, use
 
 	case "postgres":
 		cmds = append(cmds, fmt.Sprintf(`CREATE USER "%s" WITH PASSWORD '%s';`, username, password))
-		
+
 		targetName := targetDb
 		if targetName == "" || targetName == "*" || targetName == "all" {
 			targetName = db.DatabaseName
@@ -2440,7 +2493,7 @@ func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, use
 	case "mongodb":
 		var evalJs string
 		isClusterWide := targetDb == "" || targetDb == "*" || targetDb == "all"
-		
+
 		if isClusterWide {
 			var role string
 			switch scope {
@@ -2506,7 +2559,7 @@ func (s *DatabaseService) DeleteDatabaseUser(ctx context.Context, id string, use
 	var execCmd string
 	switch db.Type {
 	case "mysql":
-		execCmd = fmt.Sprintf(`docker exec %s mysql -u%s -p%s -e "DROP USER '%s'@'%%';" 2>&1`, containerName, db.Username, db.Password, username)
+		execCmd = mysqlExecCommand(containerName, db, "", "", fmt.Sprintf("DROP USER %s@'%%';", sqlStringLiteral(username)), "2>&1")
 	case "postgres":
 		execCmd = fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "DROP OWNED BY \"%s\"; DROP USER \"%s\";" 2>&1`, containerName, db.Username, db.DatabaseName, username, username)
 	case "mongodb":
@@ -2526,5 +2579,3 @@ func (s *DatabaseService) DeleteDatabaseUser(ctx context.Context, id string, use
 
 	return nil
 }
-
-

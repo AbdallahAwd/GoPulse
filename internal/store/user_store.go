@@ -1,9 +1,8 @@
 package store
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -11,63 +10,91 @@ import (
 	"github.com/google/uuid"
 )
 
-// UserStore handles storage and retrieval of user credentials
+// UserStore handles storage and retrieval of user credentials.
 type UserStore struct {
-	filePath string
-	mu       sync.RWMutex
-	users    []models.User
+	legacyPath string
+	db         *sql.DB
+	mu         sync.RWMutex
 }
 
-// NewUserStore creates a new UserStore
-func NewUserStore(filePath string) (*UserStore, error) {
-	store := &UserStore{
-		filePath: filePath,
-		users:    []models.User{},
+// NewUserStore creates a SQLite-backed UserStore and imports legacy JSON once.
+func NewUserStore(legacyPath string) (*UserStore, error) {
+	db, err := openSQLiteStore(legacyPath)
+	if err != nil {
+		return nil, err
 	}
 
-	// Load existing users if file exists
-	if _, err := os.Stat(filePath); err == nil {
-		if err := store.load(); err != nil {
-			return nil, fmt.Errorf("failed to load users: %w", err)
-		}
+	store := &UserStore{
+		legacyPath: legacyPath,
+		db:         db,
+	}
+
+	err = importJSONOnce[models.User](db, "users", legacyPath, `SELECT COUNT(*) FROM users`, insertUserTx)
+	if err != nil {
+		return nil, err
 	}
 
 	return store, nil
 }
 
-// load reads users from the JSON file
-func (s *UserStore) load() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	data, err := os.ReadFile(s.filePath)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(data, &s.users)
+func insertUserTx(tx *sql.Tx, user models.User) error {
+	_, err := tx.Exec(
+		`INSERT OR IGNORE INTO users (
+			id, username, password, role, permissions, allowed_servers, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		user.ID,
+		user.Username,
+		user.Password,
+		user.Role,
+		encodeJSON(user.Permissions, "[]"),
+		encodeJSON(user.AllowedServers, "[]"),
+		timeToText(user.CreatedAt),
+	)
+	return err
 }
 
-// save writes users to the JSON file
-func (s *UserStore) save() error {
-	data, err := json.MarshalIndent(s.users, "", "  ")
+func scanUser(scanner interface {
+	Scan(dest ...interface{}) error
+}) (models.User, error) {
+	var user models.User
+	var permissionsRaw string
+	var allowedServersRaw string
+	var createdAtRaw string
+
+	err := scanner.Scan(
+		&user.ID,
+		&user.Username,
+		&user.Password,
+		&user.Role,
+		&permissionsRaw,
+		&allowedServersRaw,
+		&createdAtRaw,
+	)
 	if err != nil {
-		return err
+		return models.User{}, err
 	}
 
-	return os.WriteFile(s.filePath, data, 0644)
+	if err := decodeJSON(permissionsRaw, &user.Permissions); err != nil {
+		return models.User{}, err
+	}
+	if err := decodeJSON(allowedServersRaw, &user.AllowedServers); err != nil {
+		return models.User{}, err
+	}
+	user.CreatedAt = timeFromText(createdAtRaw)
+	return user, nil
 }
 
-// AddUser adds a new user
+// AddUser adds a new user.
 func (s *UserStore) AddUser(user models.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check if user already exists
-	for _, existing := range s.users {
-		if existing.Username == user.Username {
-			return fmt.Errorf("user %s already exists", user.Username)
-		}
+	var exists int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = ?`, user.Username).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return fmt.Errorf("user %s already exists", user.Username)
 	}
 
 	if user.ID == "" {
@@ -77,8 +104,11 @@ func (s *UserStore) AddUser(user models.User) error {
 		user.CreatedAt = time.Now()
 	}
 
-	// Bootstrap configuration for the first user
-	if len(s.users) == 0 {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
 		user.Role = "admin"
 		user.Permissions = []string{"*"}
 		user.AllowedServers = []string{}
@@ -86,77 +116,130 @@ func (s *UserStore) AddUser(user models.User) error {
 		user.Role = "viewer"
 	}
 
-	s.users = append(s.users, user)
-	return s.save()
+	_, err := s.db.Exec(
+		`INSERT INTO users (
+			id, username, password, role, permissions, allowed_servers, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		user.ID,
+		user.Username,
+		user.Password,
+		user.Role,
+		encodeJSON(user.Permissions, "[]"),
+		encodeJSON(user.AllowedServers, "[]"),
+		timeToText(user.CreatedAt),
+	)
+	return err
 }
 
-// GetUser returns a user by Username
+// GetUser returns a user by username.
 func (s *UserStore) GetUser(username string) (models.User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, user := range s.users {
-		if user.Username == username {
-			return user, nil
-		}
+	row := s.db.QueryRow(
+		`SELECT id, username, password, role, permissions, allowed_servers, created_at
+		FROM users WHERE username = ?`,
+		username,
+	)
+	user, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return models.User{}, fmt.Errorf("user not found")
 	}
-
-	return models.User{}, fmt.Errorf("user not found")
+	return user, err
 }
 
-// ListUsers returns a copy of all registered users
+// ListUsers returns a copy of all registered users.
 func (s *UserStore) ListUsers() []models.User {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	usersCopy := make([]models.User, len(s.users))
-	copy(usersCopy, s.users)
-	return usersCopy
+	rows, err := s.db.Query(
+		`SELECT id, username, password, role, permissions, allowed_servers, created_at
+		FROM users ORDER BY rowid`,
+	)
+	if err != nil {
+		return []models.User{}
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err == nil {
+			users = append(users, user)
+		}
+	}
+	return users
 }
 
-// DeleteUserByID deletes a user from the pool by ID
+// DeleteUserByID deletes a user from the pool by ID.
 func (s *UserStore) DeleteUserByID(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, user := range s.users {
-		if user.ID == id {
-			s.users = append(s.users[:i], s.users[i+1:]...)
-			return s.save()
-		}
+	result, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return err
 	}
-
-	return fmt.Errorf("user not found")
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
-// UpdateUser updates an existing user
+// UpdateUser updates an existing user.
 func (s *UserStore) UpdateUser(user models.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for i, existing := range s.users {
-		if existing.ID == user.ID {
-			if user.Password == "" {
-				user.Password = existing.Password
-			}
-			s.users[i] = user
-			return s.save()
+	if user.Password == "" {
+		var existingPassword string
+		err := s.db.QueryRow(`SELECT password FROM users WHERE id = ?`, user.ID).Scan(&existingPassword)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("user not found")
 		}
+		if err != nil {
+			return err
+		}
+		user.Password = existingPassword
 	}
 
-	return fmt.Errorf("user not found")
+	result, err := s.db.Exec(
+		`UPDATE users SET
+			username = ?, password = ?, role = ?, permissions = ?, allowed_servers = ?, created_at = ?
+		WHERE id = ?`,
+		user.Username,
+		user.Password,
+		user.Role,
+		encodeJSON(user.Permissions, "[]"),
+		encodeJSON(user.AllowedServers, "[]"),
+		timeToText(user.CreatedAt),
+		user.ID,
+	)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	return nil
 }
 
-// HasUsers returns true if there is at least one registered user
+// HasUsers returns true if there is at least one registered user.
 func (s *UserStore) HasUsers() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.users) > 0
+	return s.Count() > 0
 }
 
-// Count returns the number of registered users
+// Count returns the number of registered users.
 func (s *UserStore) Count() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.users)
+
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
+		return 0
+	}
+	return count
 }
