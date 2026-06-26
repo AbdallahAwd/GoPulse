@@ -11,6 +11,7 @@ A production-ready monolithic VPS management dashboard built entirely in Go. Sin
 - 🔐 **Secure Authentication**: JWT + Basic Auth with configurable credentials
 - ⚡ **High Performance**: Concurrent monitoring with goroutines and in-memory caching
 - 📦 **Single Binary**: All assets embedded - no external dependencies
+- 💾 **Export/Import Migration**: Pack up all configurations (servers, projects, databases, domains, users) into a single JSON file and restore with automatic SSH key serialization
 
 ## Tech Stack
 
@@ -137,6 +138,11 @@ export GOPULSE_AUTH_ADMIN_PASSWORD="secure-password"
 - `POST /api/databases/mongodb/restart` - Restart MongoDB
 - `POST /api/databases/postgresql/restart` - Restart PostgreSQL
 - `GET /api/databases/{service}/logs` - Get database logs
+
+#### Export/Import (Admin Only)
+- `GET /api/export-import/export` - Export full dashboard data as a downloadable JSON backup
+- `GET /api/export-import/export/preview` - Preview record counts for backup estimation
+- `POST /api/export-import/import` - Import dashboard configuration backup (supports skip/overwrite resolution modes)
 
 ## Development
 
