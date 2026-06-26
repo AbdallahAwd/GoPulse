@@ -6,13 +6,14 @@ import "time"
 // Every entity slice is optional — an empty slice means "nothing to import"
 // for that category.
 type GoPulseExport struct {
-	Version    string     `json:"version"`     // Schema version, currently "1.0"
-	ExportedAt time.Time  `json:"exported_at"` // Timestamp of the export
-	Servers    []Server   `json:"servers"`
-	Projects   []Project  `json:"projects"`
-	Databases  []Database `json:"databases"`
-	Domains    []Domain   `json:"domains"`
-	Users      []User     `json:"users"`
+	Version       string         `json:"version"`     // Schema version, currently "1.0"
+	ExportedAt    time.Time      `json:"exported_at"` // Timestamp of the export
+	Servers       []Server       `json:"servers"`
+	Projects      []Project      `json:"projects"`
+	Databases     []Database     `json:"databases"`
+	Domains       []Domain       `json:"domains"`
+	Users         []User         `json:"users"`
+	LoadBalancers []LoadBalancer `json:"load_balancers,omitempty"`
 }
 
 // ImportReport summarises the result of an import operation.
@@ -36,6 +37,10 @@ type ImportReport struct {
 	UsersCreated int `json:"users_created"`
 	UsersSkipped int `json:"users_skipped"`
 	UsersUpdated int `json:"users_updated"`
+
+	LoadBalancersCreated int `json:"load_balancers_created"`
+	LoadBalancersSkipped int `json:"load_balancers_skipped"`
+	LoadBalancersUpdated int `json:"load_balancers_updated"`
 
 	Errors []string `json:"errors,omitempty"`
 }

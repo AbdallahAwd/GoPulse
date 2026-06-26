@@ -35,6 +35,10 @@ func TestExportAndImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create srcDatabaseStore: %v", err)
 	}
+	srcLoadBalancers, err := NewLoadBalancerStore(filepath.Join(srcDir, "load_balancers.json"))
+	if err != nil {
+		t.Fatalf("Failed to create srcLoadBalancerStore: %v", err)
+	}
 
 	// 1. Setup a password-auth server
 	server1 := models.Server{
@@ -126,8 +130,38 @@ func TestExportAndImport(t *testing.T) {
 		t.Fatalf("AddDatabase failed: %v", err)
 	}
 
+	lb := models.LoadBalancer{
+		ID:                  "lb-test",
+		ServerID:            "srv-pass",
+		Name:                "Test LB",
+		Domain:              "lb.test",
+		Port:                80,
+		Algorithm:           "round-robin",
+		SSL:                 true,
+		HealthCheckPath:     "/health",
+		HealthCheckInterval: 10,
+		Status:              "active",
+		CreatedAt:           now,
+	}
+	if err := srcLoadBalancers.AddLoadBalancer(lb); err != nil {
+		t.Fatalf("AddLoadBalancer failed: %v", err)
+	}
+	backend := models.LoadBalancerBackend{
+		ID:             "b-test",
+		LoadBalancerID: "lb-test",
+		Host:           "127.0.0.1",
+		Port:           8080,
+		Weight:         1,
+		Backup:         false,
+		Status:         "healthy",
+		CreatedAt:      now,
+	}
+	if err := srcLoadBalancers.AddBackend(backend); err != nil {
+		t.Fatalf("AddBackend failed: %v", err)
+	}
+
 	// 1. Run Export
-	srcExportStore := NewExportStore(srcServers, srcProjects, srcDatabases, srcDomains, srcUsers)
+	srcExportStore := NewExportStore(srcServers, srcProjects, srcDatabases, srcDomains, srcUsers, srcLoadBalancers)
 	exportData, err := srcExportStore.ExportAll()
 	if err != nil {
 		t.Fatalf("ExportAll failed: %v", err)
@@ -184,8 +218,12 @@ func TestExportAndImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create destDatabaseStore: %v", err)
 	}
+	destLoadBalancers, err := NewLoadBalancerStore(filepath.Join(destDir, "load_balancers.json"))
+	if err != nil {
+		t.Fatalf("Failed to create destLoadBalancerStore: %v", err)
+	}
 
-	destExportStore := NewExportStore(destServers, destProjects, destDatabases, destDomains, destUsers)
+	destExportStore := NewExportStore(destServers, destProjects, destDatabases, destDomains, destUsers, destLoadBalancers)
 
 	// Set HOME environment variable to destDir during import, so local key directory is created there
 	origHome := os.Getenv("HOME")
@@ -198,7 +236,7 @@ func TestExportAndImport(t *testing.T) {
 		t.Fatalf("ImportAll (skip/create) failed: %v", err)
 	}
 
-	if report.ServersCreated != 2 || report.UsersCreated != 1 || report.ProjectsCreated != 1 || report.DomainsCreated != 1 || report.DatabasesCreated != 1 {
+	if report.ServersCreated != 2 || report.UsersCreated != 1 || report.ProjectsCreated != 1 || report.DomainsCreated != 1 || report.DatabasesCreated != 1 || report.LoadBalancersCreated != 1 {
 		t.Errorf("Expected 2 servers and all others 1 created, got report: %+v", report)
 	}
 	if len(report.Errors) > 0 {
@@ -232,7 +270,7 @@ func TestExportAndImport(t *testing.T) {
 		t.Fatalf("ImportAll (skip/duplicate) failed: %v", err)
 	}
 
-	if report.ServersSkipped != 2 || report.UsersSkipped != 1 || report.ProjectsSkipped != 1 || report.DomainsSkipped != 1 || report.DatabasesSkipped != 1 {
+	if report.ServersSkipped != 2 || report.UsersSkipped != 1 || report.ProjectsSkipped != 1 || report.DomainsSkipped != 1 || report.DatabasesSkipped != 1 || report.LoadBalancersSkipped != 1 {
 		t.Errorf("Expected all skipped, got report: %+v", report)
 	}
 
@@ -253,7 +291,7 @@ func TestExportAndImport(t *testing.T) {
 		t.Fatalf("ImportAll (overwrite) failed: %v", err)
 	}
 
-	if report.ServersUpdated != 2 || report.UsersUpdated != 1 || report.ProjectsUpdated != 1 || report.DomainsUpdated != 1 || report.DatabasesUpdated != 1 {
+	if report.ServersUpdated != 2 || report.UsersUpdated != 1 || report.ProjectsUpdated != 1 || report.DomainsUpdated != 1 || report.DatabasesUpdated != 1 || report.LoadBalancersUpdated != 1 {
 		t.Errorf("Expected updated, got report: %+v", report)
 	}
 

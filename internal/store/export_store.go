@@ -12,11 +12,12 @@ import (
 
 // ExportStore combines all entity stores to support full dashboard export/import.
 type ExportStore struct {
-	Servers   *ServerStore
-	Projects  *ProjectStore
-	Databases *DatabaseStore
-	Domains   *DomainStore
-	Users     *UserStore
+	Servers       *ServerStore
+	Projects      *ProjectStore
+	Databases     *DatabaseStore
+	Domains       *DomainStore
+	Users         *UserStore
+	LoadBalancers *LoadBalancerStore
 }
 
 // NewExportStore creates an ExportStore from the individual stores.
@@ -26,13 +27,15 @@ func NewExportStore(
 	databases *DatabaseStore,
 	domains *DomainStore,
 	users *UserStore,
+	loadBalancers *LoadBalancerStore,
 ) *ExportStore {
 	return &ExportStore{
-		Servers:   servers,
-		Projects:  projects,
-		Databases: databases,
-		Domains:   domains,
-		Users:     users,
+		Servers:       servers,
+		Projects:      projects,
+		Databases:     databases,
+		Domains:       domains,
+		Users:         users,
+		LoadBalancers: loadBalancers,
 	}
 }
 
@@ -49,14 +52,20 @@ func (s *ExportStore) ExportAll() (*models.GoPulseExport, error) {
 		}
 	}
 
+	lbs, err := s.LoadBalancers.ListAllLoadBalancers()
+	if err != nil {
+		lbs = []models.LoadBalancer{}
+	}
+
 	export := &models.GoPulseExport{
-		Version:    "1.0",
-		ExportedAt: time.Now().UTC(),
-		Servers:    servers,
-		Projects:   s.Projects.ListProjects(),
-		Databases:  s.Databases.ListDatabases(),
-		Domains:    s.Domains.ListDomains(),
-		Users:      s.Users.ListUsers(),
+		Version:       "1.0",
+		ExportedAt:    time.Now().UTC(),
+		Servers:       servers,
+		Projects:      s.Projects.ListProjects(),
+		Databases:     s.Databases.ListDatabases(),
+		Domains:       s.Domains.ListDomains(),
+		Users:         s.Users.ListUsers(),
+		LoadBalancers: lbs,
 	}
 
 	// Ensure nil slices become empty arrays in JSON.
@@ -74,6 +83,9 @@ func (s *ExportStore) ExportAll() (*models.GoPulseExport, error) {
 	}
 	if export.Users == nil {
 		export.Users = []models.User{}
+	}
+	if export.LoadBalancers == nil {
+		export.LoadBalancers = []models.LoadBalancer{}
 	}
 
 	return export, nil
@@ -244,6 +256,45 @@ func (s *ExportStore) ImportAll(data *models.GoPulseExport, mode string) (*model
 					report.Errors = append(report.Errors, fmt.Sprintf("user %s (%s): %v", usr.Username, usr.ID, updErr))
 				} else {
 					report.UsersUpdated++
+				}
+			}
+		}
+	}
+
+	// --- Load Balancers ---
+	for _, lb := range data.LoadBalancers {
+		_, err := s.LoadBalancers.GetLoadBalancer(lb.ID)
+		if err != nil {
+			// Record doesn't exist — create it.
+			if addErr := s.LoadBalancers.AddLoadBalancer(lb); addErr != nil {
+				report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s (%s): %v", lb.Name, lb.ID, addErr))
+			} else {
+				// Also insert backends
+				for _, b := range lb.Backends {
+					if bErr := s.LoadBalancers.AddBackend(b); bErr != nil {
+						report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s backend %s: %v", lb.Name, b.ID, bErr))
+					}
+				}
+				report.LoadBalancersCreated++
+			}
+		} else {
+			if mode == "skip" {
+				report.LoadBalancersSkipped++
+			} else {
+				// Overwrite. Remove first, then add.
+				if delErr := s.LoadBalancers.RemoveLoadBalancer(lb.ID); delErr != nil {
+					report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s (%s) remove: %v", lb.Name, lb.ID, delErr))
+					continue
+				}
+				if addErr := s.LoadBalancers.AddLoadBalancer(lb); addErr != nil {
+					report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s (%s) re-add: %v", lb.Name, lb.ID, addErr))
+				} else {
+					for _, b := range lb.Backends {
+						if bErr := s.LoadBalancers.AddBackend(b); bErr != nil {
+							report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s backend %s: %v", lb.Name, b.ID, bErr))
+						}
+					}
+					report.LoadBalancersUpdated++
 				}
 			}
 		}

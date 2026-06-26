@@ -350,3 +350,45 @@ type DatabaseUser struct {
 	Host     string `json:"host,omitempty"`     // For SQL engines
 	Database string `json:"database,omitempty"` // Targeted database scope
 }
+
+// LoadBalancer represents a reverse-proxy load balancer on a server
+type LoadBalancer struct {
+	ID                  string                `json:"id"`
+	ServerID            string                `json:"server_id"`
+	Name                string                `json:"name"`
+	Domain              string                `json:"domain"`
+	Port                int                   `json:"port"`
+	Algorithm           string                `json:"algorithm"` // "round-robin", "least_conn", "ip_hash"
+	SSL                 bool                  `json:"ssl"`
+	HealthCheckPath     string                `json:"health_check_path"`
+	HealthCheckInterval int                   `json:"health_check_interval"`
+	Status              string                `json:"status"` // "active", "error", "configuring"
+	ErrorMessage        string                `json:"error_message,omitempty"`
+	CreatedAt           time.Time             `json:"created_at"`
+	Backends            []LoadBalancerBackend `json:"backends,omitempty"`
+}
+
+// LoadBalancerBackend represents a node destination for a LoadBalancer
+type LoadBalancerBackend struct {
+	ID              string    `json:"id"`
+	LoadBalancerID  string    `json:"load_balancer_id"`
+	TargetServerID  string    `json:"target_server_id,omitempty"`
+	TargetProjectID string    `json:"target_project_id,omitempty"`
+	Host            string    `json:"host"`
+	Port            int       `json:"port"`
+	Weight          int       `json:"weight"`
+	Backup          bool      `json:"backup"`
+	Status          string    `json:"status"` // "healthy", "unhealthy", "unknown"
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// LoadBalancerLogs represents both deployment and runtime log messages
+type LoadBalancerLogs struct {
+	LoadBalancerID  string    `json:"load_balancer_id"`
+	DeploymentError string    `json:"deployment_error"`
+	AccessLogs      string    `json:"access_logs"`
+	ErrorLogs       string    `json:"error_logs"`
+	FetchedAt       time.Time `json:"fetched_at"`
+}
+
+

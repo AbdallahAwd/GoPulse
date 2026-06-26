@@ -53,6 +53,10 @@
                     <i class="fas fa-globe text-base text-gray-400 w-5 text-center"></i>
                     <span>Domains</span>
                 </button>
+                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30 {{if .IsDbOnly}}hidden{{end}}" data-tab="load-balancers" id="nav-btn-load-balancers">
+                    <i class="fas fa-network-wired text-base text-gray-400 w-5 text-center"></i>
+                    <span>Load Balancers</span>
+                </button>
                 {{if .IsDbOnly}}
                 <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-blue-500 bg-gradient-to-r from-blue-600/10 to-purple-600/10 text-white" data-tab="databases" id="nav-btn-databases">
                     <i class="fas fa-database text-base text-blue-400 w-5 text-center"></i>
@@ -590,6 +594,142 @@
                 </div>
             </div>
         </div> <!-- end domains-content -->
+    </div>
+
+    <!-- Load Balancers Tab -->
+    <div id="load-balancers-tab" class="tab-content hidden">
+        <!-- Load Balancers Content -->
+        <div class="space-y-6">
+            <!-- Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="bg-gray-800 rounded-lg shadow-lg p-5 border border-gray-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-400">Total Load Balancers</p>
+                        <p class="text-2xl font-bold text-white mt-1" id="lb-stats-total">0</p>
+                    </div>
+                    <div class="p-3 bg-blue-500/10 rounded-lg">
+                        <i class="fas fa-network-wired text-blue-400 text-xl"></i>
+                    </div>
+                </div>
+                <div class="bg-gray-800 rounded-lg shadow-lg p-5 border border-gray-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-400">Healthy Backends</p>
+                        <p class="text-2xl font-bold text-green-400 mt-1" id="lb-stats-healthy">0</p>
+                    </div>
+                    <div class="p-3 bg-green-500/10 rounded-lg">
+                        <i class="fas fa-heart text-green-400 text-xl"></i>
+                    </div>
+                </div>
+                <div class="bg-gray-800 rounded-lg shadow-lg p-5 border border-gray-700 flex items-center justify-between">
+                    <div>
+                        <p class="text-sm text-gray-400">Unhealthy Backends</p>
+                        <p class="text-2xl font-bold text-red-400 mt-1" id="lb-stats-unhealthy">0</p>
+                    </div>
+                    <div class="p-3 bg-red-500/10 rounded-lg">
+                        <i class="fas fa-heart-broken text-red-400 text-xl"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Panel -->
+            <div class="bg-gray-800 rounded-lg shadow-lg border border-gray-700 p-6 min-h-[400px]">
+                <div class="flex items-center justify-between mb-6">
+                    <h2 class="text-xl font-bold text-white">Load Balancers</h2>
+                    <div class="flex items-center space-x-2">
+                        <button onclick="App.LoadBalancers.load()"
+                            class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white transition-colors">
+                            <i class="fas fa-sync-alt mr-2"></i>Refresh
+                        </button>
+                        <button onclick="App.LoadBalancers.showAddModal()"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20">
+                            <i class="fas fa-plus mr-2"></i>Add Load Balancer
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Table -->
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                            <tr>
+                                <th class="px-4 py-3">Name / Domain</th>
+                                <th class="px-4 py-3">Port</th>
+                                <th class="px-4 py-3">Routing Algorithm</th>
+                                <th class="px-4 py-3">SSL</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3">Backends</th>
+                                <th class="px-4 py-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="lb-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
+                            <tr>
+                                <td colspan="7" class="px-4 py-12 text-center text-gray-500">
+                                    <i class="fas fa-network-wired text-4xl mb-3 block opacity-30"></i>
+                                    <p>No load balancers configured yet</p>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Selected Load Balancer Details / Manage Backends -->
+            <div id="lb-details-panel" class="hidden bg-gray-800 rounded-lg shadow-lg border border-gray-700 p-6 space-y-6">
+                <div class="flex items-center justify-between border-b border-gray-700 pb-4">
+                    <div>
+                        <h3 class="text-xl font-bold text-white" id="lb-details-title">Manage Backends</h3>
+                        <p class="text-sm text-gray-400 font-mono mt-1" id="lb-details-domain"></p>
+                    </div>
+                    <button onclick="App.LoadBalancers.hideDetailsPanel()" class="text-gray-400 hover:text-white">
+                        <i class="fas fa-times text-lg"></i>
+                    </button>
+                </div>
+
+                <!-- Error Message Banner -->
+                <div id="lb-error-banner" class="hidden p-4 bg-red-900/30 border border-red-500/50 rounded-lg text-sm text-red-200">
+                    <div class="flex items-start space-x-3">
+                        <i class="fas fa-exclamation-triangle text-red-400 mt-0.5 text-base"></i>
+                        <div class="flex-1 space-y-1">
+                            <strong class="font-bold text-white block">Deployment Failure Details:</strong>
+                            <pre class="font-mono text-xs whitespace-pre-wrap mt-2 bg-black bg-opacity-35 p-3 rounded border border-red-950/50" id="lb-error-message"></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Backend Table -->
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="text-base font-semibold text-white">Backend Target Nodes</h4>
+                        <button onclick="App.LoadBalancers.showAddBackendModal()"
+                            class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors">
+                            <i class="fas fa-plus mr-1"></i>Add Backend Target
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
+                                <tr>
+                                    <th class="px-4 py-3">Host / Project</th>
+                                    <th class="px-4 py-3">Port</th>
+                                    <th class="px-4 py-3">Weight</th>
+                                    <th class="px-4 py-3">Failover Role</th>
+                                    <th class="px-4 py-3">Health Status</th>
+                                    <th class="px-4 py-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="lb-backends-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
+                                <tr>
+                                    <td colspan="6" class="px-4 py-8 text-center text-gray-500">
+                                        No backend targets defined for this load balancer
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Terminal Tab -->
@@ -1726,6 +1866,197 @@
         </div>
     </div>
 
+    <!-- Create Load Balancer Modal -->
+    <div id="add-lb-modal"
+        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        <div
+            class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg transform transition-all duration-300 scale-95 border border-gray-700">
+            <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-blue-900/30 rounded-lg">
+                        <i class="fas fa-network-wired text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white">Add Load Balancer</h3>
+                </div>
+                <button onclick="App.LoadBalancers.closeAddModal()"
+                    class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-6 space-y-5">
+                <div>
+                    <label class="block text-gray-400 text-sm font-bold mb-2">Load Balancer Name</label>
+                    <input type="text" id="add-lb-name"
+                        class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors font-medium text-sm"
+                        placeholder="My Web Service Load Balancer">
+                </div>
+
+                <div>
+                    <label class="block text-gray-400 text-sm font-bold mb-2">Domain Name</label>
+                    <input type="text" id="add-lb-domain"
+                        class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors font-mono text-sm"
+                        placeholder="lb.example.com">
+                    <p class="text-xs text-gray-500 mt-1">Must point to this load balancer VPS IP via DNS</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Frontend Port</label>
+                        <input type="number" id="add-lb-port"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                            value="80">
+                        <p class="text-xs text-gray-500 mt-1">Port Nginx listens on</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Algorithm</label>
+                        <select id="add-lb-algorithm"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors">
+                            <option value="round-robin">Round Robin</option>
+                            <option value="least_conn">Least Connections</option>
+                            <option value="ip_hash">IP Hash (Sticky Sessions)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Health Check Path</label>
+                        <input type="text" id="add-lb-health-path"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors font-mono text-sm"
+                            value="/health">
+                    </div>
+
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Interval (Seconds)</label>
+                        <input type="number" id="add-lb-health-interval"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                            value="10">
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg border border-gray-600">
+                    <div>
+                        <label class="block text-white text-sm font-bold">Enable SSL</label>
+                        <p class="text-xs text-gray-400 mt-0.5">HTTPS via Let's Encrypt (requires certbot)</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="add-lb-ssl" class="sr-only peer">
+                        <div
+                            class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600">
+                        </div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+                <button onclick="App.LoadBalancers.closeAddModal()"
+                    class="px-6 py-2.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">Cancel</button>
+                <button id="add-lb-submit-btn" onclick="App.LoadBalancers.addLoadBalancer()"
+                    class="px-8 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 active:bg-blue-700 transition-all duration-200 font-medium shadow-lg shadow-blue-500/20">
+                    <i class="fas fa-plus mr-2"></i>Add Load Balancer
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Backend Target Modal -->
+    <div id="add-lb-backend-modal"
+        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        <div
+            class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg transform transition-all duration-300 scale-95 border border-gray-700">
+            <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2 bg-blue-900/30 rounded-lg">
+                        <i class="fas fa-plus text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-white">Add Backend Target</h3>
+                </div>
+                <button onclick="App.LoadBalancers.closeAddBackendModal()"
+                    class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+
+            <div class="p-6 space-y-5">
+                <div>
+                    <label class="block text-gray-400 text-sm font-bold mb-2">Target Type</label>
+                    <select id="add-backend-type" onchange="App.LoadBalancers.toggleBackendTypeForm()"
+                        class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors">
+                        <option value="project">Linked GoPulse Project</option>
+                        <option value="custom">Custom Host Target (External)</option>
+                    </select>
+                </div>
+
+                <!-- Project Form Section -->
+                <div id="backend-project-section" class="space-y-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Server</label>
+                        <select id="add-backend-server" onchange="App.LoadBalancers.onServerSelect()"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors">
+                            <option value="">Select Target Server...</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Project</label>
+                        <select id="add-backend-project"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors">
+                            <option value="">Select Project...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Custom Target Form Section -->
+                <div id="backend-custom-section" class="hidden space-y-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Host IP / Name</label>
+                        <input type="text" id="add-backend-host"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors font-mono text-sm"
+                            placeholder="192.168.1.50">
+                    </div>
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Port</label>
+                        <input type="number" id="add-backend-port"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                            placeholder="8080">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Weight</label>
+                        <input type="number" id="add-backend-weight"
+                            class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-3 px-4 focus:outline-none focus:border-blue-500 transition-colors"
+                            value="1">
+                        <p class="text-xs text-gray-500 mt-1">Priority weight (1-100)</p>
+                    </div>
+
+                    <div class="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg border border-gray-600 self-end h-[50px]">
+                        <div>
+                            <label class="block text-white text-sm font-bold">Backup Node</label>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="add-backend-backup" class="sr-only peer">
+                            <div
+                                class="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600">
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+                <button onclick="App.LoadBalancers.closeAddBackendModal()"
+                    class="px-6 py-2.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">Cancel</button>
+                <button id="add-backend-submit-btn" onclick="App.LoadBalancers.addBackend()"
+                    class="px-8 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 active:bg-blue-700 transition-all duration-200 font-medium shadow-lg shadow-blue-500/20">
+                    <i class="fas fa-plus mr-2"></i>Add Backend
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Create Project Modal -->
     <div id="create-project-modal"
         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-955/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
@@ -2382,6 +2713,61 @@
         <!-- Output Area -->
         <div id="docker-logs-output"
             class="flex-1 p-4 overflow-y-auto text-gray-300 font-mono bg-black scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
+            <div class="text-gray-500 mb-1 opacity-50"># Fetching logs...</div>
+        </div>
+    </div>
+</div>
+<!-- Load Balancer Logs Modal -->
+<div id="lb-logs-modal"
+    class="fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    <div
+        class="bg-black rounded-lg shadow-2xl w-full max-w-5xl h-3/4 flex flex-col transform transition-all duration-300 scale-95 border border-gray-800 font-mono text-sm overflow-hidden ring-1 ring-gray-800">
+        <!-- Header -->
+        <div class="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-gray-800">
+            <div class="flex items-center space-x-3">
+                <div class="flex space-x-1.5 mr-2">
+                    <div onclick="App.LoadBalancers.closeLogsModal()"
+                        class="w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 cursor-pointer"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-600 cursor-not-allowed"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500 hover:bg-green-600 cursor-not-allowed"></div>
+                </div>
+                <div class="flex items-center text-gray-400 text-xs">
+                    <i class="fas fa-network-wired mr-2"></i>
+                    <span>load-balancer:</span>
+                    <span id="lb-logs-title" class="text-blue-400 ml-1"></span>
+                </div>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button onclick="App.LoadBalancers.refreshLogs()"
+                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
+                    <i class="fas fa-sync-alt mr-1"></i>Refresh
+                </button>
+                <button onclick="App.LoadBalancers.closeLogsModal()"
+                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
+                    <i class="fas fa-times mr-1"></i>Close
+                </button>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-800 bg-[#141414] px-4 py-1.5 space-x-4">
+            <button onclick="App.LoadBalancers.switchLogsTab('deploy')" id="lb-tab-deploy"
+                class="lb-log-tab px-3 py-1 text-xs font-semibold rounded text-white bg-blue-600">
+                Deployment Error
+            </button>
+            <button onclick="App.LoadBalancers.switchLogsTab('access')" id="lb-tab-access"
+                class="lb-log-tab px-3 py-1 text-xs font-semibold rounded text-gray-400 hover:text-white">
+                Nginx Access Logs
+            </button>
+            <button onclick="App.LoadBalancers.switchLogsTab('error')" id="lb-tab-error"
+                class="lb-log-tab px-3 py-1 text-xs font-semibold rounded text-gray-400 hover:text-white">
+                Nginx Error Logs
+            </button>
+        </div>
+
+        <!-- Output Area -->
+        <div id="lb-logs-output"
+            class="flex-1 p-4 overflow-y-auto text-gray-300 font-mono bg-black scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent whitespace-pre-wrap">
             <div class="text-gray-500 mb-1 opacity-50"># Fetching logs...</div>
         </div>
     </div>

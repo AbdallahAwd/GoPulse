@@ -101,8 +101,16 @@ func main() {
 	databaseService := services.NewDatabaseService(databaseStore, serviceManager)
 	databaseHandler := handlers.NewDatabaseHandler(databaseService, serviceManager)
 
+	// Initialize Load Balancer Components
+	loadBalancerStore, err := store.NewLoadBalancerStore(filepath.Join(dataDir, "load_balancers.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize load balancer store: %v", err)
+	}
+	loadBalancerService := services.NewLoadBalancerService(loadBalancerStore, serverStore, projectStore, serviceManager)
+	loadBalancerHandler := handlers.NewLoadBalancerHandler(loadBalancerService)
+
 	// Initialize Export/Import Components
-	exportStore := store.NewExportStore(serverStore, projectStore, databaseStore, domainStore, userStore)
+	exportStore := store.NewExportStore(serverStore, projectStore, databaseStore, domainStore, userStore, loadBalancerStore)
 	exportHandler := handlers.NewExportHandler(exportStore)
 
 	// Start Collector
@@ -113,6 +121,9 @@ func main() {
 	// Start Backup Scheduler
 	backupScheduler := services.NewBackupScheduler(databaseService, databaseStore)
 	go backupScheduler.Start(ctx)
+
+	// Start Load Balancer Health Checker
+	go loadBalancerService.StartHealthChecker(ctx)
 
 	// Auto-start marked projects in background after a short delay (to let SSH clients connect)
 	go func() {
@@ -284,6 +295,17 @@ func main() {
 					r.Post("/", domainHandler.AddDomain)
 					r.Delete("/{id}", domainHandler.RemoveDomain)
 					r.Get("/nginx/status", domainHandler.NginxStatus)
+				})
+
+				// Load Balancers
+				r.Route("/load-balancers", func(r chi.Router) {
+					r.Get("/", loadBalancerHandler.ListLoadBalancers)
+					r.Post("/", loadBalancerHandler.AddLoadBalancer)
+					r.Get("/{id}", loadBalancerHandler.GetLoadBalancer)
+					r.Get("/{id}/logs", loadBalancerHandler.GetLogs)
+					r.Delete("/{id}", loadBalancerHandler.RemoveLoadBalancer)
+					r.Post("/{id}/backends", loadBalancerHandler.AddBackend)
+					r.Delete("/{id}/backends/{backendID}", loadBalancerHandler.RemoveBackend)
 				})
 
 				// Databases

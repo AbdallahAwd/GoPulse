@@ -144,6 +144,36 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			retention_days INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_databases_server_id ON databases(server_id)`,
+		`CREATE TABLE IF NOT EXISTS load_balancers (
+			id TEXT PRIMARY KEY,
+			server_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			domain TEXT NOT NULL,
+			port INTEGER NOT NULL,
+			algorithm TEXT NOT NULL,
+			ssl INTEGER NOT NULL,
+			health_check_path TEXT NOT NULL,
+			health_check_interval INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			error_message TEXT,
+			created_at TEXT NOT NULL,
+			UNIQUE(server_id, domain)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_load_balancers_server_id ON load_balancers(server_id)`,
+		`CREATE TABLE IF NOT EXISTS load_balancer_backends (
+			id TEXT PRIMARY KEY,
+			load_balancer_id TEXT NOT NULL,
+			target_server_id TEXT,
+			target_project_id TEXT,
+			host TEXT NOT NULL,
+			port INTEGER NOT NULL,
+			weight INTEGER NOT NULL,
+			backup INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_backends_lb_id ON load_balancer_backends(load_balancer_id)`,
 	}
 
 	for _, stmt := range statements {
@@ -151,6 +181,20 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			return fmt.Errorf("failed to migrate SQLite schema: %w", err)
 		}
 	}
+
+	// Dynamic migration: Ensure the load_balancers table has the error_message column
+	// (in case the table was created on a previous run before this column was added).
+	rows, err := db.Query("SELECT error_message FROM load_balancers LIMIT 1")
+	if err != nil {
+		// Column is missing, add it
+		_, alterErr := db.Exec("ALTER TABLE load_balancers ADD COLUMN error_message TEXT")
+		if alterErr != nil && !strings.Contains(alterErr.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to add error_message column to load_balancers: %w", alterErr)
+		}
+	} else {
+		rows.Close()
+	}
+
 	return nil
 }
 

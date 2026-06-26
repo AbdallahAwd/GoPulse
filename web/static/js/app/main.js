@@ -54,6 +54,7 @@ function init() {
             if (tab === 'files') App.Files.list(App.state.currentPath);
             if (tab === 'projects') App.Projects.load();
             if (tab === 'domains') App.Domains.load();
+            if (tab === 'load-balancers') App.LoadBalancers.load();
             if (tab === 'databases') App.Databases.load();
             if (tab === 'system-users') App.SystemUsers.load();
         });
