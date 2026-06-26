@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/amaa/gopulse/internal/config"
 	"github.com/amaa/gopulse/internal/models"
@@ -90,7 +91,11 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   false, // Set to true in production
-		Expires:  token.Expiry,
+	}
+	if !token.Expiry.IsZero() {
+		cookie.Expires = token.Expiry
+	} else {
+		cookie.Expires = time.Now().Add(30 * 24 * time.Hour)
 	}
 	http.SetCookie(w, cookie)
 
