@@ -108,7 +108,9 @@ func (s *DatabaseStore) AddDatabase(db models.Database) error {
 		return fmt.Errorf("database with ID %s already exists", db.ID)
 	}
 
-	db.CreatedAt = time.Now()
+	if db.CreatedAt.IsZero() {
+		db.CreatedAt = time.Now()
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO databases (
 			id, server_id, name, type, database_name, username, password, host_port,

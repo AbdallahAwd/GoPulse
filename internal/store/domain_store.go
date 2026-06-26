@@ -95,7 +95,9 @@ func (s *DomainStore) AddDomain(domain models.Domain) error {
 		return fmt.Errorf("domain %s already configured for this server", domain.Domain)
 	}
 
-	domain.CreatedAt = time.Now()
+	if domain.CreatedAt.IsZero() {
+		domain.CreatedAt = time.Now()
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO domains (id, server_id, domain, port, ssl, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,

@@ -142,7 +142,9 @@ func (s *ProjectStore) AddProject(project models.Project) error {
 		return fmt.Errorf("project with ID %s already exists", project.ID)
 	}
 
-	project.CreatedAt = time.Now()
+	if project.CreatedAt.IsZero() {
+		project.CreatedAt = time.Now()
+	}
 	_, err := s.db.Exec(
 		`INSERT INTO projects (
 			id, server_id, name, type, source_type, source_url, build_type, port,

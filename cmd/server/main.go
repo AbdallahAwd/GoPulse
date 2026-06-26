@@ -101,6 +101,10 @@ func main() {
 	databaseService := services.NewDatabaseService(databaseStore, serviceManager)
 	databaseHandler := handlers.NewDatabaseHandler(databaseService, serviceManager)
 
+	// Initialize Export/Import Components
+	exportStore := store.NewExportStore(serverStore, projectStore, databaseStore, domainStore, userStore)
+	exportHandler := handlers.NewExportHandler(exportStore)
+
 	// Start Collector
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -348,6 +352,14 @@ func main() {
 
 		// Global Stats History
 		r.Get("/stats/history", statsHandler.GetStatsHistory)
+
+		// Export/Import (admin only)
+		r.Route("/export-import", func(r chi.Router) {
+			r.Use(authMiddleware.RequirePermission("*"))
+			r.Get("/export", exportHandler.Export)
+			r.Get("/export/preview", exportHandler.ExportPreview)
+			r.Post("/import", exportHandler.Import)
+		})
 
 	})
 

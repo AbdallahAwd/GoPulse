@@ -227,6 +227,69 @@ func (s *UserStore) UpdateUser(user models.User) error {
 	return nil
 }
 
+// GetUserByID returns a user by their unique ID.
+func (s *UserStore) GetUserByID(id string) (models.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	row := s.db.QueryRow(
+		`SELECT id, username, password, role, permissions, allowed_servers, created_at
+		FROM users WHERE id = ?`,
+		id,
+	)
+	user, err := scanUser(row)
+	if err == sql.ErrNoRows {
+		return models.User{}, fmt.Errorf("user not found")
+	}
+	return user, err
+}
+
+// AddUserRaw inserts a user record exactly as provided, without modifying
+// the role, permissions, password hash, or timestamps. This is used by
+// the import flow where the data is already fully formed.
+func (s *UserStore) AddUserRaw(user models.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var exists int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ?`, user.ID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists > 0 {
+		return fmt.Errorf("user with ID %s already exists", user.ID)
+	}
+
+	// Also check by username to avoid UNIQUE constraint violation.
+	var usernameExists int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = ?`, user.Username).Scan(&usernameExists); err != nil {
+		return err
+	}
+	if usernameExists > 0 {
+		return fmt.Errorf("user %s already exists", user.Username)
+	}
+
+	if user.ID == "" {
+		user.ID = uuid.New().String()
+	}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now()
+	}
+
+	_, err := s.db.Exec(
+		`INSERT INTO users (
+			id, username, password, role, permissions, allowed_servers, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		user.ID,
+		user.Username,
+		user.Password,
+		user.Role,
+		encodeJSON(user.Permissions, "[]"),
+		encodeJSON(user.AllowedServers, "[]"),
+		timeToText(user.CreatedAt),
+	)
+	return err
+}
+
 // HasUsers returns true if there is at least one registered user.
 func (s *UserStore) HasUsers() bool {
 	return s.Count() > 0
