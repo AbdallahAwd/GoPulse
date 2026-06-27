@@ -174,6 +174,48 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			FOREIGN KEY(load_balancer_id) REFERENCES load_balancers(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_backends_lb_id ON load_balancer_backends(load_balancer_id)`,
+		`CREATE TABLE IF NOT EXISTS firewall_rules (
+			id TEXT PRIMARY KEY,
+			server_id TEXT NOT NULL,
+			action TEXT NOT NULL,
+			direction TEXT NOT NULL,
+			protocol TEXT NOT NULL,
+			port TEXT NOT NULL,
+			source TEXT NOT NULL,
+			interface TEXT NOT NULL,
+			enabled INTEGER NOT NULL,
+			comment TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_firewall_rules_server_id ON firewall_rules(server_id)`,
+		`CREATE TABLE IF NOT EXISTS firewall_backups (
+			id TEXT PRIMARY KEY,
+			server_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			rules_json TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_firewall_backups_server_id ON firewall_backups(server_id)`,
+		`CREATE TABLE IF NOT EXISTS firewall_schedules (
+			id TEXT PRIMARY KEY,
+			server_id TEXT NOT NULL,
+			rule_data TEXT NOT NULL,
+			action_type TEXT NOT NULL,
+			scheduled_at TEXT NOT NULL,
+			executed INTEGER NOT NULL,
+			status TEXT NOT NULL,
+			error_message TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_firewall_schedules_server_id ON firewall_schedules(server_id)`,
+		`CREATE TABLE IF NOT EXISTS firewall_activity_logs (
+			id TEXT PRIMARY KEY,
+			server_id TEXT NOT NULL,
+			action TEXT NOT NULL,
+			details TEXT NOT NULL,
+			timestamp TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_firewall_activity_logs_server_id ON firewall_activity_logs(server_id)`,
 	}
 
 	for _, stmt := range statements {

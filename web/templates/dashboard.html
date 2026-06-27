@@ -76,6 +76,10 @@
                     <i class="fas fa-user-gear text-base text-gray-400 w-5 text-center"></i>
                     <span>Server Users</span>
                 </button>
+                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="firewall" id="nav-btn-firewall">
+                    <i class="fas fa-shield-alt text-base text-gray-400 w-5 text-center"></i>
+                    <span>Firewall</span>
+                </button>
                 <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="settings" id="nav-btn-settings">
                     <i class="fas fa-cog text-base text-gray-400 w-5 text-center"></i>
                     <span>Settings</span>
@@ -1730,6 +1734,319 @@
             </div>
         </div>
     </div>
+
+    <!-- Firewall Tab -->
+    <div id="firewall-tab" class="tab-content hidden space-y-6">
+        <!-- Status & Sync Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <h2 class="text-2xl font-bold text-white tracking-tight">Firewall Management</h2>
+                <p class="text-sm text-gray-400">Secure your VPS by managing firewall rules, default policies, and scheduled access.</p>
+            </div>
+            <div class="flex items-center space-x-3">
+                <button onclick="App.Firewall.refresh()" class="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 rounded-lg font-semibold transition-all flex items-center space-x-2">
+                    <i class="fas fa-sync-alt"></i>
+                    <span>Sync from VPS</span>
+                </button>
+                <button onclick="App.Firewall.openAddRuleDrawer()" class="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
+                    <i class="fas fa-plus"></i>
+                    <span>Add Custom Rule</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Global Firewall Loading Spinner -->
+        <div id="firewall-loading" class="hidden text-center py-12">
+            <i class="fas fa-circle-notch fa-spin text-4xl text-blue-500 mb-3"></i>
+            <p class="text-gray-400 text-sm">Communicating with VPS firewall via SSH...</p>
+        </div>
+
+        <div id="firewall-content" class="transition-opacity duration-300">
+            <!-- No Firewall Installed Card -->
+            <div id="fw-not-installed-overlay" class="hidden bg-gray-800/40 rounded-xl p-8 border border-gray-700/40 text-center backdrop-blur-md shadow-lg max-w-2xl mx-auto my-8">
+                <i class="fas fa-shield-halved text-red-500 text-5xl mb-4"></i>
+                <h3 class="text-xl font-bold text-white mb-2">No Firewall Installed</h3>
+                <p class="text-gray-400 text-sm mb-6">No supported firewall backend (UFW, firewalld, nftables, iptables) was detected on this VPS. Install UFW with a single click to secure your environment.</p>
+                <button id="install-ufw-btn" onclick="App.Firewall.installUFW()" class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center justify-center space-x-2 mx-auto">
+                    <i class="fas fa-download"></i>
+                    <span>Install & Configure UFW</span>
+                </button>
+                <div id="ufw-install-terminal" class="hidden mt-6 bg-black rounded-lg border border-gray-800 p-4 text-left font-mono text-xs text-green-400 max-h-60 overflow-y-auto">
+                    <pre id="ufw-install-output" class="whitespace-pre-wrap"></pre>
+                </div>
+            </div>
+
+            <!-- Main Firewall Workspace -->
+            <div id="fw-installed-content" class="space-y-6">
+                <!-- Diagnostics Ribbon -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <!-- Status Card -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-5 flex flex-col justify-between backdrop-blur-md shadow-lg">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Firewall Shield</span>
+                            <div class="p-2 bg-blue-900/20 text-blue-400 rounded-lg">
+                                <i class="fas fa-shield-alt text-lg"></i>
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <div id="fw-status-badge" class="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold"></div>
+                            <p class="text-xs text-gray-500 mt-2" id="fw-status-text"></p>
+                        </div>
+                        <button id="fw-toggle-btn" onclick="App.Firewall.toggleFirewall()" class="w-full py-2 rounded-lg font-semibold text-sm transition-all flex items-center justify-center space-x-2">
+                            <i id="fw-toggle-btn-icon"></i>
+                            <span id="fw-toggle-btn-text"></span>
+                        </button>
+                    </div>
+
+                    <!-- Default Ingress Policy -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-5 flex flex-col justify-between backdrop-blur-md shadow-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Default Incoming Policy</span>
+                            <div class="p-2 bg-indigo-900/20 text-indigo-400 rounded-lg">
+                                <i class="fas fa-arrow-down-long text-lg"></i>
+                            </div>
+                        </div>
+                        <div class="my-3">
+                            <span id="fw-inc-policy" class="text-xl font-black"></span>
+                            <p class="text-xs text-gray-500 mt-1">Rule applied if no specific allow/deny matches.</p>
+                        </div>
+                        <button onclick="App.Firewall.openPolicyModal()" class="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold text-sm transition-all flex items-center justify-center space-x-1.5">
+                            <i class="fas fa-edit text-xs"></i>
+                            <span>Modify Policies</span>
+                        </button>
+                    </div>
+
+                    <!-- Default Egress Policy -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-5 flex flex-col justify-between backdrop-blur-md shadow-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Default Outgoing Policy</span>
+                            <div class="p-2 bg-pink-900/20 text-pink-400 rounded-lg">
+                                <i class="fas fa-arrow-up-long text-lg"></i>
+                            </div>
+                        </div>
+                        <div class="my-3">
+                            <span id="fw-out-policy" class="text-xl font-black"></span>
+                            <p class="text-xs text-gray-500 mt-1">Controls egress traffic generated by VPS.</p>
+                        </div>
+                        <button onclick="App.Firewall.openPolicyModal()" class="w-full py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-semibold text-sm transition-all flex items-center justify-center space-x-1.5">
+                            <i class="fas fa-edit text-xs"></i>
+                            <span>Modify Policies</span>
+                        </button>
+                    </div>
+
+                    <!-- Active Backend -->
+                    <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-5 flex flex-col justify-between backdrop-blur-md shadow-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Active Backend & Stats</span>
+                            <div class="p-2 bg-purple-900/20 text-purple-400 rounded-lg">
+                                <i class="fas fa-terminal text-lg"></i>
+                            </div>
+                        </div>
+                        <div class="my-3 space-y-2">
+                            <div>
+                                <span class="text-xs text-gray-500 block">Firewall Backend:</span>
+                                <span id="fw-engine-val" class="font-mono text-sm font-bold text-white"></span>
+                            </div>
+                            <div>
+                                <span class="text-xs text-gray-500 block">Active Rules Loaded:</span>
+                                <span id="fw-rules-count-val" class="font-mono text-sm font-bold text-white"></span>
+                            </div>
+                        </div>
+                        <button onclick="App.Firewall.confirmReset()" class="w-full py-2 bg-red-950/20 hover:bg-red-950/40 text-red-400 border border-red-900/40 rounded-lg font-semibold text-sm transition-all flex items-center justify-center space-x-1.5">
+                            <i class="fas fa-power-off text-xs"></i>
+                            <span>Reset Firewall</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Quick Presets -->
+                <div class="bg-gray-800/40 border border-gray-700/40 rounded-xl p-5 backdrop-blur-md shadow-lg space-y-3">
+                    <h3 class="text-xs text-gray-400 font-bold uppercase tracking-wider flex items-center">
+                        <i class="fas fa-magic text-blue-400 mr-2 animate-bounce"></i>Quick Access Presets
+                    </h3>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '22', protocol: 'tcp', comment: 'Allow SSH traffic'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-key mr-1 text-yellow-500"></i>Allow SSH</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '80', protocol: 'tcp', comment: 'Allow HTTP web server traffic'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-globe mr-1 text-blue-400"></i>Allow HTTP</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '443', protocol: 'tcp', comment: 'Allow HTTPS encrypted web traffic'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-lock mr-1 text-green-400"></i>Allow HTTPS</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '3306', protocol: 'tcp', comment: 'Allow MySQL database connectivity'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-database mr-1 text-indigo-400"></i>Allow MySQL</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '5432', protocol: 'tcp', comment: 'Allow PostgreSQL database connectivity'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-database mr-1 text-emerald-400"></i>Allow PostgreSQL</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '6379', protocol: 'tcp', comment: 'Allow Redis cache socket'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-box-open mr-1 text-red-400"></i>Allow Redis</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '2375', protocol: 'tcp', comment: 'Allow Docker socket access'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fab fa-docker mr-1 text-blue-500"></i>Allow Docker</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '6443', protocol: 'tcp', comment: 'Allow Kubernetes api connection'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-cubes mr-1 text-cyan-400"></i>Allow Kubernetes</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '21', protocol: 'tcp', comment: 'Allow FTP transfer connection'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-folder-open mr-1 text-orange-400"></i>Allow FTP</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '25', protocol: 'tcp', comment: 'Allow SMTP mail delivery'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-envelope mr-1 text-purple-400"></i>Allow SMTP</button>
+                        <button onclick="App.Firewall.openAddRuleDrawer({port: '53', protocol: 'any', comment: 'Allow DNS resolution port'})" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-xs font-semibold rounded text-white transition-all"><i class="fas fa-network-wired mr-1 text-teal-400"></i>Allow DNS</button>
+                    </div>
+                </div>
+
+                <!-- Secondary Tabs Navigation -->
+                <div class="border-b border-gray-700 flex space-x-6 text-sm font-medium">
+                    <button id="fw-tab-btn-rules" onclick="App.Firewall.switchSubTab('rules')" class="py-2.5 border-b-2 font-bold transition-all flex items-center space-x-2">
+                        <i class="fas fa-list-ul"></i>
+                        <span>Rules list</span>
+                    </button>
+                    <button id="fw-tab-btn-schedules" onclick="App.Firewall.switchSubTab('schedules')" class="py-2.5 border-b-2 font-bold transition-all flex items-center space-x-2">
+                        <i class="fas fa-clock"></i>
+                        <span>Scheduled changes</span>
+                    </button>
+                    <button id="fw-tab-btn-backups" onclick="App.Firewall.switchSubTab('backups')" class="py-2.5 border-b-2 font-bold transition-all flex items-center space-x-2">
+                        <i class="fas fa-floppy-disk"></i>
+                        <span>Backups</span>
+                    </button>
+                    <button id="fw-tab-btn-logs" onclick="App.Firewall.switchSubTab('logs')" class="py-2.5 border-b-2 font-bold transition-all flex items-center space-x-2">
+                        <i class="fas fa-receipt"></i>
+                        <span>Activity logs</span>
+                    </button>
+                </div>
+
+                <!-- Rules list Subtab content -->
+                <div id="fw-tab-content-rules" class="space-y-4">
+                    <!-- Filters and Search -->
+                    <div class="bg-gray-800/20 p-4 rounded-xl border border-gray-700/30 flex flex-col md:flex-row gap-4 items-center justify-between">
+                        <div class="relative w-full md:w-80">
+                            <input type="text" id="fw-rules-search" oninput="App.Firewall.renderRulesTable()" placeholder="Search port, source IP, or comments..." class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-blue-500 font-medium">
+                            <i class="fas fa-search absolute left-3 top-2.5 text-gray-500 text-sm"></i>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 w-full md:w-auto">
+                            <div>
+                                <select id="fw-filter-direction" onchange="App.Firewall.renderRulesTable()" class="bg-gray-900 border border-gray-700 text-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-full font-medium">
+                                    <option value="all">Direction: All</option>
+                                    <option value="ingress">Ingress</option>
+                                    <option value="egress">Egress</option>
+                                </select>
+                            </div>
+                            <div>
+                                <select id="fw-filter-protocol" onchange="App.Firewall.renderRulesTable()" class="bg-gray-900 border border-gray-700 text-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-full font-medium">
+                                    <option value="all">Protocol: All</option>
+                                    <option value="tcp">TCP</option>
+                                    <option value="udp">UDP</option>
+                                    <option value="icmp">ICMP</option>
+                                    <option value="any">Any</option>
+                                </select>
+                            </div>
+                            <div>
+                                <select id="fw-filter-action" onchange="App.Firewall.renderRulesTable()" class="bg-gray-900 border border-gray-700 text-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 w-full font-medium">
+                                    <option value="all">Action: All</option>
+                                    <option value="allow">Allow</option>
+                                    <option value="deny">Deny</option>
+                                    <option value="reject">Reject</option>
+                                    <option value="limit">Limit</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bulk Actions Toolbar -->
+                    <div id="fw-bulk-bar" class="hidden bg-blue-900/10 border border-blue-800/40 p-3 rounded-lg flex items-center justify-between text-sm transition-all duration-200">
+                        <div class="flex items-center space-x-2 text-blue-400 font-semibold">
+                            <i class="fas fa-circle-info"></i>
+                            <span>Selected <strong id="fw-bulk-count">0</strong> rules</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="App.Firewall.executeBulk('enable')" class="px-3 py-1 bg-green-800/50 hover:bg-green-700/50 text-green-300 rounded border border-green-800 text-xs font-bold transition-all"><i class="fas fa-check-circle mr-1"></i>Enable</button>
+                            <button onclick="App.Firewall.executeBulk('disable')" class="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded border border-gray-700 text-xs font-bold transition-all"><i class="fas fa-times-circle mr-1"></i>Disable</button>
+                            <button onclick="App.Firewall.executeBulk('delete')" class="px-3 py-1 bg-red-900/50 hover:bg-red-800/50 text-red-300 rounded border border-red-800/60 text-xs font-bold transition-all"><i class="fas fa-trash-alt mr-1"></i>Delete</button>
+                        </div>
+                    </div>
+
+                    <!-- Rules List Table -->
+                    <div class="bg-gray-800 rounded-xl border border-gray-700/50 overflow-hidden shadow-lg">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/50 text-gray-400 text-xs font-bold uppercase tracking-wider border-b border-gray-700">
+                                        <th class="px-4 py-3 text-center w-12">
+                                            <input type="checkbox" onchange="App.Firewall.toggleAllRulesSelection(this.checked)" class="rounded text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500/20 w-4 h-4">
+                                        </th>
+                                        <th class="px-4 py-3">Direction</th>
+                                        <th class="px-4 py-3">Action</th>
+                                        <th class="px-4 py-3">Protocol</th>
+                                        <th class="px-4 py-3">Port</th>
+                                        <th class="px-4 py-3">Source IP/CIDR</th>
+                                        <th class="px-4 py-3">Interface</th>
+                                        <th class="px-4 py-3">Comment</th>
+                                        <th class="px-4 py-3">Status</th>
+                                        <th class="px-4 py-3 text-right pr-6">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fw-rules-tbody" class="divide-y divide-gray-700/30">
+                                    <!-- Rules dynamic rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Schedules Subtab -->
+                <div id="fw-tab-content-schedules" class="hidden space-y-4">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700/50 overflow-hidden shadow-lg">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/50 text-gray-400 text-xs font-bold uppercase tracking-wider border-b border-gray-700">
+                                        <th class="px-4 py-3">Rule Definition</th>
+                                        <th class="px-4 py-3">Schedule Type</th>
+                                        <th class="px-4 py-3">Execution Time</th>
+                                        <th class="px-4 py-3">Status</th>
+                                        <th class="px-4 py-3 text-right pr-6">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fw-schedules-tbody" class="divide-y divide-gray-700/30 text-sm">
+                                    <!-- Schedules rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Backups Subtab -->
+                <div id="fw-tab-content-backups" class="hidden space-y-4">
+                    <div class="flex justify-end">
+                        <button onclick="App.Firewall.openCreateBackupModal()" class="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-lg font-semibold shadow transition-all flex items-center space-x-1.5 text-sm">
+                            <i class="fas fa-floppy-disk text-xs"></i>
+                            <span>Create Rules Backup</span>
+                        </button>
+                    </div>
+                    <div class="bg-gray-800 rounded-xl border border-gray-700/50 overflow-hidden shadow-lg">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/50 text-gray-400 text-xs font-bold uppercase tracking-wider border-b border-gray-700">
+                                        <th class="px-4 py-3">Backup Name</th>
+                                        <th class="px-4 py-3">Scope</th>
+                                        <th class="px-4 py-3">Timestamp</th>
+                                        <th class="px-4 py-3 text-right pr-6">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fw-backups-tbody" class="divide-y divide-gray-700/30 text-sm">
+                                    <!-- Backups rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Activity logs Subtab -->
+                <div id="fw-tab-content-logs" class="hidden space-y-4">
+                    <div class="bg-gray-800 rounded-xl border border-gray-700/50 overflow-hidden shadow-lg">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="bg-gray-900/50 text-gray-400 text-xs font-bold uppercase tracking-wider border-b border-gray-700">
+                                        <th class="px-4 py-3 w-1/4">Timestamp</th>
+                                        <th class="px-4 py-3 w-1/6">Action</th>
+                                        <th class="px-4 py-3">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fw-logs-tbody" class="divide-y divide-gray-700/30 text-sm">
+                                    <!-- Activity logs -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
         </main>
@@ -3342,6 +3659,123 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
             <button onclick="App.Databases.closeAddUserModal()" class="px-5 py-2.5 text-gray-400 hover:text-white rounded-lg transition-colors font-semibold">Cancel</button>
             <button onclick="App.Databases.submitAddUser()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-semibold shadow-lg">Add User</button>
         </div>
+    </div>
+</div>
+
+<!-- Modify Default Policies Modal -->
+<div id="fw-policy-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300">
+    <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md border border-gray-700">
+        <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+            <h3 class="text-xl font-bold text-white">Default Policies</h3>
+            <button onclick="App.Firewall.closePolicyModal()" class="text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="p-6 space-y-4">
+            <div>
+                <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Default Incoming Policy</label>
+                <select id="fw-policy-incoming" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+                    <option value="allow">ALLOW (Access Granted)</option>
+                    <option value="deny">DENY (Silent Drop)</option>
+                    <option value="reject">REJECT (Respond Refused)</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Default Outgoing Policy</label>
+                <select id="fw-policy-outgoing" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+                    <option value="allow">ALLOW (Traffic Allowed)</option>
+                    <option value="deny">DENY (Egress Blocked)</option>
+                    <option value="reject">REJECT (Egress Blocked with refusal)</option>
+                </select>
+            </div>
+        </div>
+        <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+            <button onclick="App.Firewall.closePolicyModal()" class="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium text-sm transition-all font-semibold">Cancel</button>
+            <button onclick="App.Firewall.savePolicies()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-sm transition-all font-semibold shadow-lg shadow-blue-900/30">Apply Policies</button>
+        </div>
+    </div>
+</div>
+
+<!-- Create Firewall Backup Modal -->
+<div id="fw-backup-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300">
+    <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md border border-gray-700">
+        <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+            <h3 class="text-xl font-bold text-white">Create Rules Backup</h3>
+            <button onclick="App.Firewall.closeCreateBackupModal()" class="text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="p-6">
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Backup Label</label>
+            <input type="text" id="fw-backup-name" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+        </div>
+        <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+            <button onclick="App.Firewall.closeCreateBackupModal()" class="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium text-sm transition-all font-semibold">Cancel</button>
+            <button onclick="App.Firewall.saveBackup()" class="px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium text-sm transition-all font-semibold shadow-lg shadow-green-900/30">Save Backup</button>
+        </div>
+    </div>
+</div>
+
+<!-- Rule Editor Sliding Drawer -->
+<div id="fw-rule-drawer" class="fixed inset-y-0 right-0 w-full max-w-md bg-gray-800 border-l border-gray-700 z-50 transform translate-x-full transition-transform duration-300 shadow-2xl flex flex-col font-sans">
+    <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
+        <h3 class="text-xl font-bold text-white" id="fw-rule-drawer-title">Add Firewall Rule</h3>
+        <button onclick="App.Firewall.closeRuleDrawer()" class="text-gray-400 hover:text-white transition-colors">
+            <i class="fas fa-times"></i>
+        </button>
+    </div>
+    <form id="fw-rule-form" onsubmit="event.preventDefault();" class="flex-1 overflow-y-auto p-6 space-y-4">
+        <input type="hidden" id="fw-rule-id">
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Action</label>
+            <select id="fw-rule-action" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+                <option value="allow">ALLOW</option>
+                <option value="deny">DENY</option>
+                <option value="reject">REJECT</option>
+                <option value="limit">LIMIT (rate limiting)</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Direction</label>
+            <select id="fw-rule-direction" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+                <option value="ingress">Ingress (Incoming traffic)</option>
+                <option value="egress">Egress (Outgoing traffic)</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Protocol</label>
+            <select id="fw-rule-protocol" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+                <option value="icmp">ICMP</option>
+                <option value="any">ANY</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Port (Single / Range e.g. 80 or 10000:20000)</label>
+            <input type="text" id="fw-rule-port" placeholder="e.g. 80 (leave empty for any)" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+        </div>
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Source IP or CIDR Block</label>
+            <input type="text" id="fw-rule-source" placeholder="e.g. 192.168.1.0/24 (leave empty for any)" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+        </div>
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Network Interface</label>
+            <input type="text" id="fw-rule-interface" placeholder="e.g. eth0, ens3 (leave empty for any)" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+        </div>
+        <div>
+            <label class="block text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Comment / Label</label>
+            <input type="text" id="fw-rule-comment" placeholder="e.g. Allow Web Server Access" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+        </div>
+        <div class="pt-4 border-t border-gray-700">
+            <label class="block text-blue-400 text-xs font-bold uppercase tracking-wider mb-2"><i class="fas fa-clock mr-1"></i>Schedule Rule Change (Optional)</label>
+            <input type="datetime-local" id="fw-rule-schedule-time" class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500 font-semibold">
+            <span class="text-[10px] text-gray-500 mt-1 block">Specify a future time to automatically queue this rule deployment.</span>
+        </div>
+    </form>
+    <div class="p-6 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end space-x-3">
+        <button onclick="App.Firewall.closeRuleDrawer()" class="px-5 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium text-sm transition-all font-semibold">Cancel</button>
+        <button onclick="App.Firewall.saveRule()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-sm transition-all font-semibold shadow-lg shadow-blue-900/30">Save Rule</button>
     </div>
 </div>
 {{end}}

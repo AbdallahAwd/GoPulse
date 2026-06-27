@@ -109,6 +109,14 @@ func main() {
 	loadBalancerService := services.NewLoadBalancerService(loadBalancerStore, serverStore, projectStore, serviceManager)
 	loadBalancerHandler := handlers.NewLoadBalancerHandler(loadBalancerService)
 
+	// Initialize Firewall Components
+	firewallStore, err := store.NewFirewallStore(filepath.Join(dataDir, "firewalls.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize firewall store: %v", err)
+	}
+	firewallService := services.NewFirewallService(firewallStore, serviceManager)
+	firewallHandler := handlers.NewFirewallHandler(firewallService, serverStore, serviceManager)
+
 	// Initialize Export/Import Components
 	exportStore := store.NewExportStore(serverStore, projectStore, databaseStore, domainStore, userStore, loadBalancerStore)
 	exportHandler := handlers.NewExportHandler(exportStore)
@@ -121,6 +129,9 @@ func main() {
 	// Start Backup Scheduler
 	backupScheduler := services.NewBackupScheduler(databaseService, databaseStore)
 	go backupScheduler.Start(ctx)
+
+	// Start Firewall Scheduler
+	go firewallService.StartScheduler(ctx, serverStore)
 
 	// Start Load Balancer Health Checker
 	go loadBalancerService.StartHealthChecker(ctx)
@@ -344,6 +355,29 @@ func main() {
 					r.Post("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.InsertRow)
 					r.Put("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.UpdateRow)
 					r.Delete("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.DeleteRow)
+				})
+
+				// Firewall
+				r.Route("/firewall", func(r chi.Router) {
+					r.Get("/", firewallHandler.GetFirewall)
+					r.Post("/enable", firewallHandler.EnableFirewall)
+					r.Post("/disable", firewallHandler.DisableFirewall)
+					r.Post("/reload", firewallHandler.ReloadFirewall)
+					r.Post("/reset", firewallHandler.ResetFirewall)
+					r.Post("/policies", firewallHandler.ChangePolicies)
+					r.Post("/install", firewallHandler.InstallUFW)
+					r.Post("/rules", firewallHandler.AddRule)
+					r.Put("/rules/{ruleId}", firewallHandler.UpdateRule)
+					r.Delete("/rules/{ruleId}", firewallHandler.DeleteRule)
+					r.Post("/rules/bulk", firewallHandler.BulkAction)
+					r.Get("/backups", firewallHandler.ListBackups)
+					r.Post("/backups", firewallHandler.CreateBackup)
+					r.Post("/backups/{backupId}/restore", firewallHandler.RestoreBackup)
+					r.Delete("/backups/{backupId}", firewallHandler.DeleteBackup)
+					r.Get("/schedules", firewallHandler.ListSchedules)
+					r.Post("/schedules", firewallHandler.CreateSchedule)
+					r.Delete("/schedules/{scheduleId}", firewallHandler.CancelSchedule)
+					r.Get("/logs", firewallHandler.GetLogs)
 				})
 
 			})

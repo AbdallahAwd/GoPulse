@@ -57,6 +57,7 @@ function init() {
             if (tab === 'load-balancers') App.LoadBalancers.load();
             if (tab === 'databases') App.Databases.load();
             if (tab === 'system-users') App.SystemUsers.load();
+            if (tab === 'firewall') App.Firewall.load();
         });
     });
 
