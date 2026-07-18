@@ -1,7 +1,11 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,6 +19,7 @@ import (
 )
 
 const githubOAuthCallbackPath = "/auth/github/callback"
+const githubOAuthStateCookie = "github_oauth_state"
 
 type GitHubHandler struct {
 	service        *services.GitHubService
@@ -59,7 +64,20 @@ func firstForwardedValue(value string) string {
 
 // 1. Redirect to GitHub
 func (h *GitHubHandler) Login(w http.ResponseWriter, r *http.Request) {
-	state := "random-state-string" // In production, use a random string and verify it in callback
+	state, err := newGitHubOAuthState()
+	if err != nil {
+		http.Error(w, "Failed to initialize GitHub login", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     githubOAuthStateCookie,
+		Value:    state,
+		Path:     githubOAuthCallbackPath,
+		MaxAge:   10 * 60,
+		HttpOnly: true,
+		Secure:   requestIsHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
+	})
 	redirectURL := h.getRedirectURL(r)
 	url := h.service.GetAuthURL(state, redirectURL)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
@@ -72,6 +90,20 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Code not found", http.StatusBadRequest)
 		return
 	}
+	stateCookie, err := r.Cookie(githubOAuthStateCookie)
+	if err != nil || !constantTimeEqual(stateCookie.Value, r.URL.Query().Get("state")) {
+		http.Error(w, "Invalid OAuth state", http.StatusBadRequest)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     githubOAuthStateCookie,
+		Value:    "",
+		Path:     githubOAuthCallbackPath,
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   requestIsHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	redirectURL := h.getRedirectURL(r)
 	token, err := h.service.Exchange(r.Context(), code, redirectURL)
@@ -90,7 +122,8 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Value:    token.AccessToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false, // Set to true in production
+		Secure:   requestIsHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
 	}
 	if !token.Expiry.IsZero() {
 		cookie.Expires = token.Expiry
@@ -100,6 +133,28 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, cookie)
 
 	http.Redirect(w, r, "/?github_connected=true", http.StatusTemporaryRedirect)
+}
+
+func newGitHubOAuthState() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func constantTimeEqual(left, right string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	if strings.EqualFold(firstForwardedValue(r.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	return r.TLS != nil
 }
 
 // 3. List Repos (API)
@@ -177,5 +232,63 @@ func (h *GitHubHandler) CloneRepo(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, models.APIResponse{
 		Success: true,
 		Data:    newProject,
+	})
+}
+
+// ConnectRepo attaches a repository selected through the authenticated GitHub
+// account to an existing uploaded project. Repository metadata comes from
+// GitHub rather than trusting a client-supplied clone URL.
+func (h *GitHubHandler) ConnectRepo(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("github_token")
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		respondError(w, http.StatusUnauthorized, "GitHub not connected", err)
+		return
+	}
+
+	var req struct {
+		ProjectID string `json:"project_id"`
+		FullName  string `json:"full_name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid request body", err)
+		return
+	}
+	if strings.TrimSpace(req.ProjectID) == "" || strings.TrimSpace(req.FullName) == "" {
+		respondError(w, http.StatusBadRequest, "project_id and full_name are required", nil)
+		return
+	}
+
+	token := &oauth2.Token{AccessToken: cookie.Value}
+	repo, err := h.service.GetRepo(r.Context(), token, req.FullName)
+	if err != nil {
+		respondError(w, http.StatusBadGateway, "Unable to verify the selected GitHub repository", err)
+		return
+	}
+	project, err := h.projectService.ConnectProjectToGitHub(
+		r.Context(),
+		req.ProjectID,
+		repo.CloneURL,
+		cookie.Value,
+		repo.DefaultBranch,
+	)
+	if err != nil {
+		if errors.Is(err, services.ErrProjectAlreadyConnectedToGit) {
+			respondError(w, http.StatusConflict, "Project is already connected to a Git repository", err)
+			return
+		}
+		respondError(w, http.StatusUnprocessableEntity, "Failed to connect project to GitHub", err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, models.APIResponse{
+		Success: true,
+		Message: "GitHub repository connected; CI/CD can now be enabled",
+		Data: map[string]interface{}{
+			"project_id":     project.ID,
+			"source_type":    project.SourceType,
+			"repository_url": project.SourceURL,
+			"full_name":      repo.FullName,
+			"default_branch": repo.DefaultBranch,
+		},
 	})
 }

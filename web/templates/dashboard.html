@@ -2834,12 +2834,14 @@
             <div class="flex items-center justify-between bg-gray-800/40 p-4 rounded-lg border border-gray-800">
                 <div>
                     <span class="block font-medium text-white">Webhook Auto-Redeploy</span>
-                    <span class="text-xs text-gray-400">Trigger build and deploy on push to main or master branch.</span>
+					<span class="text-xs text-gray-400">Trigger a queued, tracked deployment from the repository default branch.</span>
                 </div>
                 <button id="webhook-toggle-btn" onclick="App.Projects.toggleWebhook()" class="relative inline-flex h-6 w-11 items-center rounded-full bg-gray-700 transition-colors focus:outline-none">
                     <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform translate-x-1" id="webhook-toggle-span"></span>
                 </button>
             </div>
+
+			<div id="webhook-source-warning"></div>
 
             <!-- Webhook Details section (only shown if enabled) -->
             <div id="webhook-details-container" class="space-y-4 hidden">
@@ -2871,9 +2873,16 @@
                     </div>
                 </div>
 
-                <div class="bg-blue-900/10 border border-blue-900/30 p-4 rounded-lg text-xs text-blue-300 space-y-1.5">
-                    <p class="font-bold flex items-center"><i class="fas fa-info-circle mr-1.5"></i>GitHub Configuration Instructions:</p>
-                    <ol class="list-decimal pl-4 space-y-1">
+				<div class="bg-blue-900/10 border border-blue-900/30 p-4 rounded-lg text-xs text-blue-300 space-y-1.5">
+					<p class="font-bold flex items-center"><i class="fas fa-shield-alt mr-1.5"></i>Recommended: deploy only after GitHub Actions CI</p>
+					<ol class="list-decimal pl-4 space-y-1">
+						<li>Add the repository workflow documented in <strong>docs/cicd.md</strong>.</li>
+						<li>Add the URL above as the <strong>GOPULSE_WEBHOOK_URL</strong> Actions secret.</li>
+						<li>Add the token above as the <strong>GOPULSE_WEBHOOK_SECRET</strong> Actions secret.</li>
+						<li>Do not also add a native push webhook, or separate deliveries can queue twice.</li>
+					</ol>
+					<p class="font-bold flex items-center pt-3"><i class="fas fa-info-circle mr-1.5"></i>Alternative: native GitHub webhook</p>
+					<ol class="list-decimal pl-4 space-y-1">
                         <li>Go to your GitHub repository -> Settings -> Webhooks.</li>
                         <li>Click "Add webhook".</li>
                         <li>Paste the <strong>Payload URL</strong> above.</li>
@@ -2900,7 +2909,7 @@
     <div
         class="bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl transform scale-95 transition-transform duration-300 border border-gray-800 flex flex-col max-h-[80vh]">
         <div class="p-6 border-b border-gray-800 flex justify-between items-center">
-            <h3 class="text-xl font-semibold text-white">Select Repository</h3>
+			<h3 id="github-repos-modal-title" class="text-xl font-semibold text-white">Select Repository</h3>
             <button onclick="App.Projects.closeGitHubModal()" class="text-gray-400 hover:text-white transition-colors">
                 <i class="fas fa-times text-xl"></i>
             </button>

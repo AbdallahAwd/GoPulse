@@ -118,6 +118,25 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			restart_on_boot INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_projects_server_id ON projects(server_id)`,
+		`CREATE TABLE IF NOT EXISTS deployments (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			delivery_id TEXT NOT NULL UNIQUE,
+			source TEXT NOT NULL,
+			repository TEXT NOT NULL,
+			ref TEXT NOT NULL,
+			branch TEXT NOT NULL,
+			commit_sha TEXT NOT NULL,
+			commit_message TEXT NOT NULL,
+			pusher TEXT NOT NULL,
+			status TEXT NOT NULL,
+			queued_at TEXT NOT NULL,
+			started_at TEXT NOT NULL,
+			finished_at TEXT NOT NULL,
+			error TEXT NOT NULL,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_deployments_project_queued ON deployments(project_id, queued_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS domains (
 			id TEXT PRIMARY KEY,
 			server_id TEXT NOT NULL,
