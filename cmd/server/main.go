@@ -80,8 +80,15 @@ func main() {
 		log.Fatalf("Failed to initialize project store: %v", err)
 	}
 	projectService := services.NewProjectService(projectStore, serviceManager, filepath.Join(dataDir, "projects"))
-	projectHandler := handlers.NewProjectHandler(projectService)
-	webhookHandler := handlers.NewWebhookHandler(projectService)
+	deploymentStore, err := store.NewDeploymentStore(filepath.Join(dataDir, "projects.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize deployment store: %v", err)
+	}
+	projectService.SetDeploymentStore(deploymentStore)
+	deploymentManager := services.NewDeploymentManager(projectService, deploymentStore)
+	defer deploymentManager.Close()
+	projectHandler := handlers.NewProjectHandler(projectService, deploymentManager)
+	webhookHandler := handlers.NewWebhookHandler(projectService, deploymentManager)
 	githubHandler := handlers.NewGitHubHandler(cfg.GitHub, projectService)
 
 	// Initialize Domain Components
@@ -273,6 +280,8 @@ func main() {
 						r.Post("/start", projectHandler.StartProject) // Fixed method name reference
 						r.Post("/stop", projectHandler.StopProject)
 						r.Post("/redeploy", projectHandler.RedeployProject)
+						r.Get("/deployments", projectHandler.ListDeployments)
+						r.Get("/deployments/{deploymentID}", projectHandler.GetDeployment)
 						r.Delete("/", projectHandler.DeleteProject)
 						r.Post("/webhook/enable", projectHandler.EnableWebhook)
 						r.Post("/webhook/disable", projectHandler.DisableWebhook)
@@ -389,6 +398,7 @@ func main() {
 			r.Get("/callback", githubHandler.Callback)
 			r.Get("/repos", githubHandler.ListRepos)
 			r.Post("/clone", githubHandler.CloneRepo)
+			r.Post("/connect", githubHandler.ConnectRepo)
 		})
 
 		// Global Stats WebSocket (broadcasts updates for all servers)

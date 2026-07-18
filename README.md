@@ -12,6 +12,7 @@ A production-ready monolithic VPS management dashboard built entirely in Go. Sin
 - ⚡ **High Performance**: Concurrent monitoring with goroutines and in-memory caching
 - 📦 **Single Binary**: All assets embedded - no external dependencies
 - 💾 **Export/Import Migration**: Pack up all configurations (servers, projects, databases, domains, users) into a single JSON file and restore with automatic SSH key serialization
+- 🚀 **Durable GitHub CI/CD**: HMAC-verified, idempotent webhook deliveries with queued deployment history and GitHub Actions CI-first support
 
 ## Tech Stack
 
@@ -143,6 +144,13 @@ export GOPULSE_AUTH_ADMIN_PASSWORD="secure-password"
 - `GET /api/export-import/export` - Export full dashboard data as a downloadable JSON backup
 - `GET /api/export-import/export/preview` - Preview record counts for backup estimation
 - `POST /api/export-import/import` - Import dashboard configuration backup (supports skip/overwrite resolution modes)
+
+#### GitHub CI/CD
+- `POST /api/webhooks/github/{projectID}` - Public HMAC-authenticated GitHub push/ping receiver
+- `GET /api/servers/{serverID}/projects/{projectID}/deployments` - List durable deployment attempts
+- `GET /api/servers/{serverID}/projects/{projectID}/deployments/{deploymentID}` - Read one deployment status
+
+See [`docs/cicd.md`](docs/cicd.md) for the recommended GitHub Actions workflow and the native webhook alternative.
 
 ## Development
 

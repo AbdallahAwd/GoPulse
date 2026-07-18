@@ -24,7 +24,7 @@ go.work
 Thumbs.db
 
 # Config (but keep example)
-config.yaml
+#config.yaml
 
 # Air (live reload tool)
 tmp/

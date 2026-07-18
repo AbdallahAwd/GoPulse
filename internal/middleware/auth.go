@@ -96,8 +96,10 @@ func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 
 		// API routes authentication
 		if strings.HasPrefix(path, "/api/") {
-			// Exclude the registration, login and check endpoints from block checks
-			if path == "/api/auth/register" || path == "/api/auth/login" || path == "/api/auth/has-users" {
+			// GitHub cannot present a GoPulse JWT. This narrow endpoint is public at
+			// the session layer and authenticates every request with its per-project
+			// HMAC secret in WebhookHandler.
+			if isGitHubWebhookPath(path) || path == "/api/auth/register" || path == "/api/auth/login" || path == "/api/auth/has-users" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -156,6 +158,15 @@ func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, AllowedServersContextKey, allowedServers)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func isGitHubWebhookPath(path string) bool {
+	const prefix = "/api/webhooks/github/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	projectID := strings.TrimPrefix(path, prefix)
+	return projectID != "" && !strings.Contains(projectID, "/")
 }
 
 // authenticate checks both Authorization Header (for API/Bearer) and JWT Cookie (for browser requests)

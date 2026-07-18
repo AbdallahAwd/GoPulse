@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,8 +23,60 @@ import (
 type ProjectService struct {
 	store       *store.ProjectStore
 	domainStore *store.DomainStore
+	deployments *store.DeploymentStore
 	manager     *ServiceManager
 	dataPath    string
+}
+
+// ErrWebhookRequiresGitSource prevents a signed event from being accepted for
+// a project that GoPulse cannot update from the repository that emitted it.
+var ErrWebhookRequiresGitSource = errors.New("webhook requires a project imported from a Git repository with a source URL")
+
+var ErrProjectAlreadyConnectedToGit = errors.New("project is already connected to a Git repository")
+
+func projectWebhookReady(project models.Project) bool {
+	return strings.EqualFold(strings.TrimSpace(project.SourceType), "git") &&
+		strings.TrimSpace(project.SourceURL) != ""
+}
+
+func normalizeGitHubRepositoryURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), "github.com") {
+		return "", fmt.Errorf("repository URL must be an HTTPS GitHub clone URL")
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", fmt.Errorf("repository URL must use github.com/owner/repository format")
+	}
+	return fmt.Sprintf("https://github.com/%s/%s.git", parts[0], parts[1]), nil
+}
+
+func authenticatedGitHubRepositoryURL(repositoryURL string, token string) (string, error) {
+	if strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("GitHub access token is required")
+	}
+	parsed, err := url.Parse(repositoryURL)
+	if err != nil {
+		return "", err
+	}
+	parsed.User = url.UserPassword("oauth2", token)
+	return parsed.String(), nil
+}
+
+func sanitizeGitRemoteURL(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Host == "" {
+		return rawURL
+	}
+	parsed.User = nil
+	return parsed.String()
+}
+
+func redactSecret(value string, secret string) string {
+	if secret == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, secret, "[REDACTED]")
 }
 
 // NewProjectService creates a new ProjectService
@@ -36,6 +91,11 @@ func NewProjectService(store *store.ProjectStore, manager *ServiceManager, dataP
 // SetDomainStore allows project integrations to resolve domain mappings.
 func (s *ProjectService) SetDomainStore(domainStore *store.DomainStore) {
 	s.domainStore = domainStore
+}
+
+// SetDeploymentStore enables durable deployment history in the release view.
+func (s *ProjectService) SetDeploymentStore(deploymentStore *store.DeploymentStore) {
+	s.deployments = deploymentStore
 }
 
 // resolveRemoteProjectPath determines the project path on the remote server
@@ -988,10 +1048,179 @@ func (s *ProjectService) CreateProjectFromRepo(ctx context.Context, project mode
 	return &project, nil
 }
 
-// RedeployProject performs a git pull → build → restart cycle (used by webhook CI/CD)
-func (s *ProjectService) RedeployProject(ctx context.Context, projectID string) error {
+// ConnectProjectToGitHub converts an uploaded project into a Git-backed
+// project without replacing its currently deployed files. For a directory
+// that is not already a repository, it creates a local snapshot first. The
+// first CI/CD deployment can therefore roll back to the uploaded version if
+// the selected GitHub revision fails to build or start.
+func (s *ProjectService) ConnectProjectToGitHub(ctx context.Context, projectID string, repoURL string, token string, defaultBranch string) (*models.Project, error) {
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
+		return nil, err
+	}
+	if projectWebhookReady(project) {
+		return nil, ErrProjectAlreadyConnectedToGit
+	}
+	if s.manager == nil {
+		return nil, fmt.Errorf("server connection manager is unavailable")
+	}
+	if strings.TrimSpace(project.Path) == "" {
+		return nil, fmt.Errorf("project path is not configured")
+	}
+
+	canonicalURL, err := normalizeGitHubRepositoryURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	authenticatedURL, err := authenticatedGitHubRepositoryURL(canonicalURL, token)
+	if err != nil {
+		return nil, err
+	}
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	if !validGitBranch(defaultBranch) {
+		return nil, fmt.Errorf("invalid GitHub default branch %q", defaultBranch)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	client, err := s.manager.GetSSHClient(project.ServerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	}
+	path := projectShellQuote(project.Path)
+	if out, err := client.RunCommand(fmt.Sprintf("test -d %s", path)); err != nil {
+		return nil, fmt.Errorf("project directory is unavailable: %s: %w", strings.TrimSpace(out), err)
+	}
+
+	// Verify access before modifying the project directory. The authenticated
+	// URL is used only for this command and is never persisted in project data.
+	preflight := fmt.Sprintf("git ls-remote --exit-code %s %s", projectShellQuote(authenticatedURL), projectShellQuote("refs/heads/"+defaultBranch))
+	if out, err := client.RunCommand(preflight); err != nil {
+		return nil, fmt.Errorf("cannot read the selected GitHub repository or default branch: %s: %w", redactSecret(strings.TrimSpace(out), token), err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	gitState, _ := client.RunCommand(fmt.Sprintf("cd %s && if [ -d .git ]; then printf 'git=1\nremote=%%s\nhead=%%s\n' \"$(git config --get remote.origin.url 2>/dev/null)\" \"$(git rev-parse --verify HEAD 2>/dev/null)\"; else printf 'git=0\n'; fi", path))
+	state := map[string]string{}
+	for _, line := range strings.Split(gitState, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if ok {
+			state[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	if existingRemote := state["remote"]; existingRemote != "" {
+		existingCanonical, normalizeErr := normalizeGitHubRepositoryURL(sanitizeGitRemoteURL(existingRemote))
+		if normalizeErr != nil || !strings.EqualFold(existingCanonical, canonicalURL) {
+			return nil, fmt.Errorf("project directory is already linked to a different Git remote")
+		}
+	}
+
+	if state["git"] != "1" {
+		initCommand := fmt.Sprintf(
+			"cd %s && git init && git config user.name %s && git config user.email %s && git checkout -B %s && git add -A && git commit --allow-empty -m %s",
+			path,
+			projectShellQuote("GoPulse"),
+			projectShellQuote("gopulse@localhost"),
+			projectShellQuote("gopulse-upload-backup"),
+			projectShellQuote("GoPulse snapshot before GitHub connection"),
+		)
+		if out, err := client.RunCommand(initCommand); err != nil {
+			return nil, fmt.Errorf("failed to snapshot uploaded project before connecting GitHub: %s: %w", strings.TrimSpace(out), err)
+		}
+	} else if state["head"] == "" {
+		snapshotCommand := fmt.Sprintf(
+			"cd %s && git config user.name %s && git config user.email %s && git checkout -B %s && git add -A && git commit --allow-empty -m %s",
+			path,
+			projectShellQuote("GoPulse"),
+			projectShellQuote("gopulse@localhost"),
+			projectShellQuote("gopulse-upload-backup"),
+			projectShellQuote("GoPulse snapshot before GitHub connection"),
+		)
+		if out, err := client.RunCommand(snapshotCommand); err != nil {
+			return nil, fmt.Errorf("failed to snapshot uploaded project before connecting GitHub: %s: %w", strings.TrimSpace(out), err)
+		}
+	}
+
+	credentialPath := project.Path + "/.git/gopulse-credentials"
+	remoteCommand := fmt.Sprintf(
+		"cd %s && if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin %s; else git remote add origin %s; fi && umask 077 && printf '%%s\\n' %s > %s && git config credential.helper %s && git fetch --prune origin %s",
+		path,
+		projectShellQuote(canonicalURL),
+		projectShellQuote(canonicalURL),
+		projectShellQuote(authenticatedURL),
+		projectShellQuote(credentialPath),
+		projectShellQuote("store --file="+credentialPath),
+		projectShellQuote(defaultBranch),
+	)
+	if out, err := client.RunCommand(remoteCommand); err != nil {
+		return nil, fmt.Errorf("failed to configure the GitHub remote: %s: %w", redactSecret(strings.TrimSpace(out), token), err)
+	}
+
+	project.SourceType = "git"
+	project.SourceURL = canonicalURL
+	if err := s.store.UpdateProject(project); err != nil {
+		return nil, fmt.Errorf("failed to save GitHub repository connection: %w", err)
+	}
+	return &project, nil
+}
+
+// RedeployProject performs a deployment from the repository's current branch.
+func (s *ProjectService) RedeployProject(ctx context.Context, projectID string) error {
+	return s.RedeployProjectRevision(ctx, projectID, "", "")
+}
+
+var (
+	gitCommitPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+	gitBranchPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+)
+
+func validGitBranch(branch string) bool {
+	return gitBranchPattern.MatchString(branch) &&
+		!strings.Contains(branch, "..") &&
+		!strings.Contains(branch, "//") &&
+		!strings.Contains(branch, "@{") &&
+		!strings.HasSuffix(branch, "/") &&
+		!strings.HasSuffix(branch, ".") &&
+		!strings.HasSuffix(branch, ".lock")
+}
+
+func (s *ProjectService) restoreProjectRevision(client *remote.SSHClient, project models.Project, revision string) error {
+	if revision == "" {
+		return fmt.Errorf("previous revision is unavailable")
+	}
+	cmd := fmt.Sprintf("cd %s && git reset --hard %s", projectShellQuote(project.Path), projectShellQuote(revision))
+	if out, err := client.RunCommand(cmd); err != nil {
+		return fmt.Errorf("git rollback failed: %s: %w", strings.TrimSpace(out), err)
+	}
+	return nil
+}
+
+func (s *ProjectService) restoreProjectStatus(projectID string, status models.ProjectStatus) {
+	latest, err := s.store.GetProject(projectID)
+	if err != nil {
+		return
+	}
+	latest.Status = status
+	_ = s.store.UpdateProject(latest)
+}
+
+// RedeployProjectRevision deploys an exact push revision when supplied. Source
+// and build preparation happen before the live process is stopped; if the new
+// runtime cannot start, GoPulse makes a best-effort rollback to the prior commit.
+func (s *ProjectService) RedeployProjectRevision(ctx context.Context, projectID string, branch string, commitSHA string) error {
+	project, err := s.store.GetProject(projectID)
+	if err != nil {
+		return err
+	}
+	previousStatus := project.Status
+
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -1000,42 +1229,96 @@ func (s *ProjectService) RedeployProject(ctx context.Context, projectID string) 
 		return fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	// 1. Stop the running project
-	s.StopProject(ctx, projectID)
-
-	// 2. Git pull
+	previousRevision := ""
 	if project.SourceType == "git" && project.Path != "" {
-		var cmdPrefix string
-		if project.Type == "go" {
-			cmdPrefix = s.getGoCommandPrefix()
-		} else {
-			cmdPrefix = s.getNodeCommandPrefix()
+		out, _ := client.RunCommand(fmt.Sprintf("cd %s && git rev-parse HEAD", projectShellQuote(project.Path)))
+		previousRevision = strings.TrimSpace(out)
+
+		branch = strings.TrimSpace(branch)
+		commitSHA = strings.TrimSpace(commitSHA)
+		var sourceCmd string
+		switch {
+		case branch != "" || commitSHA != "":
+			if !validGitBranch(branch) {
+				return fmt.Errorf("invalid deployment branch %q", branch)
+			}
+			if !gitCommitPattern.MatchString(commitSHA) {
+				return fmt.Errorf("invalid deployment commit %q", commitSHA)
+			}
+			sourceCmd = fmt.Sprintf(
+				"cd %s && git fetch --prune origin %s && git checkout -B %s %s",
+				projectShellQuote(project.Path),
+				projectShellQuote(branch),
+				projectShellQuote(branch),
+				projectShellQuote(commitSHA),
+			)
+		default:
+			sourceCmd = fmt.Sprintf("cd %s && git pull --ff-only", projectShellQuote(project.Path))
 		}
-		pullCmd := fmt.Sprintf("%scd %s && git pull", cmdPrefix, project.Path)
-		if out, err := client.RunCommand(pullCmd); err != nil {
-			return fmt.Errorf("git pull failed: %s: %w", out, err)
+		if out, err := client.RunCommand(sourceCmd); err != nil {
+			return fmt.Errorf("source update failed: %s: %w", strings.TrimSpace(out), err)
 		}
+		if commitSHA != "" {
+			out, err := client.RunCommand(fmt.Sprintf("cd %s && git rev-parse HEAD", projectShellQuote(project.Path)))
+			if err != nil || !strings.EqualFold(strings.TrimSpace(out), commitSHA) {
+				_ = s.restoreProjectRevision(client, project, previousRevision)
+				return fmt.Errorf("checked out revision does not match requested commit %s", commitSHA)
+			}
+		}
+	} else {
+		return fmt.Errorf("project is not configured with a Git source")
 	}
 
-	// 3. Sync env vars before build
-	s.SyncEnvFile(ctx, projectID)
+	if err := ctx.Err(); err != nil {
+		_ = s.restoreProjectRevision(client, project, previousRevision)
+		s.restoreProjectStatus(projectID, previousStatus)
+		return err
+	}
 
-	// 4. Build
+	// Prepare configuration and build while the previous runtime is still alive.
+	if err := s.SyncEnvFile(ctx, projectID); err != nil {
+		_ = s.restoreProjectRevision(client, project, previousRevision)
+		return fmt.Errorf("environment sync failed during redeploy: %w", err)
+	}
 	if err := s.BuildProject(ctx, projectID); err != nil {
-		return fmt.Errorf("build failed during redeploy: %w", err)
+		rollbackErr := s.restoreProjectRevision(client, project, previousRevision)
+		s.restoreProjectStatus(projectID, previousStatus)
+		if rollbackErr != nil {
+			return fmt.Errorf("build failed during redeploy: %w; source rollback also failed: %v", err, rollbackErr)
+		} else {
+			return fmt.Errorf("build failed during redeploy; previous runtime was left running: %w", err)
+		}
 	}
 
-	// 5. Start
+	if err := ctx.Err(); err != nil {
+		_ = s.restoreProjectRevision(client, project, previousRevision)
+		s.restoreProjectStatus(projectID, previousStatus)
+		return err
+	}
+
+	// Cut over only after a successful build.
+	if err := s.StopProject(ctx, projectID); err != nil {
+		_ = s.restoreProjectRevision(client, project, previousRevision)
+		s.restoreProjectStatus(projectID, previousStatus)
+		return fmt.Errorf("stop failed during redeploy: %w", err)
+	}
 	if err := s.StartProject(ctx, projectID); err != nil {
-		return fmt.Errorf("start failed during redeploy: %w", err)
+		startErr := err
+		rollbackErr := s.restoreProjectRevision(client, project, previousRevision)
+		if rollbackErr == nil {
+			if buildErr := s.BuildProject(ctx, projectID); buildErr == nil {
+				if restartErr := s.StartProject(ctx, projectID); restartErr == nil {
+					return fmt.Errorf("new deployment failed to start and was rolled back: %w", startErr)
+				}
+			}
+		}
+		return fmt.Errorf("start failed during redeploy: %w; automatic rollback failed: %v", startErr, rollbackErr)
 	}
 
-	// 6. Update last deploy timestamp
+	// Persist success only after the new runtime is running.
 	project, _ = s.store.GetProject(projectID)
-	project.LastDeploy = time.Now()
-	s.store.UpdateProject(project)
-
-	return nil
+	project.LastDeploy = time.Now().UTC()
+	return s.store.UpdateProject(project)
 }
 
 // GetProjectReleaseInfo returns build/deploy/source activity for the operations dialog.
@@ -1050,13 +1333,61 @@ func (s *ProjectService) GetProjectReleaseInfo(ctx context.Context, projectID st
 		Releases:  []models.ProjectReleaseEvent{},
 	}
 
-	if project.Path != "" {
+	if project.Path != "" && s.manager != nil {
 		if client, err := s.manager.GetSSHClient(project.ServerID); err == nil {
 			info.Git = s.getProjectGitInfo(client, project.Path)
 		}
 	}
 
-	if projectTimestampValid(project.LastDeploy) {
+	hasMatchingLastDeploy := false
+	if s.deployments != nil {
+		deployments, listErr := s.deployments.ListProjectDeployments(projectID, 50)
+		if listErr == nil {
+			for _, deployment := range deployments {
+				timestamp := deployment.QueuedAt
+				if !deployment.FinishedAt.IsZero() {
+					timestamp = deployment.FinishedAt
+				} else if !deployment.StartedAt.IsZero() {
+					timestamp = deployment.StartedAt
+				}
+				commit := deployment.CommitSHA
+				if len(commit) > 12 {
+					commit = commit[:12]
+				}
+				detail := strings.TrimSpace(strings.Join([]string{commit, deployment.CommitMessage}, " "))
+				if deployment.Error != "" {
+					detail = deployment.Error
+				}
+				if detail == "" {
+					detail = deployment.Source
+				}
+				title := "Deploy"
+				if commit != "" {
+					title = fmt.Sprintf("Deploy %s", commit)
+				}
+				if deployment.Status == models.DeploymentStatusSucceeded &&
+					!project.LastDeploy.IsZero() && !deployment.FinishedAt.IsZero() {
+					delta := deployment.FinishedAt.Sub(project.LastDeploy)
+					if delta < 0 {
+						delta = -delta
+					}
+					if delta <= time.Second {
+						hasMatchingLastDeploy = true
+					}
+				}
+				info.Releases = append(info.Releases, models.ProjectReleaseEvent{
+					ID:        deployment.ID,
+					Type:      "deploy",
+					Status:    string(deployment.Status),
+					Title:     title,
+					Detail:    detail,
+					Timestamp: timestamp,
+				})
+			}
+		}
+	}
+
+	if !hasMatchingLastDeploy && projectTimestampValid(project.LastDeploy) {
 		info.Releases = append(info.Releases, models.ProjectReleaseEvent{
 			ID:        "last-deploy",
 			Type:      "deploy",
@@ -1237,7 +1568,10 @@ func (s *ProjectService) GetProjectAutomation(ctx context.Context, projectID str
 		ProjectID:      project.ID,
 		RestartOnBoot:  project.RestartOnBoot,
 		WebhookEnabled: project.WebhookEnabled,
+		WebhookReady:   projectWebhookReady(project),
 		WebhookURL:     webhookURL,
+		WebhookSecret:  project.WebhookSecret,
+		RepositoryURL:  project.SourceURL,
 		UpdatedAt:      time.Now(),
 	}, nil
 }
@@ -1255,6 +1589,9 @@ func (s *ProjectService) UpdateProjectAutomation(ctx context.Context, projectID 
 
 	if update.WebhookEnabled != nil {
 		if *update.WebhookEnabled {
+			if !projectWebhookReady(project) {
+				return models.ProjectAutomationInfo{}, ErrWebhookRequiresGitSource
+			}
 			if !project.WebhookEnabled || project.WebhookSecret == "" {
 				secret, err := GenerateWebhookSecret()
 				if err != nil {
@@ -1277,7 +1614,10 @@ func (s *ProjectService) UpdateProjectAutomation(ctx context.Context, projectID 
 		ProjectID:      project.ID,
 		RestartOnBoot:  project.RestartOnBoot,
 		WebhookEnabled: project.WebhookEnabled,
+		WebhookReady:   projectWebhookReady(project),
 		WebhookURL:     webhookURL,
+		WebhookSecret:  project.WebhookSecret,
+		RepositoryURL:  project.SourceURL,
 		UpdatedAt:      time.Now(),
 	}, nil
 }
@@ -1391,7 +1731,7 @@ func (s *ProjectService) getProjectGitInfo(client *remote.SSHClient, path string
 	info.Commit = values["commit"]
 	info.Branch = values["branch"]
 	info.Message = values["message"]
-	info.Remote = values["remote"]
+	info.Remote = sanitizeGitRemoteURL(values["remote"])
 	info.IsRepository = info.Commit != "" || info.Branch != "" || info.Remote != ""
 	return info
 }
@@ -1498,6 +1838,9 @@ func (s *ProjectService) EnableWebhook(ctx context.Context, projectID string) (s
 	project, err := s.store.GetProject(projectID)
 	if err != nil {
 		return "", err
+	}
+	if !projectWebhookReady(project) {
+		return "", ErrWebhookRequiresGitSource
 	}
 
 	secret, err := GenerateWebhookSecret()

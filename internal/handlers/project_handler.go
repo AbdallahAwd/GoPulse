@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,12 +16,23 @@ import (
 
 // ProjectHandler handles project-related endpoints
 type ProjectHandler struct {
-	service *services.ProjectService
+	service     *services.ProjectService
+	deployments deploymentAPI
+}
+
+type deploymentAPI interface {
+	Enqueue(deployment models.Deployment) (models.Deployment, bool, error)
+	ListProjectDeployments(projectID string, limit int) ([]models.Deployment, error)
+	GetDeployment(id string) (models.Deployment, error)
 }
 
 // NewProjectHandler creates a new ProjectHandler
-func NewProjectHandler(service *services.ProjectService) *ProjectHandler {
-	return &ProjectHandler{service: service}
+func NewProjectHandler(service *services.ProjectService, deployments ...deploymentAPI) *ProjectHandler {
+	var manager deploymentAPI
+	if len(deployments) > 0 {
+		manager = deployments[0]
+	}
+	return &ProjectHandler{service: service, deployments: manager}
 }
 
 // ListProjects handles GET /api/servers/{serverID}/projects
@@ -275,6 +287,10 @@ func (h *ProjectHandler) EnableWebhook(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "id")
 	secret, err := h.service.EnableWebhook(r.Context(), projectID)
 	if err != nil {
+		if errors.Is(err, services.ErrWebhookRequiresGitSource) {
+			respondError(w, http.StatusConflict, "Import this project from its GitHub repository before enabling CI/CD", err)
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "Failed to enable webhook", err)
 		return
 	}
@@ -341,6 +357,10 @@ func (h *ProjectHandler) UpdateEnvVars(w http.ResponseWriter, r *http.Request) {
 // GetReleases handles GET /api/servers/{serverID}/projects/{id}/ops/releases
 func (h *ProjectHandler) GetReleases(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "id")
+	if !h.projectBelongsToServer(r, projectID) {
+		respondError(w, http.StatusNotFound, "Project not found", nil)
+		return
+	}
 	releases, err := h.service.GetProjectReleaseInfo(r.Context(), projectID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to get releases", err)
@@ -356,15 +376,76 @@ func (h *ProjectHandler) GetReleases(w http.ResponseWriter, r *http.Request) {
 // RedeployProject handles POST /api/servers/{serverID}/projects/{id}/redeploy
 func (h *ProjectHandler) RedeployProject(w http.ResponseWriter, r *http.Request) {
 	projectID := chi.URLParam(r, "id")
-	if err := h.service.RedeployProject(r.Context(), projectID); err != nil {
-		respondError(w, http.StatusInternalServerError, "Redeploy failed", err)
+	if !h.projectBelongsToServer(r, projectID) {
+		respondError(w, http.StatusNotFound, "Project not found", nil)
+		return
+	}
+	if h.deployments == nil {
+		respondError(w, http.StatusServiceUnavailable, "Deployment queue is unavailable", nil)
+		return
+	}
+	deployment, _, err := h.deployments.Enqueue(models.Deployment{
+		ProjectID: projectID,
+		Source:    "manual",
+	})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to queue redeploy", err)
 		return
 	}
 
-	respondJSON(w, http.StatusOK, models.APIResponse{
+	respondJSON(w, http.StatusAccepted, models.APIResponse{
 		Success: true,
-		Message: "Project redeployed",
+		Message: "Redeploy queued",
+		Data:    deployment,
 	})
+}
+
+// ListDeployments handles GET /api/servers/{serverID}/projects/{id}/deployments.
+func (h *ProjectHandler) ListDeployments(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	if !h.projectBelongsToServer(r, projectID) {
+		respondError(w, http.StatusNotFound, "Project not found", nil)
+		return
+	}
+	if h.deployments == nil {
+		respondError(w, http.StatusServiceUnavailable, "Deployment queue is unavailable", nil)
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	deployments, err := h.deployments.ListProjectDeployments(projectID, limit)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to list deployments", err)
+		return
+	}
+	respondJSON(w, http.StatusOK, models.APIResponse{Success: true, Data: deployments})
+}
+
+// GetDeployment handles GET /api/servers/{serverID}/projects/{id}/deployments/{deploymentID}.
+func (h *ProjectHandler) GetDeployment(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	if !h.projectBelongsToServer(r, projectID) {
+		respondError(w, http.StatusNotFound, "Project not found", nil)
+		return
+	}
+	if h.deployments == nil {
+		respondError(w, http.StatusServiceUnavailable, "Deployment queue is unavailable", nil)
+		return
+	}
+	deployment, err := h.deployments.GetDeployment(chi.URLParam(r, "deploymentID"))
+	if err != nil || deployment.ProjectID != projectID {
+		respondError(w, http.StatusNotFound, "Deployment not found", nil)
+		return
+	}
+	respondJSON(w, http.StatusOK, models.APIResponse{Success: true, Data: deployment})
+}
+
+func (h *ProjectHandler) projectBelongsToServer(r *http.Request, projectID string) bool {
+	project, err := h.service.GetProject(r.Context(), projectID)
+	if err != nil {
+		return false
+	}
+	serverID := chi.URLParam(r, "serverID")
+	return serverID == "" || project.ServerID == serverID
 }
 
 // GetLogs handles GET /api/servers/{serverID}/projects/{id}/ops/logs
@@ -424,6 +505,10 @@ func (h *ProjectHandler) UpdateAutomation(w http.ResponseWriter, r *http.Request
 
 	automation, err := h.service.UpdateProjectAutomation(r.Context(), projectID, update, projectWebhookURL(r, projectID))
 	if err != nil {
+		if errors.Is(err, services.ErrWebhookRequiresGitSource) {
+			respondError(w, http.StatusConflict, "Import this project from its GitHub repository before enabling CI/CD", err)
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "Failed to update project automation", err)
 		return
 	}

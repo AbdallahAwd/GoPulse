@@ -45,6 +45,7 @@ App.Projects = {
     activeOpsTab: 'overview',
     opsData: {},
     opsLoading: {},
+    deploymentPollTimers: {},
 
     renderList: function(projects, focusState) {
         const container = document.getElementById('projects-list');
@@ -595,6 +596,17 @@ App.Projects = {
         this.loadOpsTab(id, tab, true);
     },
 
+    scheduleDeploymentPoll: function(id) {
+        if (this.deploymentPollTimers[id]) return;
+        this.deploymentPollTimers[id] = setTimeout(() => {
+            delete this.deploymentPollTimers[id];
+            const modal = document.getElementById('project-ops-modal');
+            if (!modal || modal.classList.contains('hidden') || this.currentOpsProjectID !== id || this.activeOpsTab !== 'releases') return;
+            delete this.opsData[`${id}:releases`];
+            this.loadOpsTab(id, 'releases', true);
+        }, 5000);
+    },
+
     renderActiveOpsProject: function() {
         const project = (this.list || []).find(p => p.id === this.currentOpsProjectID);
         const modal = document.getElementById('project-ops-modal');
@@ -680,16 +692,16 @@ App.Projects = {
 
     statusTextClass: function(status) {
         const normalized = String(status || '').toLowerCase();
-        if (normalized === 'healthy' || normalized === 'completed' || normalized === 'enabled' || normalized === 'available' || normalized === 'configured' || normalized === 'current') return 'text-emerald-300';
-        if (normalized === 'warning' || normalized === 'disabled' || normalized === 'unconfigured') return 'text-amber-300';
+		if (normalized === 'healthy' || normalized === 'completed' || normalized === 'succeeded' || normalized === 'enabled' || normalized === 'available' || normalized === 'configured' || normalized === 'current') return 'text-emerald-300';
+		if (normalized === 'warning' || normalized === 'running' || normalized === 'queued' || normalized === 'disabled' || normalized === 'unconfigured') return 'text-amber-300';
         if (normalized === 'unhealthy' || normalized === 'error' || normalized === 'failed') return 'text-red-300';
         return 'text-gray-300';
     },
 
     statusBadgeClass: function(status) {
         const normalized = String(status || '').toLowerCase();
-        if (normalized === 'healthy' || normalized === 'completed' || normalized === 'enabled' || normalized === 'available' || normalized === 'configured' || normalized === 'current') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
-        if (normalized === 'warning' || normalized === 'disabled' || normalized === 'unconfigured') return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+		if (normalized === 'healthy' || normalized === 'completed' || normalized === 'succeeded' || normalized === 'enabled' || normalized === 'available' || normalized === 'configured' || normalized === 'current') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+		if (normalized === 'warning' || normalized === 'running' || normalized === 'queued' || normalized === 'disabled' || normalized === 'unconfigured') return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
         if (normalized === 'unhealthy' || normalized === 'error' || normalized === 'failed') return 'border-red-500/30 bg-red-500/10 text-red-300';
         return 'border-gray-700 bg-gray-800/70 text-gray-300';
     },
@@ -759,6 +771,13 @@ App.Projects = {
         const releases = data?.releases || [];
         const git = data?.git || {};
         const canRedeploy = project.source_type === 'git' || !!project.source_url || git.is_repository;
+        const hasActiveDeployment = releases.some(item => item.status === 'queued' || item.status === 'running');
+        if (hasActiveDeployment) {
+            this.scheduleDeploymentPoll(project.id);
+        } else if (this.deploymentPollTimers[project.id]) {
+            clearTimeout(this.deploymentPollTimers[project.id]);
+            delete this.deploymentPollTimers[project.id];
+        }
 
         return `
             <div class="space-y-5">
@@ -876,7 +895,9 @@ App.Projects = {
 
         const restartOnBoot = data?.restart_on_boot ?? project.restart_on_boot;
         const webhookEnabled = data?.webhook_enabled ?? project.webhook_enabled;
+		const webhookReady = data?.webhook_ready ?? ((project.source_type === 'git') && !!project.source_url);
         const webhookURL = data?.webhook_url || '';
+		const repositoryURL = data?.repository_url || project.source_url || '';
 
         return `
             <div class="space-y-5">
@@ -898,10 +919,20 @@ App.Projects = {
                         <div class="min-w-0">
                             <div class="text-sm font-semibold text-white">Git webhook</div>
                             <div class="text-xs ${webhookEnabled ? 'text-emerald-300' : 'text-gray-400'} mt-1">${webhookEnabled ? 'Enabled' : 'Disabled'}</div>
+							${webhookReady ? '' : '<div class="text-xs text-amber-300 mt-1">This upload project is not connected to a Git repository. Import it from Git to enable CI/CD.</div>'}
                         </div>
-                        <button onclick="App.Projects.updateOpsAutomation('${id}', 'webhook_enabled', ${webhookEnabled ? 'false' : 'true'}, this)" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-3 py-2 rounded-lg text-xs font-semibold transition-colors">${webhookEnabled ? 'Disable' : 'Enable'}</button>
+						<button onclick="App.Projects.updateOpsAutomation('${id}', 'webhook_enabled', ${webhookEnabled ? 'false' : 'true'}, this)" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${(!webhookReady && !webhookEnabled) ? 'opacity-50 cursor-not-allowed' : ''}" ${(!webhookReady && !webhookEnabled) ? 'disabled' : ''}>${webhookEnabled ? 'Disable' : 'Enable'}</button>
                     </div>
                 </div>
+				<section class="border border-gray-800 rounded-lg p-5">
+					<div class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Bound repository</div>
+					<div class="font-mono text-xs ${repositoryURL ? 'text-gray-300' : 'text-amber-300'} break-all">${this.escapeHtml(repositoryURL || 'No Git repository configured')}</div>
+					${webhookReady ? '' : `
+						<button onclick="App.Projects.openGitHubModal('${id}')" class="mt-4 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-colors">
+							<i class="fab fa-github mr-2"></i>Connect GitHub repository
+						</button>
+					`}
+				</section>
                 <section class="border border-gray-800 rounded-lg p-5">
                     <div class="flex items-center justify-between gap-3">
                         <div class="min-w-0">
@@ -980,7 +1011,8 @@ App.Projects = {
         try {
             const res = await App.API.post(`/servers/${serverID}/projects/${id}/redeploy`, {});
             if (!res.success) throw new Error(res.error || res.message || 'Redeploy failed');
-            App.UI.toast('success', 'Project redeployed');
+			const deploymentID = res.data?.id ? ` (${res.data.id.slice(0, 8)})` : '';
+			App.UI.toast('success', `Deployment queued${deploymentID}`);
             delete this.opsData[`${id}:releases`];
             delete this.opsData[`${id}:health`];
             delete this.opsData[`${id}:logs`];
@@ -1018,11 +1050,16 @@ App.Projects = {
 
             const automation = res.data || {};
             this.opsData[`${id}:automation`] = automation;
-            const project = (this.list || []).find(p => p.id === id);
-            if (project) {
-                project.restart_on_boot = !!automation.restart_on_boot;
-                project.webhook_enabled = !!automation.webhook_enabled;
-            }
+			const project = (this.list || []).find(p => p.id === id);
+			if (project) {
+				project.restart_on_boot = !!automation.restart_on_boot;
+				project.webhook_enabled = !!automation.webhook_enabled;
+				if (project.webhook_enabled && automation.webhook_secret) {
+					project.webhook_secret = automation.webhook_secret;
+				} else if (!project.webhook_enabled) {
+					project.webhook_secret = '';
+				}
+			}
 
             App.UI.toast('success', 'Automation updated');
             this.renderList(this.list || []);
@@ -1374,9 +1411,12 @@ App.Projects = {
         window.location.href = '/auth/github/login';
     },
 
-    openGitHubModal: function() {
+    openGitHubModal: function(projectID = '') {
+		this.githubRepoTargetProjectID = projectID || '';
         const modal = document.getElementById('github-repos-modal');
         if (modal) {
+			const title = document.getElementById('github-repos-modal-title');
+			if (title) title.textContent = this.githubRepoTargetProjectID ? 'Connect GitHub Repository' : 'Select Repository';
             modal.classList.remove('hidden');
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -1458,14 +1498,15 @@ App.Projects = {
             return;
         }
 
-        list.innerHTML = repos.map(repo => `
-            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-blue-500 transition-colors cursor-pointer group mb-3" onclick="App.Projects.selectRepo('${repo.clone_url}', '${repo.name}')">
+		this.renderedGitHubRepos = repos;
+        list.innerHTML = repos.map((repo, index) => `
+            <div class="bg-gray-800 p-4 rounded-lg border border-gray-700 hover:border-blue-500 transition-colors cursor-pointer group mb-3" onclick="App.Projects.selectRepoByIndex(${index})">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center space-x-3 overflow-hidden">
                         <i class="fab fa-github text-xl text-gray-400 group-hover:text-white flex-shrink-0"></i>
                         <div class="min-w-0">
-                            <h4 class="font-medium text-white group-hover:text-blue-400 transition-colors truncate">${repo.full_name}</h4>
-                            <p class="text-sm text-gray-500 truncate">${repo.description || 'No description'}</p>
+							<h4 class="font-medium text-white group-hover:text-blue-400 transition-colors truncate">${this.escapeHtml(repo.full_name)}</h4>
+							<p class="text-sm text-gray-500 truncate">${this.escapeHtml(repo.description || 'No description')}</p>
                         </div>
                     </div>
                     <i class="fas fa-chevron-right text-gray-600 group-hover:text-white flex-shrink-0 ml-2"></i>
@@ -1484,6 +1525,16 @@ App.Projects = {
         );
         this.renderGitHubRepos(filtered);
     },
+
+    selectRepoByIndex: function(index) {
+		const repo = (this.renderedGitHubRepos || [])[index];
+		if (!repo) return;
+		if (this.githubRepoTargetProjectID) {
+			this.connectGitHubRepo(this.githubRepoTargetProjectID, repo);
+			return;
+		}
+		this.selectRepo(repo.clone_url, repo.name);
+	},
 
     selectRepo: function(cloneUrl, name) {
         this.selectedRepo = { cloneUrl, name };
@@ -1520,6 +1571,41 @@ App.Projects = {
             
         }, 100);
     },
+
+	connectGitHubRepo: async function(projectID, repo) {
+		const list = document.getElementById('github-repo-list');
+		const original = list ? list.innerHTML : '';
+		if (list) {
+			list.innerHTML = `<div class="text-center text-blue-300 py-10"><i class="fas fa-spinner fa-spin text-2xl mb-3"></i><p>Connecting ${this.escapeHtml(repo.full_name)} and creating a rollback snapshot...</p></div>`;
+		}
+		try {
+			const response = await App.API.post('/github/connect', {
+				project_id: projectID,
+				full_name: repo.full_name
+			});
+			if (!response.success) throw new Error(response.error || response.message || 'GitHub connection failed');
+
+			const project = (this.list || []).find(item => item.id === projectID);
+			if (project) {
+				project.source_type = 'git';
+				project.source_url = response.data?.repository_url || repo.clone_url;
+			}
+			this.opsData[`${projectID}:automation`] = {
+				...(this.opsData[`${projectID}:automation`] || {}),
+				project_id: projectID,
+				webhook_ready: true,
+				repository_url: response.data?.repository_url || repo.clone_url
+			};
+			this.closeGitHubModal();
+			App.UI.toast('success', `${repo.full_name} connected. CI/CD can now be enabled.`);
+			this.renderList(this.list || []);
+			this.renderActiveOpsProject();
+		} catch (err) {
+			console.error('Failed to connect GitHub repository:', err);
+			if (list) list.innerHTML = original;
+			App.UI.toast('error', `GitHub connection failed: ${err.message}`);
+		}
+	},
     
     // Updated createProject to handle git source
     createProject: async function() {
@@ -1651,6 +1737,20 @@ App.Projects = {
         const toggleBtn = document.getElementById('webhook-toggle-btn');
         const toggleSpan = document.getElementById('webhook-toggle-span');
         const detailsContainer = document.getElementById('webhook-details-container');
+		const sourceWarning = document.getElementById('webhook-source-warning');
+		const webhookReady = project.source_type === 'git' && !!project.source_url;
+		if (sourceWarning) {
+			sourceWarning.innerHTML = webhookReady ? '' : `
+				<div class="bg-amber-900/15 border border-amber-700/30 p-4 rounded-lg text-sm text-amber-200">
+					<p class="mb-3">Connect this uploaded project to a GitHub repository before enabling CI/CD.</p>
+					<button onclick="App.Projects.closeWebhookModal(); App.Projects.openGitHubModal('${this.escapeAttr(id)}')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-xs font-semibold">
+						<i class="fab fa-github mr-2"></i>Connect repository
+					</button>
+				</div>`;
+		}
+		toggleBtn.disabled = !webhookReady && !project.webhook_enabled;
+		toggleBtn.classList.toggle('cursor-not-allowed', toggleBtn.disabled);
+		toggleBtn.classList.toggle('opacity-50', toggleBtn.disabled);
 
         if (project.webhook_enabled) {
             toggleBtn.className = 'relative inline-flex h-6 w-11 items-center rounded-full bg-blue-600 transition-colors focus:outline-none';
@@ -1703,6 +1803,10 @@ App.Projects = {
 
         const serverID = App.config.SERVER_ID;
         const isCurrentlyEnabled = project.webhook_enabled;
+		if (!isCurrentlyEnabled && (project.source_type !== 'git' || !project.source_url)) {
+			App.UI.toast('error', 'Connect a GitHub repository before enabling CI/CD');
+			return;
+		}
         const action = isCurrentlyEnabled ? 'disable' : 'enable';
 
         try {

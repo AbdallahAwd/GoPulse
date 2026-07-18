@@ -1,12 +1,77 @@
 package services
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/amaa/gopulse/internal/store"
 )
+
+func TestEnableWebhookRequiresGitSource(t *testing.T) {
+	dir := t.TempDir()
+	projectStore, err := store.NewProjectStore(filepath.Join(dir, "projects.json"))
+	if err != nil {
+		t.Fatalf("NewProjectStore: %v", err)
+	}
+	project := models.Project{ID: "upload-project", SourceType: "upload"}
+	if err := projectStore.AddProject(project); err != nil {
+		t.Fatalf("AddProject: %v", err)
+	}
+
+	service := NewProjectService(projectStore, nil, "")
+	if _, err := service.EnableWebhook(t.Context(), project.ID); !errors.Is(err, ErrWebhookRequiresGitSource) {
+		t.Fatalf("EnableWebhook error = %v, want ErrWebhookRequiresGitSource", err)
+	}
+
+	stored, err := projectStore.GetProject(project.ID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if stored.WebhookEnabled || stored.WebhookSecret != "" {
+		t.Fatalf("invalid project webhook changed: enabled=%t secret=%q", stored.WebhookEnabled, stored.WebhookSecret)
+	}
+}
+
+func TestNormalizeGitHubRepositoryURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "clone URL", input: "https://github.com/acme/web.git", want: "https://github.com/acme/web.git"},
+		{name: "browser URL", input: "https://github.com/acme/web", want: "https://github.com/acme/web.git"},
+		{name: "credentials removed", input: "https://oauth2:secret@github.com/acme/web.git", want: "https://github.com/acme/web.git"},
+		{name: "wrong host", input: "https://example.com/acme/web.git", wantErr: true},
+		{name: "missing owner", input: "https://github.com/web.git", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeGitHubRepositoryURL(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeGitHubRepositoryURL(%q) unexpectedly succeeded with %q", tt.input, got)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("normalizeGitHubRepositoryURL(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestGitRemoteCredentialsAreSanitized(t *testing.T) {
+	raw := "https://oauth2:top-secret@github.com/acme/web.git"
+	if got := sanitizeGitRemoteURL(raw); got != "https://github.com/acme/web.git" {
+		t.Fatalf("sanitizeGitRemoteURL() = %q", got)
+	}
+	if got := redactSecret("fetch failed for top-secret", "top-secret"); got != "fetch failed for [REDACTED]" {
+		t.Fatalf("redactSecret() = %q", got)
+	}
+}
 
 func TestNormalizeLaravelStartCommandUsesProjectPortForUIPreset(t *testing.T) {
 	got := normalizeLaravelStartCommand("php artisan serve --port=8000 --host=0.0.0.0", 3000)

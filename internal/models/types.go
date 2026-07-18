@@ -193,6 +193,36 @@ type Project struct {
 	RestartOnBoot  bool              `json:"restart_on_boot"`          // Auto-start project on system boot / server reboot
 }
 
+// DeploymentStatus is the durable lifecycle state of a project deployment.
+type DeploymentStatus string
+
+const (
+	DeploymentStatusQueued    DeploymentStatus = "queued"
+	DeploymentStatusRunning   DeploymentStatus = "running"
+	DeploymentStatusSucceeded DeploymentStatus = "succeeded"
+	DeploymentStatusFailed    DeploymentStatus = "failed"
+)
+
+// Deployment records one immutable CI/CD attempt. DeliveryID makes webhook
+// processing idempotent when GitHub retries the same delivery.
+type Deployment struct {
+	ID            string           `json:"id"`
+	ProjectID     string           `json:"project_id"`
+	DeliveryID    string           `json:"delivery_id"`
+	Source        string           `json:"source"` // github_webhook, github_actions, or manual
+	Repository    string           `json:"repository,omitempty"`
+	Ref           string           `json:"ref,omitempty"`
+	Branch        string           `json:"branch,omitempty"`
+	CommitSHA     string           `json:"commit_sha,omitempty"`
+	CommitMessage string           `json:"commit_message,omitempty"`
+	Pusher        string           `json:"pusher,omitempty"`
+	Status        DeploymentStatus `json:"status"`
+	QueuedAt      time.Time        `json:"queued_at"`
+	StartedAt     time.Time        `json:"started_at,omitempty"`
+	FinishedAt    time.Time        `json:"finished_at,omitempty"`
+	Error         string           `json:"error,omitempty"`
+}
+
 // ProjectReleaseInfo describes deploy/build history that can be inferred for a project.
 type ProjectReleaseInfo struct {
 	ProjectID string                `json:"project_id"`
@@ -250,7 +280,10 @@ type ProjectAutomationInfo struct {
 	ProjectID      string    `json:"project_id"`
 	RestartOnBoot  bool      `json:"restart_on_boot"`
 	WebhookEnabled bool      `json:"webhook_enabled"`
+	WebhookReady   bool      `json:"webhook_ready"`
 	WebhookURL     string    `json:"webhook_url"`
+	WebhookSecret  string    `json:"webhook_secret,omitempty"`
+	RepositoryURL  string    `json:"repository_url,omitempty"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
@@ -390,5 +423,3 @@ type LoadBalancerLogs struct {
 	ErrorLogs       string    `json:"error_logs"`
 	FetchedAt       time.Time `json:"fetched_at"`
 }
-
-
