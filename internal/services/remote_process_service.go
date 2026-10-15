@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,7 @@ func (s *RemoteProcessService) ListProcesses(ctx context.Context) ([]models.Proc
 	// We need to parse this.
 	// Output format: PID %CPU %MEM USER ELAPSED COMMAND ARGS
 	cmd := "ps -eo pid,pcpu,rss,user,etime,comm,args --no-headers"
-	output, err := s.client.RunCommand(cmd)
+	output, err := s.client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list processes: %w", err)
 	}
@@ -80,7 +81,7 @@ func (s *RemoteProcessService) GetProcess(ctx context.Context, pid int32) (*mode
 	// Re-use ListProcesses for simplicity or run specific ps command
 	// ps -p PID -o pid,pcpu,rss,user,etime,comm,args --no-headers
 	cmd := fmt.Sprintf("ps -p %d -o pid,pcpu,rss,user,etime,comm,args --no-headers", pid)
-	output, err := s.client.RunCommand(cmd)
+	output, err := s.client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("process not found or error: %w", err)
 	}
@@ -115,30 +116,36 @@ func (s *RemoteProcessService) GetProcess(ctx context.Context, pid int32) (*mode
 
 // KillProcess terminates a process by PID
 func (s *RemoteProcessService) KillProcess(ctx context.Context, pid int32) error {
-	_, err := s.client.RunCommand(fmt.Sprintf("kill %d", pid))
+	_, err := s.client.RunCommandContext(ctx, fmt.Sprintf("kill %d", pid))
 	return err
 }
 
 // RestartService restarts a systemd service
 func (s *RemoteProcessService) RestartService(ctx context.Context, serviceName string) error {
+	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$`).MatchString(serviceName) {
+		return fmt.Errorf("invalid service name")
+	}
 	// Requires sudo usually, which might fail if user is not root and password input is needed.
 	// Assumption: user has sudo without password or is root.
 
 	// Try without sudo first, then with sudo if fails? Or just try directly.
 	// Ideally we config if user is root.
-	cmd := fmt.Sprintf("sudo systemctl restart %s", serviceName)
+	cmd := fmt.Sprintf("sudo -n systemctl restart -- %s", serviceName)
 	if s.client.IsRoot() { // We don't have IsRoot in SSHClient yet, maybe check user
-		cmd = fmt.Sprintf("systemctl restart %s", serviceName)
+		cmd = fmt.Sprintf("systemctl restart -- %s", serviceName)
 	}
 
-	_, err := s.client.RunCommand(cmd)
+	_, err := s.client.RunCommandContext(ctx, cmd)
 	return err
 }
 
 // GetServiceStatus gets the status of a systemd service
 func (s *RemoteProcessService) GetServiceStatus(ctx context.Context, serviceName string) (string, error) {
-	cmd := fmt.Sprintf("systemctl is-active %s", serviceName)
-	output, err := s.client.RunCommand(cmd)
+	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$`).MatchString(serviceName) {
+		return "", fmt.Errorf("invalid service name")
+	}
+	cmd := fmt.Sprintf("systemctl is-active -- %s", shellQuote(serviceName))
+	output, err := s.client.RunCommandContext(ctx, cmd)
 	status := strings.TrimSpace(output)
 
 	if err != nil {

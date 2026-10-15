@@ -26,15 +26,8 @@ App.System = {
                     // Synchronize toggle switch state
                     this.syncFocusToggleState(res.data.is_db_only);
                     
-                    // If dedicated database host focus is active and user lands on the default "processes" tab,
-                    // automatically redirect the tab display directly to "databases"!
-                    const hashTab = window.location.hash.substring(1);
-                    if (res.data.is_db_only && (!hashTab || hashTab === 'processes')) {
-                        setTimeout(() => {
-                            const dbBtn = document.getElementById('nav-btn-databases');
-                            if (dbBtn) dbBtn.click();
-                        }, 50);
-                    }
+                    // Navigation owns the initial section, including direct links.
+
                 }
             } catch (e) {
                 console.error('Failed to load server configuration', e);
@@ -124,7 +117,7 @@ App.System = {
     },
 
     restart: async function() {
-        if (!confirm('Are you sure you want to restart the remote server?')) return;
+        if (!await App.UI.confirm('Are you sure you want to restart the remote server?')) return;
         
         try {
             const endpoint = `/servers/${App.config.SERVER_ID}/system/restart`;

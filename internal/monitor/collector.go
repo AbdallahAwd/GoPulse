@@ -37,7 +37,7 @@ type Collector struct {
 	cache           *StatsCache
 	history         *StatsHistory
 	interval        time.Duration
-	clients         map[*websocket.Conn]bool
+	clients         map[*websocket.Conn]func(string) bool
 	clientsMu       sync.RWMutex
 	broadcast       chan ServerStatsUpdate
 }
@@ -53,7 +53,7 @@ func NewCollector(serverStore *store.ServerStore, factory ProviderFactory, inter
 		},
 		history:   history,
 		interval:  interval,
-		clients:   make(map[*websocket.Conn]bool),
+		clients:   make(map[*websocket.Conn]func(string) bool),
 		broadcast: make(chan ServerStatsUpdate, 100),
 		providers: make(map[string]services.StatsProvider),
 	}
@@ -186,8 +186,10 @@ func (c *Collector) broadcaster() {
 	for update := range c.broadcast {
 		c.clientsMu.RLock()
 		clients := make([]*websocket.Conn, 0, len(c.clients))
-		for client := range c.clients {
-			clients = append(clients, client)
+		for client, authorize := range c.clients {
+			if authorize(update.ServerID) {
+				clients = append(clients, client)
+			}
 		}
 		c.clientsMu.RUnlock()
 
@@ -197,6 +199,7 @@ func (c *Collector) broadcaster() {
 		})
 
 		for _, client := range clients {
+			client.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			err := client.WriteMessage(websocket.TextMessage, message)
 			if err != nil {
 				log.Printf("Error sending stats to WebSocket client: %v", err)
@@ -207,25 +210,34 @@ func (c *Collector) broadcaster() {
 }
 
 // AddClient registers a new WebSocket client
-func (c *Collector) AddClient(conn *websocket.Conn) {
-	c.clientsMu.Lock()
-	c.clients[conn] = true
-	c.clientsMu.Unlock()
-
-	// Send current cached stats for all servers immediately
-	c.cache.mu.RLock()
-	for serverID, stats := range c.cache.stats {
-		conn.WriteJSON(map[string]interface{}{
-			"type": "stats_update",
-			"data": ServerStatsUpdate{
-				ServerID: serverID,
-				Stats:    stats,
-			},
-		})
+func (c *Collector) AddClient(conn *websocket.Conn) { c.AddScopedClient(conn, true, nil) }
+func (c *Collector) AddScopedClient(conn *websocket.Conn, admin bool, allowed []string) {
+	var scope map[string]bool
+	if !admin {
+		scope = make(map[string]bool)
+		for _, id := range allowed {
+			scope[id] = true
+		}
 	}
-	c.cache.mu.RUnlock()
-
-	log.Printf("WebSocket client connected. Total clients: %d", len(c.clients))
+	c.AddAuthorizedClient(conn, func(id string) bool { return admin || scope[id] })
+}
+func (c *Collector) AddAuthorizedClient(conn *websocket.Conn, authorize func(string) bool) {
+	// Register after the initial snapshot so only one writer uses the connection.
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	c.cache.mu.RLock()
+	defer c.cache.mu.RUnlock()
+	for id, stats := range c.cache.stats {
+		if !authorize(id) {
+			continue
+		}
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.WriteJSON(map[string]interface{}{"type": "stats_update", "data": ServerStatsUpdate{ServerID: id, Stats: stats}}); err != nil {
+			conn.Close()
+			return
+		}
+	}
+	c.clients[conn] = authorize
 }
 
 // RemoveClient unregisters a WebSocket client

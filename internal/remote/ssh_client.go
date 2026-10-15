@@ -2,18 +2,19 @@ package remote
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
-	"strings"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // SSHClient handles SSH connections to a remote server
@@ -45,12 +46,20 @@ func NewSSHClient(server models.Server) (*SSHClient, error) {
 		authMethod = ssh.Password(server.Password)
 	}
 
+	hostsPath := os.Getenv("GOPULSE_SSH_KNOWN_HOSTS")
+	if hostsPath == "" {
+		hostsPath = filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+	}
+	verifyHost, err := knownhosts.New(hostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("trusted SSH host keys required (%s): %w", hostsPath, err)
+	}
 	config := &ssh.ClientConfig{
 		User: server.User,
 		Auth: []ssh.AuthMethod{
 			authMethod,
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Note: In production, use KnownHosts
+		HostKeyCallback: verifyHost,
 		Timeout:         5 * time.Second,
 	}
 
@@ -70,7 +79,7 @@ func (c *SSHClient) Connect() error {
 		return nil
 	}
 
-	addr := fmt.Sprintf("%s:%d", c.server.Host, c.server.Port)
+	addr := net.JoinHostPort(c.server.Host, fmt.Sprint(c.server.Port))
 
 	// Use net.DialTimeout to enable TCP KeepAlive
 	conn, err := net.DialTimeout("tcp", addr, c.config.Timeout)
@@ -83,106 +92,90 @@ func (c *SSHClient) Connect() error {
 		tcpConn.SetKeepAlivePeriod(15 * time.Second)
 	}
 
+	conn.SetDeadline(time.Now().Add(c.config.Timeout))
 	cConn, chans, reqs, err := ssh.NewClientConn(conn, addr, c.config)
 	if err != nil {
 		conn.Close()
 		return err
 	}
 
+	conn.SetDeadline(time.Time{})
 	c.client = ssh.NewClient(cConn, chans, reqs)
 	return nil
 }
 
 // RunCommand executes a command on the remote server and returns the output
 func (c *SSHClient) RunCommand(cmd string) (string, error) {
-	// Acquire semaphore to limit concurrent sessions
-	c.sem <- struct{}{}
-	defer func() {
-		<-c.sem
-		// Throttling: Wait a bit after releasing session to allow server to cleanup
-		time.Sleep(100 * time.Millisecond)
-	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	return c.RunCommandContext(ctx, cmd)
+}
 
-	const maxRetries = 3
-	var lastErr error
-
-	for i := 0; i < maxRetries; i++ {
-		if err := c.Connect(); err != nil {
-			lastErr = err
-			log.Printf("Connect failed (attempt %d): %v", i+1, err)
-
-			// Specific handling for Auth failures (MaxStartups/RateLimit)
-			if strings.Contains(err.Error(), "unable to authenticate") {
-				log.Println("Auth failed (likely server rate limit), waiting 5s...")
-				time.Sleep(5 * time.Second)
-			} else if i < maxRetries-1 {
-				// Standard backoff
-				time.Sleep(time.Duration(i+1) * 2000 * time.Millisecond)
-			}
-			continue
-		}
-
-		c.mu.Lock()
-		client := c.client
-		c.mu.Unlock()
-
-		if client == nil {
-			lastErr = fmt.Errorf("ssh client is nil after connect")
-			continue
-		}
-
-		session, err := client.NewSession()
-		if err != nil {
-			lastErr = err
-			// Check if connection is actually dead or just session limit?
-			if _, _, reqErr := client.SendRequest("keepalive@openssh.com", true, nil); reqErr != nil {
-				log.Printf("Session creation failed and connection seems dead: %v. Reconnecting...", reqErr)
-				c.Close()
-				continue
-			}
-
-			// Connection is alive, likely session limit reached
-			log.Printf("Session creation failed but connection alive (MaxSessions?): %v. Retrying...", err)
-			time.Sleep(1000 * time.Millisecond) // Wait longer for sessions to clear
-			continue
-		}
-
-		// Use a closure to handle session execution to ensure Close is called via defer
-		output, err := func() (string, error) {
-			defer session.Close() // Ensure session is closed
-
-			var stdout, stderr bytes.Buffer
-			session.Stdout = &stdout
-			session.Stderr = &stderr
-
-			if err := session.Run(cmd); err != nil {
-				// Return combined output on error for context
-				return fmt.Sprintf("%s\n%s", stdout.String(), stderr.String()), err
-			}
-			// Return only stdout on success
-			return stdout.String(), nil
-		}()
-
-		if err != nil {
-			if _, ok := err.(*ssh.ExitError); ok {
-				// Command ran but returned non-zero exit code
-				// This is a valid execution, not a network error
-				return output, err
-			}
-
-			// Network or transport error
-			log.Printf("SSH command failed with transport error: %v. Retrying...", err)
-			lastErr = err
-			c.Close() // Force reconnection
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-
-		// Success
-		return output, nil
+// RunCommandContext never retries an executed command: transport loss is an uncertain outcome.
+func (c *SSHClient) RunCommandContext(parent context.Context, cmd string) (string, error) {
+	if err := parent.Err(); err != nil {
+		return "", err
 	}
-
-	return "", fmt.Errorf("command failed after %d attempts: %w", maxRetries, lastErr)
+	ctx, cancel := context.WithTimeout(parent, 8*time.Minute)
+	defer cancel()
+	select {
+	case c.sem <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() { <-c.sem }()
+	if err := c.Connect(); err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil {
+		return "", fmt.Errorf("SSH disconnected")
+	}
+	type sessionResult struct {
+		session *ssh.Session
+		err     error
+	}
+	sessions := make(chan sessionResult)
+	go func() {
+		session, err := client.NewSession()
+		select {
+		case sessions <- sessionResult{session, err}:
+		case <-ctx.Done():
+			if session != nil {
+				session.Close()
+			}
+		}
+	}()
+	var session *ssh.Session
+	select {
+	case result := <-sessions:
+		if result.err != nil {
+			c.Close()
+			return "", result.err
+		}
+		session = result.session
+	case <-ctx.Done():
+		c.Close()
+		return "", fmt.Errorf("SSH session creation cancelled: %w", ctx.Err())
+	}
+	defer session.Close()
+	var stdout, stderr bytes.Buffer
+	session.Stdout, session.Stderr = &stdout, &stderr
+	done := make(chan error, 1)
+	go func() { done <- session.Run(cmd) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			return stdout.String() + "\n" + stderr.String(), err
+		}
+		return stdout.String(), nil
+	case <-ctx.Done():
+		c.Close()
+		session.Close()
+		return "", fmt.Errorf("remote command timed out or cancelled; verify remote state before retrying: %w", ctx.Err())
+	}
 }
 
 // StreamCommand executes a command and returns immediate output stream

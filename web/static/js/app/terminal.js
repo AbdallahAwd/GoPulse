@@ -26,11 +26,11 @@ App.Terminal = {
         this.term = new Terminal({
             cursorBlink: true,
             theme: {
-                background: '#000000',
-                foreground: '#a6e22e', // retro green
-                cursor: '#ffffff',
+                background: '#101113',
+                foreground: '#d6d8dc',
+                cursor: '#c3f36b',
             },
-            fontFamily: 'Courier New, Courier, monospace',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
             fontSize: 14,
         });
 
@@ -53,8 +53,10 @@ App.Terminal = {
 
         this.socket = new WebSocket(wsUrl);
 
-        // WebSocket Event Handlers
+        const socket = this.socket;
+        // Ignore events from a socket disposed during a section change.
         this.socket.onopen = () => {
+            if (this.socket !== socket || !this.term) return;
             this.term.writeln('\x1b[32mConnection established.\x1b[0m\r\n');
             
             // Send resize message on init to sync with exact PTY size
@@ -62,12 +64,14 @@ App.Terminal = {
         };
 
         this.socket.onmessage = (event) => {
+            if (this.socket !== socket || !this.term) return;
             // Write binary/text data to the terminal
             if (typeof event.data === 'string') {
                 this.term.write(event.data);
             } else {
                 const reader = new FileReader();
                 reader.onload = () => {
+                    if (this.socket !== socket || !this.term) return;
                     this.term.write(new Uint8Array(reader.result));
                 };
                 reader.readAsArrayBuffer(event.data);
@@ -75,11 +79,13 @@ App.Terminal = {
         };
 
         this.socket.onerror = (error) => {
+            if (this.socket !== socket || !this.term) return;
             console.error('Terminal WebSocket error:', error);
             this.term.writeln('\r\n\x1b[31mTerminal connection error.\x1b[0m');
         };
 
         this.socket.onclose = (event) => {
+            if (this.socket !== socket || !this.term) return;
             this.term.writeln('\r\n\x1b[31mTerminal connection closed by remote host.\x1b[0m');
             this.isOpen = false;
         };
@@ -125,16 +131,15 @@ App.Terminal = {
     },
 
     close() {
-        if (!this.isOpen) return;
-
         window.removeEventListener('resize', this.onWindowResize);
         if (this.resizeInterval) {
             clearInterval(this.resizeInterval);
         }
 
         if (this.socket) {
-            this.socket.close();
+            const socket = this.socket;
             this.socket = null;
+            socket.close();
         }
 
         if (this.term) {

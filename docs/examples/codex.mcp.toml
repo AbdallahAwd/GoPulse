@@ -1,0 +1,5 @@
+[mcp_servers.gopulse]
+url = "https://gopulse.example.com/api/mcp"
+bearer_token_env_var = "GOPULSE_AGENT_TOKEN"
+startup_timeout_sec = 20
+tool_timeout_sec = 60

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/amaa/gopulse/internal/middleware"
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/amaa/gopulse/internal/monitor"
 	"github.com/go-chi/chi/v5"
@@ -15,7 +16,7 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins in development
+		return middleware.SameOrigin(r)
 	},
 }
 
@@ -31,12 +32,16 @@ func NewStatsHandler(collector *monitor.Collector) *StatsHandler {
 
 // GetStats handles GET /api/stats (or /api/servers/{serverID}/stats if routed)
 func (h *StatsHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	serverID := r.URL.Query().Get("server_id")
+	serverID := chi.URLParam(r, "serverID")
 	if serverID == "" {
-		serverID = chi.URLParam(r, "serverID")
+		serverID = r.URL.Query().Get("server_id")
 	}
 
 	if serverID != "" {
+		if !middleware.CanAccessServer(r, serverID) {
+			respondError(w, http.StatusForbidden, "Server access denied", nil)
+			return
+		}
 		stats, lastUpdate := h.collector.GetCachedStats(serverID)
 		respondJSON(w, http.StatusOK, models.APIResponse{
 			Success: true,
@@ -66,6 +71,10 @@ func (h *StatsHandler) GetStatsHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	if serverID == "" {
 		respondError(w, http.StatusBadRequest, "Server ID required", nil)
+		return
+	}
+	if !middleware.CanAccessServer(r, serverID) {
+		respondError(w, http.StatusForbidden, "Server access denied", nil)
 		return
 	}
 
@@ -107,7 +116,13 @@ func (h *StatsHandler) WebSocketHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Register client
-	h.collector.AddClient(conn)
+	authorize, ok := r.Context().Value(middleware.ServerAuthorizerContextKey).(func(string) bool)
+	if !ok {
+		conn.Close()
+		return
+	}
+	conn.SetReadLimit(1024)
+	h.collector.AddAuthorizedClient(conn, authorize)
 
 	// Handle incoming messages (mainly for ping/pong)
 	go h.handleWebSocket(conn)
@@ -127,7 +142,7 @@ func (h *StatsHandler) handleWebSocket(conn *websocket.Conn) {
 
 		// Echo ping messages
 		if messageType == websocket.PingMessage {
-			if err := conn.WriteMessage(websocket.PongMessage, message); err != nil {
+			if err := conn.WriteControl(websocket.PongMessage, message, time.Now().Add(5*time.Second)); err != nil {
 				log.Printf("WebSocket pong error: %v", err)
 				break
 			}

@@ -1,11 +1,14 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
+	"github.com/subosito/gotenv"
 )
 
 // Config holds all application configuration
@@ -67,6 +70,12 @@ type DatabaseConfig struct {
 
 // Load loads configuration from environment and config file
 func Load() (*Config, error) {
+	// Load optional local configuration without overriding exported variables.
+	if err := gotenv.Load(".env"); err != nil && !os.IsNotExist(err) {
+		// Parser errors can contain file contents, including secrets.
+		return nil, fmt.Errorf("could not load .env: check file syntax and permissions")
+	}
+
 	// Set defaults
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
@@ -100,6 +109,7 @@ func Load() (*Config, error) {
 
 	// Allow environment variable overrides
 	viper.SetEnvPrefix("GOPULSE")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
 	// Try to read config file (non-fatal if not found)
@@ -113,14 +123,16 @@ func Load() (*Config, error) {
 	// JWT Secret is required
 	jwtSecret := viper.GetString("auth.jwt_secret")
 	if jwtSecret == "" {
-		// Generate a random secret if not provided (for development)
+		// Support the legacy JWT_SECRET environment variable without an insecure fallback.
 		jwtSecret = os.Getenv("JWT_SECRET")
 		if jwtSecret == "" {
-			log.Println("WARNING: No JWT_SECRET provided, using insecure default. Set JWT_SECRET environment variable in production!")
-			jwtSecret = "insecure-development-secret-change-in-production"
+			return nil, fmt.Errorf("set GOPULSE_AUTH_JWT_SECRET in the environment or .env to a random secret of at least 32 characters")
 		}
 	}
 
+	if len(jwtSecret) < 32 || strings.Contains(jwtSecret, "change-in-production") {
+		return nil, fmt.Errorf("JWT secret must contain at least 32 characters and must not use the development default")
+	}
 	config := &Config{
 		Server: ServerConfig{
 			Host:         viper.GetString("server.host"),

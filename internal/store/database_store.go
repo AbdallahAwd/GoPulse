@@ -138,7 +138,12 @@ func (s *DatabaseStore) RemoveDatabase(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.db.Exec(`DELETE FROM databases WHERE id = ?`, id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`DELETE FROM databases WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -146,7 +151,10 @@ func (s *DatabaseStore) RemoveDatabase(id string) error {
 	if affected == 0 {
 		return fmt.Errorf("database not found")
 	}
-	return nil
+	if _, err := tx.Exec(`DELETE FROM resource_settings WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetDatabase returns a database record by ID.

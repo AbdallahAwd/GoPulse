@@ -218,7 +218,7 @@ App.Domains = {
     },
 
     async removeDomain(id, name) {
-        if (!confirm(`Are you sure you want to remove "${name}"?\n\nThis will also remove the Nginx configuration.`)) {
+        if (!await App.UI.confirm(`Are you sure you want to remove "${name}"?\n\nThis will also remove the Nginx configuration.`)) {
             return;
         }
 

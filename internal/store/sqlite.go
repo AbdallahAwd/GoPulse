@@ -26,7 +26,7 @@ func sqlitePathForLegacyJSON(legacyPath string) string {
 
 func openSQLiteStore(legacyPath string) (*sql.DB, error) {
 	dbPath := sqlitePathForLegacyJSON(legacyPath)
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return nil, err
 	}
 
@@ -37,8 +37,19 @@ func openSQLiteStore(legacyPath string) (*sql.DB, error) {
 		return db, nil
 	}
 
+	file, err := os.OpenFile(dbPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(dbPath, 0600); err != nil {
+		db.Close()
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
@@ -66,6 +77,19 @@ func openSQLiteStore(legacyPath string) (*sql.DB, error) {
 
 func migrateSQLiteSchema(db *sql.DB) error {
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS agent_credentials (id TEXT PRIMARY KEY,owner TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,data TEXT NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS idx_agent_credentials_owner ON agent_credentials(owner)`,
+		`CREATE TABLE IF NOT EXISTS cron_jobs (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, enabled INTEGER NOT NULL, next_run_at INTEGER NOT NULL, data TEXT NOT NULL, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_server ON cron_jobs(server_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_due ON cron_jobs(enabled,next_run_at)`,
+		`CREATE TABLE IF NOT EXISTS cron_runs (id TEXT PRIMARY KEY, job_id TEXT NOT NULL, server_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, FOREIGN KEY(job_id) REFERENCES cron_jobs(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_cron_runs_job ON cron_runs(job_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cron_runs_active ON cron_runs(job_id) WHERE status='running'`,
+		`CREATE TABLE IF NOT EXISTS resource_settings (id TEXT PRIMARY KEY, data TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY, owner TEXT NOT NULL, resource TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_operations_request_key ON operations(owner,json_extract(data,'$.request_key')) WHERE json_extract(data,'$.request_key') IS NOT NULL AND json_extract(data,'$.request_key')!=''`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_operations_active_resource ON operations(resource) WHERE status IN ('running', 'awaiting_approval')`,
+		`CREATE TABLE IF NOT EXISTS tool_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, tool TEXT NOT NULL, server_id TEXT NOT NULL, outcome TEXT NOT NULL, operation_id TEXT NOT NULL, created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS json_imports (
 			name TEXT PRIMARY KEY,
 			source_path TEXT NOT NULL,
@@ -241,6 +265,21 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to migrate SQLite schema: %w", err)
 		}
+	}
+
+	// Extend legacy audit rows without rebuilding or dropping their history.
+	for _, column := range []string{"owner", "agent_id"} {
+		rows, err := db.Query("SELECT " + column + " FROM tool_audit LIMIT 1")
+		if err == nil {
+			rows.Close()
+		} else {
+			if _, err := db.Exec("ALTER TABLE tool_audit ADD COLUMN " + column + " TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("audit migration: %w", err)
+			}
+		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_audit_owner ON tool_audit(owner,id)`); err != nil {
+		return err
 	}
 
 	// Dynamic migration: Ensure the load_balancers table has the error_message column

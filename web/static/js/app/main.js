@@ -6,60 +6,7 @@
 function init() {
     if (!App.config.SERVER_ID) return;
 
-    // Initialize Charts
-    App.Charts.init();
-
-    // Initialize System Settings and configurations
     App.System.init();
-    App.Files.init();
-
-    // Tabs
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const tab = this.dataset.tab;
-            
-            // UI Update
-            document.querySelectorAll('.tab-btn').forEach(b => {
-                b.classList.remove('border-blue-500', 'bg-gradient-to-r', 'from-blue-600/10', 'to-purple-600/10', 'text-white');
-                b.classList.add('border-transparent', 'text-gray-400', 'hover:text-white', 'hover:bg-gray-700/30');
-                
-                // Reset icon color
-                const icon = b.querySelector('i');
-                if (icon) {
-                    icon.classList.remove('text-blue-400');
-                    icon.classList.add('text-gray-400');
-                }
-            });
-            this.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white', 'hover:bg-gray-700/30');
-            this.classList.add('border-blue-500', 'bg-gradient-to-r', 'from-blue-600/10', 'to-purple-600/10', 'text-white');
-            
-            // Set active icon color
-            const activeIcon = this.querySelector('i');
-            if (activeIcon) {
-                activeIcon.classList.remove('text-gray-400');
-                activeIcon.classList.add('text-blue-400');
-            }
-
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
-            document.getElementById(`${tab}-tab`).classList.remove('hidden');
-
-            // Logic
-            if (tab === 'terminal') {
-                App.Terminal.open();
-            } else {
-                App.Terminal.close();
-            }
-            if (tab === 'processes') App.Processes.load();
-            if (tab === 'docker') App.Docker.refresh();
-            if (tab === 'files') App.Files.list(App.state.currentPath);
-            if (tab === 'projects') App.Projects.load();
-            if (tab === 'domains') App.Domains.load();
-            if (tab === 'load-balancers') App.LoadBalancers.load();
-            if (tab === 'databases') App.Databases.load();
-            if (tab === 'system-users') App.SystemUsers.load();
-            if (tab === 'firewall') App.Firewall.load();
-        });
-    });
 
     // Search Debounce
     App.UI.el('process-search')?.addEventListener('input', function() {
@@ -68,18 +15,21 @@ function init() {
     });
 
     // Polling System
+    let statsLoading = false;
     const poll = async () => {
+        if (statsLoading || document.hidden) return;
+        statsLoading = true;
         try {
+            if (App.Navigation.current !== 'overview') return;
             const res = await App.API.get(`/stats?server_id=${App.config.SERVER_ID}`);
             if (res.success && res.data.stats) App.UI.updateStats(res.data.stats);
-        } catch (e) {}
+        } catch (e) {} finally { statsLoading = false; }
     };
 
-    App.Processes.load();
     poll();
     setInterval(poll, 5000);
     setInterval(() => {
-        if (document.querySelector('.tab-btn.border-blue-500')?.dataset.tab === 'processes') {
+        if (App.Navigation.current === 'processes') {
             App.Processes.load();
         }
     }, 10000);
@@ -89,4 +39,11 @@ function init() {
 window.App = App;
 
 // Run
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+    App.Navigation.init();
+    init();
+    App.Workspace.init();
+    App.Agents.init();
+    App.DashboardSettings.init();
+    App.Fleet.init();
+});

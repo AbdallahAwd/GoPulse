@@ -1,100 +1,31 @@
 {{define "content"}}
-<div class="container mx-auto px-4 py-8">
-    <input type="hidden" id="current-server-id" value="{{.ServerID}}">
-    <!-- breadcrumb -->
-    <nav class="flex mb-4 text-gray-400 text-sm" aria-label="Breadcrumb">
-        <ol class="inline-flex items-center space-x-1 md:space-x-3">
-            <li class="inline-flex items-center">
-                <a href="/" class="inline-flex items-center hover:text-white">
-                    <i class="fas fa-home mr-2"></i>
-                    Servers
-                </a>
-            </li>
-            <li>
-                <div class="flex items-center">
-                    <i class="fas fa-chevron-right mx-2"></i>
-                    <span class="text-white">{{.ServerName}}</span>
-                </div>
-            </li>
-        </ol>
-    </nav>
-    <div class="flex flex-col lg:flex-row gap-8 items-start">
-        
-        <!-- Left Sidebar Navigation -->
-        <aside class="w-full lg:w-64 flex-shrink-0 bg-gray-800/80 border border-gray-700/60 rounded-xl p-4 sticky top-6">
-            <div class="mb-4 px-2 pb-2 border-b border-gray-700/60">
-                <span class="text-xs font-bold uppercase tracking-wider text-gray-400 font-semibold">Server Navigation</span>
-            </div>
-            <nav class="space-y-1" id="dashboard-sidebar-nav">
-                {{if .IsDbOnly}}
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="processes" id="nav-btn-processes">
-                    <i class="fas fa-list text-base text-gray-400 w-5 text-center"></i>
-                    <span>Processes</span>
-                </button>
-                {{else}}
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-blue-500 bg-gradient-to-r from-blue-600/10 to-purple-600/10 text-white" data-tab="processes" id="nav-btn-processes">
-                    <i class="fas fa-list text-base text-blue-400 w-5 text-center"></i>
-                    <span>Processes</span>
-                </button>
-                {{end}}
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="docker" id="nav-btn-docker">
-                    <i class="fab fa-docker text-base text-gray-400 w-5 text-center"></i>
-                    <span>Docker</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="files" id="nav-btn-files">
-                    <i class="fas fa-folder text-base text-gray-400 w-5 text-center"></i>
-                    <span>Files</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30 {{if .IsDbOnly}}hidden{{end}}" data-tab="projects" id="nav-btn-projects">
-                    <i class="fas fa-project-diagram text-base text-gray-400 w-5 text-center"></i>
-                    <span>Projects</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30 {{if .IsDbOnly}}hidden{{end}}" data-tab="domains" id="nav-btn-domains">
-                    <i class="fas fa-globe text-base text-gray-400 w-5 text-center"></i>
-                    <span>Domains</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30 {{if .IsDbOnly}}hidden{{end}}" data-tab="load-balancers" id="nav-btn-load-balancers">
-                    <i class="fas fa-network-wired text-base text-gray-400 w-5 text-center"></i>
-                    <span>Load Balancers</span>
-                </button>
-                {{if .IsDbOnly}}
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-blue-500 bg-gradient-to-r from-blue-600/10 to-purple-600/10 text-white" data-tab="databases" id="nav-btn-databases">
-                    <i class="fas fa-database text-base text-blue-400 w-5 text-center"></i>
-                    <span>Databases</span>
-                </button>
-                {{else}}
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="databases" id="nav-btn-databases">
-                    <i class="fas fa-database text-base text-gray-400 w-5 text-center"></i>
-                    <span>Databases</span>
-                </button>
-                {{end}}
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="terminal" id="nav-btn-terminal">
-                    <i class="fas fa-terminal text-base text-gray-400 w-5 text-center"></i>
-                    <span>Terminal</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="system-users" id="nav-btn-system-users">
-                    <i class="fas fa-user-gear text-base text-gray-400 w-5 text-center"></i>
-                    <span>Server Users</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="firewall" id="nav-btn-firewall">
-                    <i class="fas fa-shield-alt text-base text-gray-400 w-5 text-center"></i>
-                    <span>Firewall</span>
-                </button>
-                <button class="tab-btn flex items-center space-x-3 w-full px-4 py-3 rounded-lg font-medium text-left transition-all border-l-4 border-transparent text-gray-400 hover:text-white hover:bg-gray-700/30" data-tab="settings" id="nav-btn-settings">
-                    <i class="fas fa-cog text-base text-gray-400 w-5 text-center"></i>
-                    <span>Settings</span>
-                </button>
-            </nav>
-        </aside>
-
+<div class="console-page dashboard-page">
+    <input type="hidden" id="current-server-id" value="{{.ServerID}}" data-name="{{.ServerName}}" data-host="{{.ServerHost}}">
+    <div class="flex flex-col gap-8 items-start">
         <!-- Main Content Area -->
         <main class="flex-1 min-w-0 w-full space-y-6">
+            <label class="server-mobile-navigation" for="server-view-selector">Server section
+                <select id="server-view-selector" class="workspace-input w-full mt-2">
+                {{range .ServerNavigation}}{{if or (not $.IsDbOnly) (not .AppOnly)}}<option value="{{.Key}}">{{.Group}} · {{.Label}}</option>{{end}}{{end}}
+                </select>
+            </label>
+            <div class="console-page-heading">
+                <div><p class="console-eyebrow">SERVER WORKSPACE <span class="console-separator">/</span> {{.ServerName}}</p><h1 id="server-section-title">Overview</h1><p id="server-section-description" class="console-description">Manage resources and inspect this server.</p></div>
+                <button onclick="App.System.showPowerModal()" class="console-button secondary"><i class="fas fa-power-off" aria-hidden="true"></i>Power options</button>
+            </div>
+            <section id="overview-tab" class="tab-content space-y-6">
+                <div class="server-resource-grid">
+                    {{if not .IsDbOnly}}<a href="?view=projects" class="server-resource-card"><span class="fleet-role-icon apps"><i class="fas fa-cubes" aria-hidden="true"></i></span><h2>Applications</h2><p>Build, deploy, and manage your services.</p><span>Open applications <i class="fas fa-arrow-right" aria-hidden="true"></i></span></a>{{end}}
+                    <a href="?view=databases" class="server-resource-card"><span class="fleet-role-icon data"><i class="fas fa-database" aria-hidden="true"></i></span><h2>Databases</h2><p>Manage instances, services, and backups.</p><span>Open databases <i class="fas fa-arrow-right" aria-hidden="true"></i></span></a>
+                    {{if not .IsDbOnly}}<a href="?view=load-balancers" class="server-resource-card"><span class="fleet-role-icon edge"><i class="fas fa-network-wired" aria-hidden="true"></i></span><h2>Load balancers</h2><p>Route traffic to applications across servers.</p><span>Open load balancers <i class="fas fa-arrow-right" aria-hidden="true"></i></span></a>{{end}}
+                </div>
+                <div class="console-section-heading"><div><h2>Host metrics</h2><p>Live resource usage on this server.</p></div><span class="console-subtle"><i class="fas fa-chart-line" aria-hidden="true"></i> Updated every 5 seconds</span></div>
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
                 <div class="stat-card rounded-lg shadow-lg p-6 text-white">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm opacity-80">CPU Usage</p>
-                    <p class="text-3xl font-bold mt-2" id="cpu-usage">0%</p>
+                    <p class="text-3xl font-bold mt-2" id="cpu-usage">—</p>
                 </div>
                 <i class="fas fa-microchip text-4xl opacity-50"></i>
             </div>
@@ -107,7 +38,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm opacity-80">Memory</p>
-                    <p class="text-3xl font-bold mt-2" id="memory-usage">0%</p>
+                    <p class="text-3xl font-bold mt-2" id="memory-usage">—</p>
                 </div>
                 <i class="fas fa-memory text-4xl opacity-50"></i>
             </div>
@@ -121,7 +52,7 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm opacity-80">Disk Usage</p>
-                    <p class="text-3xl font-bold mt-2" id="disk-usage">0%</p>
+                    <p class="text-3xl font-bold mt-2" id="disk-usage">—</p>
                 </div>
                 <i class="fas fa-hdd text-4xl opacity-50"></i>
             </div>
@@ -135,11 +66,11 @@
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm opacity-80">Load Average</p>
-                    <p class="text-3xl font-bold mt-2" id="load-avg">0.00</p>
+                    <p class="text-3xl font-bold mt-2" id="load-avg">—</p>
                 </div>
                 <i class="fas fa-chart-line text-4xl opacity-50"></i>
             </div>
-            <p class="text-sm mt-4 opacity-80" id="load-details">1m: 0.00 | 5m: 0.00 | 15m: 0.00</p>
+            <p class="text-sm mt-4 opacity-80" id="load-details">Waiting for metrics…</p>
         </div>
     </div>
 
@@ -147,9 +78,6 @@
 
 
 
-    <!-- Processes Tab -->
-    <div id="processes-tab" class="tab-content space-y-6">
-        
         <!-- Performance History Charts -->
         <div class="bg-gray-800 rounded-lg shadow-lg p-6">
             <div class="flex items-center justify-between mb-6">
@@ -196,6 +124,10 @@
                 </div>
             </div>
         </div>
+            </section>
+    <!-- Processes Tab -->
+    <div id="processes-tab" class="tab-content hidden space-y-6">
+
         <div class="bg-gray-800 rounded-lg shadow-lg p-6">
             <div class="flex items-center justify-between mb-4">
                 <h2 class="text-xl font-bold">Running Processes</h2>
@@ -233,161 +165,70 @@
         </div>
     </div>
 
+    <!-- Cron jobs are scheduled by GoPulse for this server, not by its crontab. -->
+    <section id="cron-tab" class="tab-content hidden" data-can-write="{{.CanWriteCron}}">
+        <div class="cron-heading"><div><h2>Scheduled jobs</h2><p>Automate recurring commands and track every execution.</p></div><div class="cron-heading-actions"><button id="cron-refresh" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button>{{if .CanWriteCron}}<button id="cron-create" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Create job</button>{{end}}</div></div>
+        <div class="cron-summary" id="cron-summary" aria-live="polite"></div>
+        <div class="cron-toolbar"><label class="cron-search"><i class="fas fa-search" aria-hidden="true"></i><input id="cron-search" type="search" placeholder="Search jobs or commands" aria-label="Search cron jobs"></label><select id="cron-filter" aria-label="Filter cron jobs"><option value="all">All jobs</option><option value="enabled">Enabled</option><option value="paused">Paused</option><option value="running">Running</option><option value="failed">Last run failed</option></select></div>
+        <p id="cron-error" class="workspace-alert" role="alert"></p>
+        <div class="cron-table-card"><div class="cron-table-scroll" role="region" tabindex="0" aria-label="Cron jobs"><table class="cron-table"><thead><tr><th scope="col">Job</th><th scope="col">Schedule</th><th scope="col">Next run</th><th scope="col">Last run</th><th scope="col" class="cron-actions-column">Actions</th></tr></thead><tbody id="cron-jobs"><tr><td colspan="5" class="cron-empty">Loading jobs…</td></tr></tbody></table></div></div>
+        <p class="cron-scheduler-note"><i class="fas fa-circle-info" aria-hidden="true"></i>GoPulse must be running to dispatch jobs. Missed runs are skipped, and a job never overlaps itself. Existing system crontabs are left unchanged.</p>
+    </section>
+
+    <dialog id="cron-editor" class="cron-dialog" aria-labelledby="cron-editor-title">
+        <form id="cron-form" class="cron-dialog-layout">
+            <header class="cron-dialog-header"><div><h2 id="cron-editor-title">Create cron job</h2><p>Schedule a shell command on {{.ServerName}}.</p></div><button type="button" onclick="App.Cron.closeEditor()" class="cron-close" aria-label="Close job editor"><i class="fas fa-xmark" aria-hidden="true"></i></button></header>
+            <div class="cron-dialog-body">
+                <p id="cron-form-error" class="workspace-alert" role="alert"></p>
+                <label class="cron-field" for="cron-name">Job name<input id="cron-name" required maxlength="100" placeholder="Daily report"></label>
+                <fieldset class="cron-schedule-builder"><legend>How often should this job run?</legend><div id="cron-frequency-options" class="cron-frequency-grid">
+                    <button type="button" data-frequency="minutes" aria-pressed="false"><i class="fas fa-stopwatch" aria-hidden="true"></i><strong>Every few minutes</strong><span>Repeat throughout the day</span></button>
+                    <button type="button" data-frequency="hourly" aria-pressed="false"><i class="fas fa-clock" aria-hidden="true"></i><strong>Hourly</strong><span>At a minute you choose</span></button>
+                    <button type="button" data-frequency="daily" aria-pressed="true"><i class="fas fa-sun" aria-hidden="true"></i><strong>Daily</strong><span>Once a day at a set time</span></button>
+                    <button type="button" data-frequency="weekly" aria-pressed="false"><i class="fas fa-calendar-week" aria-hidden="true"></i><strong>Weekly</strong><span>Choose a day and time</span></button>
+                    <button type="button" data-frequency="monthly" aria-pressed="false"><i class="fas fa-calendar-days" aria-hidden="true"></i><strong>Monthly</strong><span>Choose a date and time</span></button>
+                    <button type="button" data-frequency="custom" aria-pressed="false"><i class="fas fa-sliders" aria-hidden="true"></i><strong>Custom</strong><span>Use a cron expression</span></button>
+                </div></fieldset>
+                <div class="cron-form-grid cron-timing-fields">
+                    <label id="cron-interval-field" class="cron-field hidden" for="cron-interval">Repeat every<select id="cron-interval" aria-label="Repeat every"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="20">20 minutes</option><option value="30">30 minutes</option></select></label>
+                    <label id="cron-hour-minute-field" class="cron-field hidden" for="cron-hour-minute">Minute past the hour<input id="cron-hour-minute" aria-label="Minute past the hour" type="number" min="0" max="59" value="0"><span class="cron-field-hint">For example, 15 runs at 9:15, 10:15, 11:15…</span></label>
+                    <label id="cron-weekday-field" class="cron-field hidden" for="cron-weekday">Day of the week<select id="cron-weekday" aria-label="Day of the week"><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option></select></label>
+                    <label id="cron-monthday-field" class="cron-field hidden" for="cron-monthday">Day of the month<input id="cron-monthday" aria-label="Day of the month" type="number" min="1" max="31" value="1"><span class="cron-field-hint">Months without this date are skipped.</span></label>
+                    <label id="cron-time-field" class="cron-field" for="cron-time">Run at<input id="cron-time" type="time" value="00:00" aria-label="Run at"></label>
+                    <label class="cron-field" for="cron-timezone">Timezone<input id="cron-timezone" required maxlength="100" list="cron-timezones" placeholder="UTC"><datalist id="cron-timezones"><option value="UTC"><option value="Africa/Cairo"><option value="Europe/London"><option value="Europe/Berlin"><option value="America/New_York"><option value="America/Los_Angeles"><option value="Asia/Dubai"><option value="Asia/Kolkata"><option value="Asia/Tokyo"></datalist></label>
+                </div>
+                <p id="cron-schedule-summary" class="cron-schedule-summary" aria-live="polite"></p>
+                <details id="cron-advanced-schedule" class="cron-advanced-schedule"><summary>Advanced · Cron expression<i class="fas fa-chevron-down" aria-hidden="true"></i></summary><label class="cron-field" for="cron-schedule">Cron expression<input id="cron-schedule" class="cron-code-input" required maxlength="120" placeholder="0 0 * * *" aria-label="Cron expression"><span class="cron-field-hint">Minute · Hour · Day of month · Month · Day of week (0–6, Sunday–Saturday). Editing this selects a custom schedule.</span></label></details>
+                <div class="cron-schedule-preview"><div><span>Next executions</span><button type="button" id="cron-preview-refresh" class="cron-text-button">Validate schedule</button></div><ol id="cron-preview" aria-live="polite"><li>Choose a schedule to see upcoming runs.</li></ol></div>
+                <label class="cron-field" for="cron-command">Command<textarea id="cron-command" aria-label="Command" class="cron-code-input" required maxlength="16384" rows="4" spellcheck="false" placeholder="/usr/local/bin/generate-report"></textarea><span class="cron-field-hint">Runs using /bin/sh as the server's SSH account; local jobs use the GoPulse account. Use absolute executable paths and keep secrets in server-side files.</span></label>
+                <div class="cron-form-grid"><label class="cron-field" for="cron-directory">Working directory <span class="cron-optional">optional</span><input id="cron-directory" aria-label="Working directory" maxlength="4096" placeholder="/srv/my-app"><span class="cron-field-hint">Leave empty to use the account's home directory.</span></label><label class="cron-field" for="cron-timeout">Timeout in seconds<input id="cron-timeout" aria-label="Timeout in seconds" type="number" required min="1" max="3600" value="300"><span class="cron-field-hint">1–3600 seconds. Long runs are terminated.</span></label></div>
+                <label class="cron-enable"><input id="cron-enabled" aria-label="Enable schedule after saving" type="checkbox"><span>Enable schedule after saving<small>Pausing skips future runs; it does not cancel an active command.</small></span></label>
+            </div>
+            <footer class="cron-dialog-footer"><button type="button" onclick="App.Cron.closeEditor()" class="console-button secondary">Cancel</button><button id="cron-save" type="submit" class="console-button">Create job</button></footer>
+        </form>
+    </dialog>
+
+    <dialog id="cron-history" class="cron-dialog cron-history-dialog" aria-labelledby="cron-history-title">
+        <div class="cron-dialog-layout"><header class="cron-dialog-header"><div><h2 id="cron-history-title">Execution history</h2><p id="cron-history-subtitle"></p></div><button type="button" onclick="App.Cron.closeHistory()" class="cron-close" aria-label="Close execution history"><i class="fas fa-xmark" aria-hidden="true"></i></button></header>
+            <div class="cron-dialog-body"><div class="cron-history-heading"><span>Latest 100 executions are retained.</span><button id="cron-history-refresh" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button></div><p id="cron-history-error" class="workspace-alert" role="alert"></p><div class="cron-table-scroll"><table class="cron-table"><thead><tr><th scope="col">Started</th><th scope="col">Status</th><th scope="col">Trigger</th><th scope="col">Duration</th><th scope="col">Output</th></tr></thead><tbody id="cron-runs"></tbody></table></div>
+                <div class="cron-pagination"><button id="cron-runs-prev" class="console-button secondary">Previous</button><span id="cron-runs-page"></span><button id="cron-runs-next" class="console-button secondary">Next</button></div>
+                <section id="cron-run-detail" class="cron-run-detail hidden" aria-label="Execution output"><div class="cron-output-heading"><div><h3>Execution output</h3><p id="cron-run-meta"></p></div><button id="cron-copy-output" class="console-button secondary"><i class="fas fa-copy" aria-hidden="true"></i>Copy output</button></div><code id="cron-run-command"></code><p id="cron-run-error" role="alert"></p><pre id="cron-run-output" tabindex="0"></pre><p id="cron-output-note" class="cron-field-hint"></p></section>
+            </div><footer class="cron-dialog-footer"><button type="button" onclick="App.Cron.closeHistory()" class="console-button secondary">Close</button></footer>
+        </div>
+    </dialog>
+
     <!-- Docker Tab -->
     <div id="docker-tab" class="tab-content hidden">
-        <!-- Docker Not Installed Overlay -->
-        <div id="docker-not-installed" class="hidden">
-            <div class="bg-gray-800 rounded-lg shadow-lg p-8 text-center">
-                <div class="max-w-md mx-auto">
-                    <div class="w-20 h-20 mx-auto mb-6 bg-blue-900/30 rounded-full flex items-center justify-center">
-                        <i class="fab fa-docker text-blue-400 text-4xl"></i>
-                    </div>
-                    <h2 class="text-2xl font-bold text-white mb-3">Docker Not Installed</h2>
-                    <p class="text-gray-400 mb-6">Docker is not installed on this server. Install it to manage
-                        containers, images, volumes, and networks.</p>
-                    <button id="install-docker-btn" onclick="App.Docker.installDocker()"
-                        class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-lg font-medium transition-all duration-200 shadow-lg shadow-blue-900/30 text-lg">
-                        <i class="fab fa-docker mr-2"></i>Install Docker
-                    </button>
-                    <div id="docker-install-terminal" class="hidden mt-6 text-left">
-                        <div class="bg-gray-900 rounded-lg border border-gray-700 p-4 max-h-64 overflow-y-auto font-mono text-xs text-green-400 whitespace-pre-wrap"
-                            id="docker-install-output"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Docker Content (shown when installed) -->
+        <div id="docker-not-installed" class="hidden"><div class="docker-empty-state"><i class="fab fa-docker" aria-hidden="true"></i><h2>Docker is not installed</h2><p>Install Docker on this server to manage containers, images, volumes, and networks.</p><button id="install-docker-btn" onclick="App.Docker.installDocker()" class="console-button">Install Docker</button><div id="docker-install-terminal" class="hidden"><pre id="docker-install-output" class="docker-stream-output"></pre></div></div></div>
         <div id="docker-content">
-            <div class="bg-gray-800 rounded-lg shadow-lg p-6">
-                <!-- Docker Sub-Navigation -->
-                <div class="flex items-center justify-between mb-6 border-b border-gray-700 pb-4">
-                    <div class="flex space-x-4">
-                        <button class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white"
-                            data-target="containers-view">
-                            <i class="fas fa-box-open mr-2"></i>Containers
-                        </button>
-                        <button
-                            class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700"
-                            data-target="images-view">
-                            <i class="fas fa-compact-disc mr-2"></i>Images
-                        </button>
-                        <button
-                            class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700"
-                            data-target="volumes-view">
-                            <i class="fas fa-hdd mr-2"></i>Volumes
-                        </button>
-                        <button
-                            class="docker-nav-btn px-3 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-gray-700"
-                            data-target="networks-view">
-                            <i class="fas fa-network-wired mr-2"></i>Networks
-                        </button>
-                    </div>
-                    <div class="flex space-x-2">
-                        <button id="docker-refresh-btn" onclick="App.Docker.refresh()"
-                            class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded-lg text-sm text-gray-300 hover:text-white">
-                            <i class="fas fa-sync-alt mr-2"></i>Refresh
-                        </button>
-                        <button onclick="App.Docker.showBuildModal()"
-                            class="bg-indigo-600 hover:bg-indigo-700 px-3 py-2 rounded-lg text-sm text-white model-trigger">
-                            <i class="fas fa-tools mr-2"></i>Build
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Containers View -->
-                <div id="containers-view" class="docker-view">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold text-white">Active Containers</h3>
-                        <!-- Filter/Search could go here -->
-                    </div>
-                    <div id="containers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div class="col-span-full text-center py-8 text-gray-400">
-                            <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
-                            <p>Loading containers...</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Images View -->
-                <div id="images-view" class="docker-view hidden">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold text-white">Local Images</h3>
-                        <button onclick="App.Docker.Images.showPullModal()"
-                            class="bg-green-600 hover:bg-green-700 px-3 py-2 rounded-lg text-sm text-white">
-                            <i class="fas fa-download mr-2"></i>Pull Image
-                        </button>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left">
-                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
-                                <tr>
-                                    <th class="px-4 py-3">ID</th>
-                                    <th class="px-4 py-3">Repository</th>
-                                    <th class="px-4 py-3">Tag</th>
-                                    <th class="px-4 py-3">Size</th>
-                                    <th class="px-4 py-3 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="images-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
-                                <tr>
-                                    <td colspan="5" class="text-center py-4">Loading images...</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Volumes View -->
-                <div id="volumes-view" class="docker-view hidden">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold text-white">Volumes</h3>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left">
-                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
-                                <tr>
-                                    <th class="px-4 py-3">Name</th>
-                                    <th class="px-4 py-3">Driver</th>
-                                    <th class="px-4 py-3">Mountpoint</th>
-                                    <th class="px-4 py-3 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="volumes-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
-                                <tr>
-                                    <td colspan="4" class="text-center py-4">Loading volumes...</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- Networks View -->
-                <div id="networks-view" class="docker-view hidden">
-                    <div class="flex justify-between items-center mb-4">
-                        <h3 class="text-lg font-semibold text-white">Networks</h3>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left">
-                            <thead class="bg-gray-900 text-gray-400 uppercase text-xs">
-                                <tr>
-                                    <th class="px-4 py-3">ID</th>
-                                    <th class="px-4 py-3">Name</th>
-                                    <th class="px-4 py-3">Driver</th>
-                                    <th class="px-4 py-3">Scope</th>
-                                    <th class="px-4 py-3 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="networks-tbody" class="divide-y divide-gray-700 text-sm text-gray-300">
-                                <tr>
-                                    <td colspan="5" class="text-center py-4">Loading networks...</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-            </div>
+            <div class="docker-inventory-heading"><div><h2>Docker resources</h2><p>Manage the containers and storage on this server.</p></div><div class="docker-heading-actions"><button id="docker-refresh-btn" onclick="App.Docker.refresh()" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button><button onclick="App.Docker.showBuildModal()" class="console-button"><i class="fas fa-hammer" aria-hidden="true"></i>Build image</button></div></div>
+            <nav class="docker-resource-navigation" aria-label="Docker sections"><div class="docker-primary-tabs">
+                <button class="docker-nav-btn docker-section-button" data-target="containers-view" aria-pressed="true">Containers</button><button class="docker-nav-btn docker-section-button" data-target="images-view" aria-pressed="false">Images</button><button class="docker-nav-btn docker-section-button" data-target="volumes-view" aria-pressed="false">Volumes</button>
+            </div><details id="docker-manage-menu" class="docker-tools-menu"><summary><span id="docker-manage-label">Manage</span><i class="fas fa-chevron-down" aria-hidden="true"></i></summary><div><button class="docker-nav-btn" data-target="networks-view" aria-pressed="false"><i class="fas fa-network-wired" aria-hidden="true"></i>Networks</button></div></details></nav>
+            <div id="containers-view" class="docker-view"><div class="docker-view-heading"><div><h3>Containers</h3><p>Runtime status, lifecycle controls, and container logs.</p></div><span id="docker-containers-count" class="docker-resource-count"></span></div><div id="containers-grid" class="docker-container-grid"><div class="docker-empty-state"><i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i><p>Loading containers…</p></div></div></div>
+            <div id="images-view" class="docker-view hidden"><div class="docker-view-heading"><div><h3>Images</h3><p>Local images available to run on this server.</p></div><button onclick="App.Docker.Images.showPullModal()" class="console-button"><i class="fas fa-download" aria-hidden="true"></i>Pull image</button></div><div class="docker-table-card"><div class="docker-table-scroll" role="region" tabindex="0" aria-label="Images"><table class="docker-resource-table"><thead><tr><th scope="col">Image</th><th scope="col">Tag</th><th scope="col">Size</th><th scope="col" class="docker-actions-heading">Actions</th></tr></thead><tbody id="images-tbody"><tr><td colspan="4" class="docker-table-state">Loading images…</td></tr></tbody></table></div></div></div>
+            <div id="volumes-view" class="docker-view hidden"><div class="docker-view-heading"><div><h3>Volumes</h3><p>Persistent Docker storage and its location on the server.</p></div><span id="docker-volumes-count" class="docker-resource-count"></span></div><div class="docker-table-card"><div class="docker-table-scroll" role="region" tabindex="0" aria-label="Volumes"><table class="docker-resource-table"><thead><tr><th scope="col">Name</th><th scope="col">Driver</th><th scope="col">Mountpoint</th><th scope="col" class="docker-actions-heading">Actions</th></tr></thead><tbody id="volumes-tbody"><tr><td colspan="4" class="docker-table-state">Loading volumes…</td></tr></tbody></table></div></div></div>
+            <div id="networks-view" class="docker-view hidden"><div class="docker-view-heading"><div><h3>Networks</h3><p>Network drivers and scope for container communication.</p></div><span id="docker-networks-count" class="docker-resource-count"></span></div><div class="docker-table-card"><div class="docker-table-scroll" role="region" tabindex="0" aria-label="Networks"><table class="docker-resource-table"><thead><tr><th scope="col">Network</th><th scope="col">Driver</th><th scope="col">Scope</th><th scope="col" class="docker-actions-heading">Actions</th></tr></thead><tbody id="networks-tbody"><tr><td colspan="4" class="docker-table-state">Loading networks…</td></tr></tbody></table></div></div></div>
         </div>
     </div> <!-- end docker-content -->
 
@@ -507,15 +348,9 @@
 
     <!-- Projects Tab -->
     <div id="projects-tab" class="tab-content hidden space-y-6">
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-                <h2 class="text-xl font-bold text-white">Projects</h2>
-                <div class="mt-1 h-1 w-12 rounded-full bg-blue-500"></div>
-            </div>
-            <button onclick="App.Projects.showCreateModal()"
-                class="self-start md:self-auto bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
-                <i class="fas fa-plus mr-2"></i>New Project
-            </button>
+        <div class="app-inventory-heading">
+            <div><h2>Your applications</h2><p>Manage builds, deployments, and settings on this server.</p></div>
+            <button onclick="App.Projects.showCreateModal()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>New application</button>
         </div>
 
         <div id="projects-list">
@@ -776,7 +611,7 @@
             </div>
 
             <!-- Create Linux User Modal -->
-            <div id="add-linux-user-modal" class="fixed inset-0 bg-black/80 backdrop-blur-xs hidden flex items-center justify-center z-50">
+            <div id="add-linux-user-modal" class="ui-dialog-overlay fixed inset-0 bg-black/80 backdrop-blur-xs hidden flex items-center justify-center z-50">
                 <div class="bg-gray-800 rounded-2xl shadow-2xl p-8 w-full max-w-md border border-gray-700">
                     <div class="flex justify-between items-center mb-6">
                         <h3 class="text-xl font-bold text-white flex items-center space-x-2">
@@ -883,17 +718,43 @@
     <div id="databases-tab" class="tab-content hidden space-y-6">
         <!-- List View -->
         <div id="db-list-view" class="space-y-6">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h2 class="text-2xl font-bold text-white tracking-tight">Database Clusters</h2>
-                    <p class="text-sm text-gray-400">Deploy and manage high-performance, containerized relational and document databases.</p>
+            <div class="db-inventory-heading">
+                <div><h2>Your databases</h2><p>All database instances and backend services on this server.</p></div>
+                <div class="db-inventory-actions">
+                    <details id="db-tools-menu" class="db-tools-menu">
+                        <summary><i class="fas fa-ellipsis" aria-hidden="true"></i><span>More</span></summary>
+                        <div class="db-tools-popover">
+                            <button type="button" aria-label="Connect AI client" onclick="App.Databases.openTool('ai')"><i class="fas fa-plug" aria-hidden="true"></i><span>Connect AI client<small>Configure access for your AI tools</small></span></button>
+                            <button type="button" aria-label="Operations and approvals" onclick="App.Databases.openTool('operations')"><i class="fas fa-list-check" aria-hidden="true"></i><span>Operations &amp; approvals<small>Review progress and requested changes</small></span></button>
+                        </div>
+                    </details>
+                    {{if .CanWriteDatabases}}<button id="db-provision-btn" onclick="App.Databases.openProvisionModal()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Provision database</button>{{end}}
                 </div>
-                <button id="db-provision-btn" onclick="App.Databases.openProvisionModal('clusters')" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
-                    <i class="fas fa-plus"></i>
-                    <span id="db-provision-btn-text">Provision Database</span>
-                </button>
             </div>
 
+            <div class="db-inventory-summary" aria-live="polite">
+                <span><strong id="db-stat-total">—</strong> <span id="db-total-label">instances</span></span>
+                <span><span class="db-status-dot"></span><strong id="db-stat-running">—</strong> running <small>saved state</small></span>
+                <span><strong id="db-stat-engines">—</strong> <span id="db-engines-label">engines in use</span></span>
+            </div>
+
+            <div class="db-inventory-toolbar">
+                <label class="db-inventory-search"><i class="fas fa-search" aria-hidden="true"></i><span class="sr-only">Search databases</span><input id="db-inventory-search" type="search" placeholder="Search by name or database…" oninput="App.Databases.filterInventory()"></label>
+                <label class="sr-only" for="db-engine-filter">Filter by engine</label>
+                <select id="db-engine-filter" class="console-select" onchange="App.Databases.filterInventory()"><option value="all">All engines</option></select>
+                <button type="button" class="db-refresh-button" onclick="App.Databases.load()" aria-label="Refresh databases" title="Refresh databases"><i class="fas fa-rotate" aria-hidden="true"></i></button>
+            </div>
+            <div class="db-inventory-caption"><span id="db-inventory-count" aria-live="polite">Loading inventory…</span><span>Connection checks are available on each instance.</span></div>
+            <div id="db-clusters-section" class="space-y-4">
+                <div class="db-inventory-grid" id="databases-grid"></div>
+                <div id="db-clusters-empty" class="db-inventory-empty hidden">
+                    <i class="fas fa-database" aria-hidden="true"></i><h3 id="db-empty-title">No databases yet</h3>
+                    <p id="db-empty-description">Provision your first database and choose the engine that fits your application.</p>
+                    <button id="db-clear-filters" type="button" class="console-button secondary hidden" onclick="App.Databases.clearInventoryFilters()">Clear filters</button>
+                </div>
+            </div>
+            <details id="db-diagnostics-panel" class="db-diagnostics-panel {{if not .IsDbOnly}}hidden{{end}}" ontoggle="if (this.open) App.Databases.refreshDiagnostics()">
+                <summary><i class="fas fa-chart-line" aria-hidden="true"></i>Server diagnostics<span>Connections and storage</span></summary>
             <!-- Focused Database Diagnostics -->
             <div id="db-focused-diagnostics" class="grid grid-cols-1 md:grid-cols-3 gap-6 {{if not .IsDbOnly}}hidden{{end}}">
                 <!-- Circular Connection Gauge -->
@@ -911,7 +772,7 @@
                             <span class="text-[8px] uppercase tracking-widest text-gray-500 font-bold mt-1">Conns</span>
                         </div>
                     </div>
-                    <p class="text-[10px] text-gray-500 mt-1">Total active SSH thread channels on target VPS cluster.</p>
+                    <p class="text-[10px] text-gray-500 mt-1">Reported database client connections on this server.</p>
                 </div>
 
                 <!-- Footprint Size Storage -->
@@ -940,132 +801,21 @@
                 </div>
             </div>
 
-            <!-- Stats Ribbon -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-8 gap-4">
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">MySQL Engines</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-mysql">0</p>
-                    </div>
-                    <div class="p-3 bg-blue-900/20 text-blue-400 rounded-lg">
-                        <i class="fas fa-database text-xl"></i>
-                    </div>
-                </div>
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">PostgreSQL Engines</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-postgres">0</p>
-                    </div>
-                    <div class="p-3 bg-indigo-900/20 text-indigo-400 rounded-lg">
-                        <i class="fas fa-server text-xl"></i>
-                    </div>
-                </div>
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">MongoDB Engines</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-mongodb">0</p>
-                    </div>
-                    <div class="p-3 bg-emerald-900/20 text-emerald-400 rounded-lg">
-                        <i class="fas fa-cubes text-xl"></i>
-                    </div>
-                </div>
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">Redis Engines</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-redis">0</p>
-                    </div>
-                    <div class="p-3 bg-red-900/20 text-red-400 rounded-lg">
-                        <i class="fas fa-database text-xl"></i>
-                    </div>
-                </div>
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">SQLite Engines</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-sqlite">0</p>
-                    </div>
-                    <div class="p-3 bg-sky-900/20 text-sky-400 rounded-lg">
-                        <i class="fas fa-file-alt text-xl"></i>
-                    </div>
-                </div>
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">PocketBase BaaS</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-pocketbase">0</p>
-                    </div>
-                    <div class="p-3 bg-orange-950/20 text-orange-400 rounded-lg">
-                        <i class="fas fa-server text-xl"></i>
-                    </div>
-                </div>
-
-                <div class="bg-gray-800/40 backdrop-blur-md rounded-xl p-5 border border-gray-700/40 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">Appwrite BaaS</p>
-                        <p class="text-2xl font-bold text-white mt-1" id="db-stat-appwrite">0</p>
-                    </div>
-                    <div class="p-3 bg-pink-950/20 text-pink-400 rounded-lg">
-                        <i class="fas fa-rocket text-xl"></i>
-                    </div>
-                </div>
-            </div>
-
-
-            <!-- Sub-tab Navigation Pills -->
-            <div id="db-subtabs-container" class="flex space-x-2 border-b border-gray-700/40 pb-px mb-6">
-                <button onclick="App.Databases.switchSubTab('clusters')" id="db-subtab-clusters" class="py-2.5 px-4 font-bold text-sm border-b-2 border-blue-500 text-blue-400 transition-all flex items-center space-x-2">
-                    <i class="fas fa-database text-xs"></i>
-                    <span>Database Clusters</span>
-                </button>
-                <button onclick="App.Databases.switchSubTab('baas')" id="db-subtab-baas" class="py-2.5 px-4 font-bold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-all flex items-center space-x-2">
-                    <i class="fas fa-cubes text-xs"></i>
-                    <span>Backend-As-A-Service (BaaS)</span>
-                </button>
-            </div>
-
-            <!-- Standard Database Clusters Section -->
-            <div id="db-clusters-section" class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="databases-grid">
-                    <!-- Populated dynamically via JS -->
-                </div>
-                <div id="db-clusters-empty" class="hidden bg-gray-800/20 rounded-xl p-12 text-center border border-gray-700/30 backdrop-blur-md shadow-lg">
-                    <i class="fas fa-database text-5xl text-gray-600 mb-4 animate-pulse"></i>
-                    <h3 class="text-lg font-bold text-white">No Database Clusters Provisioned</h3>
-                    <p class="text-sm text-gray-400 mt-1 max-w-sm mx-auto mb-5">Get started by provisioning an isolated MySQL, Postgres, or MongoDB cluster instantly.</p>
-                    <button onclick="App.Databases.openProvisionModal('clusters')" class="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2 mx-auto">
-                        <i class="fas fa-plus"></i>
-                        <span>Provision Database</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Backend-As-A-Service (BaaS) Instances Section -->
-            <div id="baas-section" class="space-y-4 hidden">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="baas-grid">
-                    <!-- Populated dynamically via JS -->
-                </div>
-                <div id="baas-empty" class="hidden bg-gray-800/20 rounded-xl p-12 text-center border border-gray-700/30 backdrop-blur-md shadow-lg">
-                    <i class="fas fa-cubes text-5xl text-orange-500/60 mb-4 animate-pulse"></i>
-                    <h3 class="text-lg font-bold text-white">No BaaS Instances Deployed</h3>
-                    <p class="text-sm text-gray-400 mt-1 max-w-sm mx-auto mb-5">Deploy isolated self-hosted backend systems like PocketBase instantly on this VPS.</p>
-                    <button onclick="App.Databases.openProvisionModal('baas')" class="px-5 py-2.5 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2 mx-auto">
-                        <i class="fas fa-plus"></i>
-                        <span>Provision BaaS Engine</span>
-                    </button>
-                </div>
-            </div>
+            </details>
         </div>
 
         <!-- Manage View -->
         <div id="db-manage-view" class="hidden space-y-6">
-            <div class="flex items-center space-x-3 mb-2">
+            <div class="db-resource-back">
                 <button onclick="App.Databases.showListView()" class="text-gray-400 hover:text-white flex items-center space-x-2 text-sm font-semibold transition-colors">
                     <i class="fas fa-chevron-left"></i>
-                    <span>Back to clusters</span>
+                    <span>Back to databases</span>
                 </button>
             </div>
 
             <!-- Cluster Header -->
-            <div class="bg-gray-800/80 border border-gray-700/60 rounded-xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
-                <div class="flex items-center space-x-4">
+            <div class="db-resource-header">
+                <div class="db-resource-identity">
                     <div id="db-manage-logo" class="p-4 rounded-xl text-3xl">
                         <!-- Populated dynamically -->
                     </div>
@@ -1080,71 +830,59 @@
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="flex items-center space-x-3" id="db-manage-actions">
-                    <!-- Populated dynamically -->
+            <nav class="db-resource-navigation" aria-label="Database sections">
+                <div class="db-primary-sections">
+                    <button onclick="App.Databases.switchManageTab('overview')" class="db-tab-btn db-section-button" data-db-tab="overview" aria-pressed="true">Overview</button>
+                    <button onclick="App.Databases.switchManageTab('explorer')" class="db-tab-btn db-section-button" data-db-tab="explorer" aria-pressed="false">Explorer</button>
+                    <button onclick="App.Databases.switchManageTab('console')" class="db-tab-btn db-section-button" data-db-tab="console" aria-pressed="false">Query</button>
                 </div>
-            </div>
-
-            <!-- Manage Tabs Menu -->
-            <div class="flex border-b border-gray-700/60 space-x-6">
-                <button onclick="App.Databases.switchManageTab('overview')" class="db-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-blue-500 text-blue-400 transition-colors" data-db-tab="overview">Overview</button>
-                <button onclick="App.Databases.switchManageTab('explorer')" class="db-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors" data-db-tab="explorer">Explorer</button>
-                <button onclick="App.Databases.switchManageTab('console')" class="db-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors" data-db-tab="console">Interactive Console</button>
-                <button onclick="App.Databases.switchManageTab('backups')" class="db-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors" data-db-tab="backups">Backups & Dumps</button>
-                <button onclick="App.Databases.switchManageTab('users')" class="db-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors" data-db-tab="users">Users Management</button>
-                <button onclick="App.Databases.switchManageTab('settings')" class="db-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors" data-db-tab="settings">Settings</button>
-            </div>
+                <details id="db-administration-menu" class="db-tools-menu db-administration-menu">
+                    <summary><span id="db-administration-label">Manage</span><i class="fas fa-chevron-down" aria-hidden="true"></i></summary>
+                    <div class="db-tools-popover">
+                        <button onclick="App.Databases.switchManageTab('backups')" class="db-tab-btn" data-db-tab="backups" aria-pressed="false"><i class="fas fa-archive" aria-hidden="true"></i><span>Backups<small>Dumps, imports, and schedules</small></span></button>
+                        <button onclick="App.Databases.switchManageTab('users')" class="db-tab-btn" data-db-tab="users" aria-pressed="false"><i class="fas fa-user-group" aria-hidden="true"></i><span>Users<small>Database accounts and permissions</small></span></button>
+                        <button onclick="App.Databases.switchManageTab('settings')" class="db-tab-btn" data-db-tab="settings" aria-pressed="false"><i class="fas fa-sliders" aria-hidden="true"></i><span>Settings<small>Credentials and administration</small></span></button>
+                        <div id="db-manage-actions" class="db-instance-controls"></div>
+                    </div>
+                </details>
+            </nav>
 
             <!-- Sub Panels -->
-            <div id="db-panel-overview" class="db-panel-content space-y-6">
-                <!-- Connection Instructions Card -->
-                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-5">
-                    <h3 class="text-lg font-bold text-white flex items-center"><i class="fas fa-link text-blue-400 mr-2"></i>Connection Parameters</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <div>
-                            <p class="text-xs text-gray-400 uppercase font-semibold">Exposed Host Port</p>
-                            <p class="text-base text-white font-mono mt-1" id="db-conn-port">3306</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-gray-400 uppercase font-semibold">Default Database</p>
-                            <p class="text-base text-white font-mono mt-1" id="db-conn-dbname">gopulse</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-gray-400 uppercase font-semibold">Username</p>
-                            <p class="text-base text-white font-mono mt-1" id="db-conn-user">root</p>
-                        </div>
+            <div id="db-panel-overview" class="db-panel-content">
+                <section class="db-connection-panel" aria-labelledby="db-connection-heading">
+                    <div class="db-panel-heading"><div><h3 id="db-connection-heading">Connection</h3><p>Connection details for this database instance.</p></div></div>
+                    <dl class="db-connection-details">
+                        <div><dt>Host</dt><dd id="db-conn-host">—</dd></div>
+                        <div><dt>Port</dt><dd id="db-conn-port">—</dd></div>
+                        <div><dt>Database</dt><dd id="db-conn-dbname">—</dd></div>
+                        <div><dt>Username</dt><dd id="db-conn-user">—</dd></div>
+                    </dl>
+                    <label for="db-conn-uri" id="db-conn-uri-label" class="db-field-label">Connection string</label>
+                    <div class="db-connection-uri">
+                        <input type="text" id="db-conn-uri" readonly class="font-mono" value="">
+                        <button onclick="App.Databases.copyConnURI({{.CanWriteDatabases}})" class="db-copy-button"><i class="far fa-copy" aria-hidden="true"></i>{{if .CanWriteDatabases}}Copy{{else}}Copy template{{end}}</button>
                     </div>
-
-                    <div class="space-y-3 pt-2">
-                        <label class="block text-xs text-gray-400 uppercase font-semibold">Exposed URL Connection String</label>
-                        <div class="flex bg-gray-900 border border-gray-700 rounded-lg overflow-hidden">
-                            <input type="text" id="db-conn-uri" readonly class="flex-1 bg-transparent px-4 py-3 font-mono text-sm text-gray-300 focus:outline-none" value="">
-                            <button onclick="App.Databases.copyConnURI()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 transition-colors border-l border-gray-700 flex items-center space-x-1.5">
-                                <i class="far fa-copy"></i>
-                                <span class="text-xs font-semibold">Copy</span>
-                            </button>
-                        </div>
-                        <p class="text-xs text-gray-500">Connect using any database administrator tool (like TablePlus, DBeaver, or pgAdmin) pointing to this server's external IP address.</p>
-                    </div>
-                    <div id="db-conn-pocketbase-banner" class="hidden pt-3 border-t border-gray-700/50"></div>
-                </div>
+                    <p id="db-connection-hint" class="db-field-help">Credentials stay masked here. Copy the connection string when you need it.</p>
+                    <div id="db-conn-pocketbase-banner" class="hidden"></div>
+                </section>
             </div>
 
             <!-- Explorer Panel -->
             <div id="db-panel-explorer" class="db-panel-content hidden">
-                <div class="flex h-[600px] bg-gray-900/40 border border-gray-700/40 rounded-xl overflow-hidden">
+                <div class="db-explorer-layout">
                     <!-- Tree Sidebar -->
-                    <div class="w-72 border-r border-gray-700/60 flex flex-col flex-shrink-0">
-                        <div class="px-4 py-3 border-b border-gray-700/40 bg-gray-800/60 flex items-center justify-between">
+                    <div class="db-explorer-sidebar">
+                        <div class="db-explorer-toolbar">
                             <h4 class="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center">
                                 <i class="fas fa-sitemap text-blue-400 mr-2"></i>Structure
                             </h4>
                             <div class="flex items-center space-x-1">
-                                <button onclick="App.Databases.openCreateSchemaModal()" class="p-1.5 text-indigo-400 hover:text-white hover:bg-gray-700 rounded-md transition-colors" title="Create Database">
+                                <button onclick="App.Databases.openCreateSchemaModal()" class="db-icon-control" title="Create database" aria-label="Create database">
                                     <i class="fas fa-plus-circle text-xs"></i>
                                 </button>
-                                <button onclick="App.Databases.refreshExplorer()" class="p-1.5 text-gray-500 hover:text-white hover:bg-gray-700 rounded-md transition-colors" title="Refresh">
+                                <button onclick="App.Databases.refreshExplorer()" class="db-icon-control" title="Refresh structure" aria-label="Refresh structure">
                                     <i class="fas fa-sync-alt text-xs"></i>
                                 </button>
                             </div>
@@ -1159,18 +897,18 @@
                     </div>
 
                     <!-- Data Grid Panel -->
-                    <div class="flex-1 flex flex-col min-w-0">
+                    <div class="db-explorer-workspace">
                         <!-- Data Header -->
-                        <div id="db-explorer-header" class="px-5 py-3 border-b border-gray-700/40 bg-gray-800/60 flex items-center justify-between">
+                        <div id="db-explorer-header" class="db-explorer-toolbar db-explorer-data-toolbar">
                             <div class="flex items-center space-x-2 min-w-0">
                                 <i class="fas fa-table text-gray-500"></i>
-                                <span id="db-explorer-title" class="text-sm font-semibold text-gray-300 truncate">Select a table to view data</span>
+                                <span id="db-explorer-title" class="text-sm font-semibold text-gray-300 truncate">Choose a table or collection</span>
                             </div>
                             <div class="flex items-center space-x-3 flex-shrink-0">
                                 <div id="db-explorer-meta" class="flex items-center space-x-3 text-xs text-gray-500"></div>
-                                <button id="db-explorer-add-row-btn" onclick="App.Databases.openInsertRowModal()" class="hidden px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-xs transition-colors flex items-center space-x-1.5">
+                                <button id="db-explorer-add-row-btn" onclick="App.Databases.openInsertRowModal()" class="console-button secondary hidden">
                                     <i class="fas fa-plus"></i>
-                                    <span>Add Record</span>
+                                    <span>Add record</span>
                                 </button>
                             </div>
                         </div>
@@ -1180,22 +918,22 @@
                             <div class="flex items-center justify-center h-full text-gray-500">
                                 <div class="text-center">
                                     <i class="fas fa-mouse-pointer text-3xl mb-3 opacity-30"></i>
-                                    <p class="text-sm">Click on a table or collection from the sidebar to browse its data.</p>
+                                    <p class="text-sm">Choose an item from Structure to browse its data.</p>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Pagination -->
-                        <div id="db-explorer-pagination" class="hidden px-5 py-3 border-t border-gray-700/40 bg-gray-800/40 flex items-center justify-between">
+                        <div id="db-explorer-pagination" class="db-explorer-pagination hidden">
                             <div class="text-xs text-gray-400">
                                 <span id="db-explorer-row-info">0 rows</span>
                             </div>
                             <div class="flex items-center space-x-2">
-                                <button onclick="App.Databases.explorerPrevPage()" id="db-explorer-prev-btn" class="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-xs font-semibold rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-                                    <i class="fas fa-chevron-left mr-1"></i>Prev
+                                <button onclick="App.Databases.explorerPrevPage()" id="db-explorer-prev-btn" class="db-pagination-button" disabled>
+                                    <i class="fas fa-chevron-left mr-1"></i>Previous
                                 </button>
                                 <span id="db-explorer-page-info" class="text-xs text-gray-400 font-mono px-2">1 / 1</span>
-                                <button onclick="App.Databases.explorerNextPage()" id="db-explorer-next-btn" class="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-xs font-semibold rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+                                <button onclick="App.Databases.explorerNextPage()" id="db-explorer-next-btn" class="db-pagination-button" disabled>
                                     Next<i class="fas fa-chevron-right ml-1"></i>
                                 </button>
                             </div>
@@ -1204,211 +942,116 @@
                 </div>
             </div>
 
-            <div id="db-panel-console" class="db-panel-content hidden space-y-4">
-                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-4">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-gray-700/30">
-                        <div class="flex items-center space-x-2.5">
-                            <div class="p-2 bg-blue-900/20 text-blue-400 rounded-lg">
-                                <i class="fas fa-terminal"></i>
-                            </div>
-                            <div>
-                                <h3 class="text-base font-bold text-white leading-tight">Interactive Console</h3>
-                                <span class="text-[10px] text-gray-500 font-mono" id="db-console-engine-label">mysql</span>
-                            </div>
-                        </div>
-                        <div class="flex items-center space-x-2">
-                            <span class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Database Context:</span>
-                            <select id="db-console-schema-select" class="bg-gray-900/80 text-white border border-gray-700/80 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-blue-500 font-mono min-w-[160px] shadow-inner transition-colors">
-                                <!-- Loaded dynamically -->
-                            </select>
-                        </div>
+            <div id="db-panel-console" class="db-panel-content hidden">
+                <section class="db-query-workbench" aria-labelledby="db-query-heading">
+                    <div class="db-query-toolbar">
+                        <div><h3 id="db-query-heading">Query console <span id="db-console-engine-label">mysql</span></h3><p id="db-console-help">Run a query against the selected database.</p></div>
+                        <label for="db-console-schema-select" class="db-query-context"><span id="db-console-context-label">Database</span><select id="db-console-schema-select" aria-label="Query database"></select></label>
                     </div>
-                    <div class="relative">
-                        <textarea id="db-console-query" rows="6" class="w-full bg-gray-950/80 text-green-400 font-mono p-4 rounded-lg border border-gray-700 focus:outline-none focus:border-blue-500 text-sm" placeholder="SELECT 1;"></textarea>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-xs text-gray-500">Press Cmd+Enter / Ctrl+Enter to execute queries dynamically.</span>
-                        <button onclick="App.Databases.runQuery()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-semibold shadow-lg transition-colors flex items-center space-x-2">
-                            <i class="fas fa-play text-xs"></i>
-                            <span>Run Command</span>
-                        </button>
-                    </div>
-
-                    <div id="db-console-results-card" class="hidden space-y-2.5 pt-3">
-                        <label class="block text-xs text-gray-400 uppercase font-semibold">Execution Results</label>
-                        <div id="db-console-results-container" class="bg-gray-950 border border-gray-700 rounded-lg overflow-auto max-h-[300px]">
-                            <!-- Dynamically generated table or JSON -->
-                        </div>
-                    </div>
-                </div>
+                    <label for="db-console-query" class="sr-only">Query or command</label>
+                    <textarea id="db-console-query" rows="8" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="SELECT 1;"></textarea>
+                    <div class="db-query-actions"><span><kbd>⌘</kbd> / <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</span><button id="db-query-run" onclick="App.Databases.runQuery()" class="console-button"><i class="fas fa-play" aria-hidden="true"></i><span id="db-query-run-label">Run query</span></button></div>
+                </section>
+                <section id="db-console-results-card" class="db-query-results hidden" aria-labelledby="db-query-results-heading">
+                    <div class="db-results-heading"><h4 id="db-query-results-heading">Results</h4><span id="db-query-result-summary" role="status" aria-live="polite"></span></div>
+                    <div id="db-console-results-container" tabindex="0" aria-label="Query results"></div>
+                </section>
             </div>
 
-            <div id="db-panel-backups" class="db-panel-content hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h3 class="text-lg font-bold text-white">Archives & Backups</h3>
-                        <p class="text-sm text-gray-400 mt-0.5">Database dumps are archived as compressed file streams directly on the host server.</p>
-                    </div>
-                    <div class="flex items-center space-x-3">
+            <div id="db-panel-backups" class="db-panel-content db-admin-screen hidden">
+                <div class="db-admin-heading">
+                    <div><h3>Backups</h3><p>Manage backups and daily backups stored on this server.</p></div>
+                    <div class="db-admin-actions">
                         <input type="file" id="db-import-backup-file" class="hidden" onchange="App.Databases.importBackup(event)">
-                        <button onclick="document.getElementById('db-import-backup-file').click()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 border border-blue-500/20 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
-                            <i class="fas fa-upload"></i>
-                            <span>Import Backup</span>
-                        </button>
-                        <button onclick="App.Databases.createBackup()" class="px-5 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
-                            <i class="fas fa-archive"></i>
-                            <span>Create Dump</span>
-                        </button>
+                        <button type="button" onclick="document.getElementById('db-import-backup-file').click()" class="console-button secondary"><i class="fas fa-upload" aria-hidden="true"></i>Import backup</button>
+                        <button type="button" onclick="App.Databases.createBackup()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Create backup</button>
                     </div>
                 </div>
-
-                <!-- Scheduled Backups Configuration Card -->
-                <div class="bg-gray-800/20 rounded-xl border border-gray-700/60 p-6 space-y-4">
-                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                        <div class="flex items-start space-x-3">
-                            <div class="p-3 bg-indigo-600/10 text-indigo-400 rounded-lg border border-indigo-500/20">
-                                <i class="fas fa-calendar-alt text-xl"></i>
-                            </div>
-                            <div>
-                                <h4 class="text-base font-semibold text-white">Automated Daily Backups</h4>
-                                <p class="text-sm text-gray-400 mt-0.5">Automatically trigger a compressed backup dump every day at 02:00 AM server time.</p>
-                            </div>
-                        </div>
-                        <div class="flex items-center space-x-4 self-end md:self-center">
-                            <!-- Toggle switch -->
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" id="db-auto-backup-toggle" onchange="App.Databases.saveAutoBackupConfig()" class="sr-only peer">
-                                <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                                <span class="ml-3 text-sm font-medium text-gray-400" id="db-auto-backup-status-text">Disabled</span>
-                            </label>
-                        </div>
+                <section class="db-admin-card" aria-labelledby="db-schedule-heading">
+                    <div class="db-admin-card-heading">
+                        <div><h4 id="db-schedule-heading">Daily backups</h4><p>A compressed backup runs every day at 02:00, server time.</p></div>
+                        <label class="db-backup-switch">
+                            <input type="checkbox" id="db-auto-backup-toggle" aria-label="Enable daily backups" onchange="App.Databases.saveAutoBackupConfig()">
+                            <span class="db-switch-track" aria-hidden="true"></span>
+                            <span id="db-auto-backup-status-text" class="db-schedule-status">Disabled</span>
+                        </label>
                     </div>
-
-                    <div id="db-auto-backup-settings" class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-700/40 hidden">
-                        <div class="space-y-1.5">
-                            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Backup Retention Policy</label>
-                            <select id="db-auto-backup-retention" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500">
+                    <div id="db-auto-backup-settings" class="db-retention-settings hidden">
+                        <div><label for="db-auto-backup-retention" class="db-field-label">Retention</label>
+                            <select id="db-auto-backup-retention">
                                 <option value="3">Keep for 3 days</option>
                                 <option value="7" selected>Keep for 7 days</option>
                                 <option value="14">Keep for 14 days</option>
                                 <option value="30">Keep for 30 days</option>
-                                <option value="0">Keep forever (Unlimited)</option>
+                                <option value="0">Keep forever</option>
                             </select>
                         </div>
-                        <div class="flex items-end justify-end space-x-3">
-                            <button onclick="App.Databases.saveAutoBackupConfig()" class="w-full md:w-auto px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-sm shadow-md transition-all flex items-center justify-center space-x-2">
-                                <i class="fas fa-save"></i>
-                                <span>Save Retention Policy</span>
-                            </button>
-                        </div>
+                        <button type="button" onclick="App.Databases.saveAutoBackupConfig()" class="console-button secondary">Save retention</button>
                     </div>
-                </div>
-
-                <div class="bg-gray-800/40 rounded-xl border border-gray-700/40 overflow-hidden">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-gray-800/80 border-b border-gray-700 text-xs font-bold uppercase tracking-wider text-gray-400">
-                                <th class="px-6 py-4">Backup Filename</th>
-                                <th class="px-6 py-4">Compressed Size</th>
-                                <th class="px-6 py-4">Created Time</th>
-                                <th class="px-6 py-4 text-right">Operations</th>
-                            </tr>
-                        </thead>
-                        <tbody id="db-backups-table-body" class="divide-y divide-gray-700/50">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                    <div id="db-backups-empty" class="hidden py-12 text-center text-gray-400">
-                        <i class="fas fa-folder-open text-3xl mb-3 opacity-50"></i>
-                        <p class="text-sm">No backup dumps created yet.</p>
+                </section>
+                <section class="db-admin-table-card" aria-labelledby="db-archive-heading">
+                    <div class="db-admin-table-heading"><h4 id="db-archive-heading">Saved backups</h4><span>Stored on this server</span></div>
+                    <div class="db-admin-table-scroll" role="region" tabindex="0" aria-label="Backups">
+                        <table class="db-admin-table"><thead><tr><th scope="col">File</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col" class="db-table-actions-heading">Actions</th></tr></thead>
+                            <tbody id="db-backups-table-body"></tbody>
+                        </table>
                     </div>
-                </div>
+                    <div id="db-backups-empty" class="db-admin-empty hidden"><i class="far fa-folder-open" aria-hidden="true"></i><h4>No backups yet</h4><p>Create your first backup to save a copy of this database.</p></div>
+                </section>
+                <p class="db-field-help">Importing or restoring a backup replaces the current database data.</p>
             </div>
 
             <!-- Users Management Panel -->
-            <div id="db-panel-users" class="db-panel-content hidden space-y-6">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-lg font-bold text-white flex items-center">
-                            <i class="fas fa-users-cog text-blue-400 mr-2"></i>Database Access Users
-                        </h3>
-                        <p class="text-xs text-gray-400 mt-1">Manage database users authorized to connect to this containerized cluster.</p>
-                    </div>
-                    <button onclick="App.Databases.openAddUserModal()" class="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-semibold text-xs shadow-md transition-all flex items-center space-x-1.5">
-                        <i class="fas fa-user-plus"></i>
-                        <span>Add Access User</span>
-                    </button>
+            <div id="db-panel-users" class="db-panel-content db-admin-screen hidden">
+                <div class="db-admin-heading">
+                    <div><h3>Users</h3><p>Manage database accounts, permissions, and connection details.</p></div>
+                    <button type="button" onclick="App.Databases.openAddUserModal()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Add user</button>
                 </div>
-
-                <div class="bg-gray-800/40 rounded-xl border border-gray-700/40 overflow-hidden">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-gray-800/80 border-b border-gray-700 text-xs font-bold uppercase tracking-wider text-gray-400">
-                                <th class="px-6 py-4">Username</th>
-                                <th class="px-6 py-4">Assigned Scope</th>
-                                <th class="px-6 py-4">Target Database</th>
-                                <th class="px-6 py-4">Exposed URL Connection String</th>
-                                <th class="px-6 py-4 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="db-users-table-body" class="divide-y divide-gray-700/50">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                    <div id="db-users-empty" class="hidden py-12 text-center text-gray-400">
-                        <i class="fas fa-user-shield text-3xl mb-3 opacity-50"></i>
-                        <p class="text-sm">No custom database users found.</p>
+                <section class="db-admin-table-card" aria-labelledby="db-users-heading">
+                    <div class="db-admin-table-heading"><h4 id="db-users-heading">Database access</h4><span>Permissions are specific to this engine</span></div>
+                    <div class="db-admin-table-scroll" role="region" tabindex="0" aria-label="Database users">
+                        <table class="db-admin-table"><thead><tr><th scope="col">Username</th><th scope="col">Permissions</th><th scope="col">Database</th><th scope="col">Connection string</th><th scope="col" class="db-table-actions-heading">Actions</th></tr></thead>
+                            <tbody id="db-users-table-body"></tbody>
+                        </table>
                     </div>
-                </div>
+                    <div id="db-users-empty" class="db-admin-empty hidden"><i class="fas fa-user-shield" aria-hidden="true"></i><h4>No custom users</h4><p>New database accounts and their access permissions will appear here.</p></div>
+                </section>
+                <p class="db-field-help">Connection strings use a password placeholder. Replace it with the user's password when connecting.</p>
             </div>
 
-            <div id="db-panel-settings" class="db-panel-content hidden space-y-6">
-                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-6">
-                    <h3 class="text-lg font-bold text-white flex items-center"><i class="fas fa-cogs text-blue-400 mr-2"></i>Administration</h3>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div class="p-5 bg-gray-900 bg-opacity-40 border border-gray-700/60 rounded-xl space-y-3">
-                            <h4 class="text-base font-bold text-white">Credentials & Port Config</h4>
-                            <p class="text-sm text-gray-400">Review connection credentials and parameters mapped inside this Docker instance.</p>
-                            <div class="space-y-1.5 font-mono text-sm pt-1 text-gray-300">
-                                <p>Engine Port: <span class="text-white" id="db-settings-port">3306</span></p>
-                                <p>Default DB: <span class="text-white" id="db-settings-dbname">gopulse</span></p>
-                                <p>Username: <span class="text-white" id="db-settings-user">root</span></p>
-                                <p>Password: <span class="text-white font-bold" id="db-settings-pass">••••••</span></p>
-                            </div>
-                        </div>
-
-                        <div class="p-5 border border-red-500/20 bg-red-950/10 rounded-xl space-y-3">
-                            <h4 class="text-base font-bold text-red-400">Danger Zone</h4>
-                            <p class="text-sm text-gray-400">Deleting a database cluster is permanent and deletes all associated metadata. Choose if you want to wipe docker volumes too.</p>
-                            
-                            <div class="flex items-center space-x-3 mt-1.5">
-                                <input type="checkbox" id="db-delete-volume-check" class="w-4 h-4 text-red-600 bg-gray-700 border-gray-600 rounded">
-                                <label for="db-delete-volume-check" class="text-sm text-gray-300 font-semibold select-none cursor-pointer">Purge associated database volumes and folders</label>
-                            </div>
-
-                            <button onclick="App.Databases.deleteDatabase()" class="mt-2.5 bg-red-600 hover:bg-red-500 text-white font-semibold px-5 py-2.5 rounded-lg transition-colors flex items-center space-x-2">
-                                <i class="fas fa-trash-alt"></i>
-                                <span>Destroy Database Cluster</span>
-                            </button>
-                        </div>
+            <div id="db-panel-settings" class="db-panel-content db-admin-screen hidden">
+                <div class="db-admin-heading"><div><h3>Settings</h3><p>Review connection credentials and manage this instance.</p></div></div>
+                <section class="db-admin-card" aria-labelledby="db-credentials-heading">
+                    <div class="db-admin-card-heading"><div><h4 id="db-credentials-heading">Connection credentials</h4><p>Passwords stay masked until you choose to reveal them.</p></div></div>
+                    <dl class="db-settings-details">
+                        <div><dt>Engine port</dt><dd id="db-settings-port">—</dd></div>
+                        <div><dt>Default database</dt><dd id="db-settings-dbname">—</dd></div>
+                        <div><dt>Username</dt><dd id="db-settings-user">—</dd></div>
+                        <div><dt>Password</dt><dd class="db-secret-value"><span id="db-settings-pass">••••••••</span>{{if .CanWriteDatabases}}<button type="button" onclick="App.Databases.revealCredentials()" class="db-inline-button"><i class="far fa-eye" aria-hidden="true"></i>Reveal</button>{{end}}</dd></div>
+                    </dl>
+                </section>
+                <section class="db-admin-card db-danger-section" aria-labelledby="db-delete-heading">
+                    <div class="db-admin-card-heading"><div><h4 id="db-delete-heading">Delete database</h4><p>Deleting this instance removes its deployment and metadata. Save a backup before continuing.</p></div></div>
+                    <div class="db-danger-options">
+                        <label for="db-delete-volume-check" class="db-checkbox-label"><input type="checkbox" id="db-delete-volume-check" ><span>Also delete database volumes and folders<small>Permanently remove stored data from the server.</small></span></label>
+                        <button type="button" onclick="App.Databases.deleteDatabase()" class="db-danger-button"><i class="far fa-trash-alt" aria-hidden="true"></i>Delete database</button>
                     </div>
-                </div>
+                </section>
             </div>
         </div>
 
         <!-- Dedicated BaaS Manage View -->
         <div id="baas-manage-view" class="hidden space-y-6">
-            <div class="flex items-center space-x-3 mb-2">
+            <div class="db-resource-back">
                 <button onclick="App.Databases.showListView()" class="text-gray-400 hover:text-white flex items-center space-x-2 text-sm font-semibold transition-colors">
                     <i class="fas fa-chevron-left"></i>
-                    <span>Back to engines</span>
+                    <span>Back to databases</span>
                 </button>
             </div>
 
             <!-- BaaS Header -->
-            <div class="bg-gray-800/80 border border-gray-700/60 rounded-xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
-                <div class="flex items-center space-x-4">
+            <div class="db-resource-header">
+                <div class="db-resource-identity">
                     <div id="baas-manage-logo" class="p-4 rounded-xl text-3xl">
                         <!-- Populated dynamically -->
                     </div>
@@ -1423,33 +1066,24 @@
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="flex items-center space-x-3" id="baas-manage-actions">
-                    <!-- Populated dynamically -->
+            <nav class="db-resource-navigation" aria-label="Backend service sections">
+                <div class="db-primary-sections">
+                    <button onclick="App.Databases.switchBaaSTab('overview')" class="baas-tab-btn db-section-button" data-baas-tab="overview" aria-pressed="true">Overview</button>
+                    <button onclick="App.Databases.switchBaaSTab('guides')" class="baas-tab-btn db-section-button" data-baas-tab="guides" aria-pressed="false">API &amp; SDKs</button>
+                    <button onclick="App.Databases.switchBaaSTab('logs')" class="baas-tab-btn db-section-button" data-baas-tab="logs" aria-pressed="false">Logs</button>
                 </div>
-            </div>
-
-            <!-- BaaS Manage Tabs Menu -->
-            <div class="flex border-b border-gray-700/60 space-x-6 overflow-x-auto pb-px">
-                <button onclick="App.Databases.switchBaaSTab('overview')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-orange-500 text-orange-400 transition-colors whitespace-nowrap" data-baas-tab="overview">
-                    <i class="fas fa-chart-line mr-1.5"></i>Overview
-                </button>
-                <button onclick="App.Databases.switchBaaSTab('guides')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="guides">
-                    <i class="fas fa-book mr-1.5"></i>API & Client SDKs
-                </button>
-                <button onclick="App.Databases.switchBaaSTab('env')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="env">
-                    <i class="fas fa-key mr-1.5"></i>API Keys & Env
-                </button>
-                <button onclick="App.Databases.switchBaaSTab('logs')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="logs">
-                    <i class="fas fa-terminal mr-1.5"></i>System Logs
-                </button>
-                <button onclick="App.Databases.switchBaaSTab('backups')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="backups">
-                    <i class="fas fa-archive mr-1.5"></i>Backups
-                </button>
-                <button onclick="App.Databases.switchBaaSTab('settings')" class="baas-tab-btn py-3 px-1 font-semibold text-sm border-b-2 border-transparent text-gray-400 hover:text-white transition-colors whitespace-nowrap" data-baas-tab="settings">
-                    <i class="fas fa-sliders-h mr-1.5"></i>Settings
-                </button>
-            </div>
+                <details id="baas-administration-menu" class="db-tools-menu db-administration-menu">
+                    <summary><span id="baas-administration-label">Manage</span><i class="fas fa-chevron-down" aria-hidden="true"></i></summary>
+                    <div class="db-tools-popover">
+                        <button onclick="App.Databases.switchBaaSTab('env')" class="baas-tab-btn" data-baas-tab="env" aria-pressed="false"><i class="fas fa-key" aria-hidden="true"></i><span>Keys &amp; environment<small>Client configuration and API access</small></span></button>
+                        <button onclick="App.Databases.switchBaaSTab('backups')" class="baas-tab-btn" data-baas-tab="backups" aria-pressed="false"><i class="fas fa-archive" aria-hidden="true"></i><span>Backups<small>Snapshots, imports, and schedules</small></span></button>
+                        <button onclick="App.Databases.switchBaaSTab('settings')" class="baas-tab-btn" data-baas-tab="settings" aria-pressed="false"><i class="fas fa-sliders" aria-hidden="true"></i><span>Settings<small>Credentials and administration</small></span></button>
+                        <div id="baas-manage-actions" class="db-instance-controls"></div>
+                    </div>
+                </details>
+            </nav>
 
             <!-- BaaS Sub Panels -->
             
@@ -1611,126 +1245,68 @@
             </div>
 
             <!-- Backups Sub Panel -->
-            <div id="baas-panel-backups" class="baas-panel-content hidden space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h3 class="text-lg font-bold text-white">Archives & Backups</h3>
-                        <p class="text-sm text-gray-400 mt-0.5">Database dumps are archived as compressed file streams directly on the host server.</p>
-                    </div>
-                    <div class="flex items-center space-x-3">
+            <div id="baas-panel-backups" class="baas-panel-content db-admin-screen hidden">
+                <div class="db-admin-heading">
+                    <div><h3>Backups</h3><p>Manage snapshots and daily backups stored on this server.</p></div>
+                    <div class="db-admin-actions">
                         <input type="file" id="baas-import-backup-file" class="hidden" onchange="App.Databases.importBackupBaaS(event)">
-                        <button onclick="document.getElementById('baas-import-backup-file').click()" class="px-5 py-2.5 bg-orange-600/10 hover:bg-orange-600/20 border border-orange-500/20 text-orange-400 rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
-                            <i class="fas fa-upload"></i>
-                            <span>Import Snapshot</span>
-                        </button>
-                        <button onclick="App.Databases.createBackupBaaS()" class="px-5 py-2.5 bg-orange-600 hover:bg-orange-550 text-white rounded-lg font-semibold shadow-lg transition-all flex items-center space-x-2">
-                            <i class="fas fa-archive"></i>
-                            <span>Create Snapshot</span>
-                        </button>
+                        <button type="button" onclick="document.getElementById('baas-import-backup-file').click()" class="console-button secondary"><i class="fas fa-upload" aria-hidden="true"></i>Import snapshot</button>
+                        <button type="button" onclick="App.Databases.createBackupBaaS()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Create snapshot</button>
                     </div>
                 </div>
-
-                <!-- Scheduled Backups Configuration Card -->
-                <div class="bg-gray-800/20 rounded-xl border border-gray-700/60 p-6 space-y-4">
-                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                        <div class="flex items-start space-x-3">
-                            <div class="p-3 bg-orange-600/10 text-orange-400 rounded-lg border border-orange-500/20">
-                                <i class="fas fa-calendar-alt text-xl"></i>
-                            </div>
-                            <div>
-                                <h4 class="text-base font-semibold text-white">Automated Daily Backups</h4>
-                                <p class="text-sm text-gray-400 mt-0.5">Automatically trigger a compressed backup dump every day at 02:00 AM server time.</p>
-                            </div>
-                        </div>
-                        <div class="flex items-center space-x-4 self-end md:self-center">
-                            <!-- Toggle switch -->
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" id="baas-auto-backup-toggle" onchange="App.Databases.saveAutoBackupConfigBaaS()" class="sr-only peer">
-                                <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-600"></div>
-                                <span class="ml-3 text-sm font-medium text-gray-400" id="baas-auto-backup-status-text">Disabled</span>
-                            </label>
-                        </div>
+                <section class="db-admin-card" aria-labelledby="baas-schedule-heading">
+                    <div class="db-admin-card-heading">
+                        <div><h4 id="baas-schedule-heading">Daily backups</h4><p>A compressed backup runs every day at 02:00, server time.</p></div>
+                        <label class="db-backup-switch">
+                            <input type="checkbox" id="baas-auto-backup-toggle" aria-label="Enable daily backups" onchange="App.Databases.saveAutoBackupConfigBaaS()">
+                            <span class="db-switch-track" aria-hidden="true"></span>
+                            <span id="baas-auto-backup-status-text" class="db-schedule-status">Disabled</span>
+                        </label>
                     </div>
-
-                    <div id="baas-auto-backup-settings" class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-700/40 hidden">
-                        <div class="space-y-1.5">
-                            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Backup Retention Policy</label>
-                            <select id="baas-auto-backup-retention" class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500">
+                    <div id="baas-auto-backup-settings" class="db-retention-settings hidden">
+                        <div><label for="baas-auto-backup-retention" class="db-field-label">Retention</label>
+                            <select id="baas-auto-backup-retention">
                                 <option value="3">Keep for 3 days</option>
                                 <option value="7" selected>Keep for 7 days</option>
                                 <option value="14">Keep for 14 days</option>
                                 <option value="30">Keep for 30 days</option>
-                                <option value="0">Keep forever (Unlimited)</option>
+                                <option value="0">Keep forever</option>
                             </select>
                         </div>
-                        <div class="flex items-end justify-end space-x-3">
-                            <button onclick="App.Databases.saveAutoBackupConfigBaaS()" class="w-full md:w-auto px-5 py-2 bg-orange-600 hover:bg-orange-550 text-white rounded-lg font-semibold text-sm shadow-md transition-all flex items-center justify-center space-x-2">
-                                <i class="fas fa-save"></i>
-                                <span>Save Retention Policy</span>
-                            </button>
-                        </div>
+                        <button type="button" onclick="App.Databases.saveAutoBackupConfigBaaS()" class="console-button secondary">Save retention</button>
                     </div>
-                </div>
-
-                <div class="bg-gray-800/40 rounded-xl border border-gray-700/40 overflow-hidden">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="bg-gray-800/80 border-b border-gray-700 text-xs font-bold uppercase tracking-wider text-gray-400">
-                                <th class="px-6 py-4">Snapshot Filename</th>
-                                <th class="px-6 py-4">Compressed Size</th>
-                                <th class="px-6 py-4">Created Time</th>
-                                <th class="px-6 py-4 text-right">Operations</th>
-                            </tr>
-                        </thead>
-                        <tbody id="baas-backups-table-body" class="divide-y divide-gray-700/50">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
-                    <div id="baas-backups-empty" class="hidden py-12 text-center text-gray-400">
-                        <i class="fas fa-folder-open text-3xl mb-3 opacity-50"></i>
-                        <p class="text-sm">No snapshots created yet.</p>
+                </section>
+                <section class="db-admin-table-card" aria-labelledby="baas-archive-heading">
+                    <div class="db-admin-table-heading"><h4 id="baas-archive-heading">Saved snapshots</h4><span>Stored on this server</span></div>
+                    <div class="db-admin-table-scroll" role="region" tabindex="0" aria-label="Snapshots">
+                        <table class="db-admin-table"><thead><tr><th scope="col">File</th><th scope="col">Size</th><th scope="col">Created</th><th scope="col" class="db-table-actions-heading">Actions</th></tr></thead>
+                            <tbody id="baas-backups-table-body"></tbody>
+                        </table>
                     </div>
-                </div>
+                    <div id="baas-backups-empty" class="db-admin-empty hidden"><i class="far fa-folder-open" aria-hidden="true"></i><h4>No snapshots yet</h4><p>Create your first snapshot to save a copy of this database.</p></div>
+                </section>
+                <p class="db-field-help">Importing or restoring a snapshot replaces the current database data.</p>
             </div>
 
             <!-- Settings Sub Panel -->
-            <div id="baas-panel-settings" class="baas-panel-content hidden space-y-6">
-                <div class="bg-gray-800/40 rounded-xl p-6 border border-gray-700/40 space-y-6">
-                    <h3 class="text-lg font-bold text-white flex items-center"><i class="fas fa-cogs text-orange-400 mr-2"></i>BaaS Administration</h3>
-                    
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- Settings details -->
-                        <div class="p-5 bg-gray-900 bg-opacity-40 border border-gray-700/60 rounded-xl space-y-3">
-                            <h4 class="text-base font-bold text-white">Metadata & Admin Auth</h4>
-                            <p class="text-sm text-gray-400">Review core connection parameters and setup credentials inside the Docker container.</p>
-                            <div class="space-y-1.5 font-mono text-sm pt-1 text-gray-300">
-                                <p>Public Web Port: <span class="text-white" id="baas-settings-port">8090</span></p>
-                                <p>Default Admin: <span class="text-white" id="baas-settings-user">admin@example.com</span></p>
-                                <div class="flex items-center space-x-2">
-                                    <span>Admin Password: </span>
-                                    <span class="text-white font-bold select-all" id="baas-settings-pass">••••••</span>
-                                    <button type="button" onclick="App.Databases.toggleBaaSPasswordVisibility()" class="text-gray-400 hover:text-white text-xs"><i class="far fa-eye" id="baas-settings-pass-eye"></i></button>
-                                </div>
-                            </div>
-                        </div>
+            <div id="baas-panel-settings" class="baas-panel-content db-admin-screen hidden">
+                <div class="db-admin-heading"><div><h3>Settings</h3><p>Review connection credentials and manage this service.</p></div></div>
+                <section class="db-admin-card" aria-labelledby="baas-credentials-heading">
+                    <div class="db-admin-card-heading"><div><h4 id="baas-credentials-heading">Admin credentials</h4><p>Passwords stay masked until you choose to reveal them.</p></div></div>
+                    <dl class="db-settings-details">
+                        <div><dt>Public web port</dt><dd id="baas-settings-port">—</dd></div>
 
-                        <!-- Danger Zone -->
-                        <div class="p-5 border border-red-500/20 bg-red-950/10 rounded-xl space-y-3">
-                            <h4 class="text-base font-bold text-red-400">Danger Zone</h4>
-                            <p class="text-sm text-gray-400">Destroying a BaaS deployment is permanent and will purge all system configurations. Make sure to archive database snapshots before destroying.</p>
-                            
-                            <div class="flex items-center space-x-3 mt-1.5">
-                                <input type="checkbox" id="baas-delete-volume-check" class="w-4 h-4 text-red-600 bg-gray-700 border-gray-600 rounded" checked>
-                                <label for="baas-delete-volume-check" class="text-sm text-gray-300 font-semibold select-none cursor-pointer">Purge associated Docker volumes, databases, and uploaded assets</label>
-                            </div>
-
-                            <button onclick="App.Databases.deleteBaaSInstance()" class="mt-2.5 bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2.5 rounded-lg transition-all flex items-center space-x-2 shadow-lg shadow-red-600/20">
-                                <i class="fas fa-trash-alt"></i>
-                                <span>Destroy BaaS Engine</span>
-                            </button>
-                        </div>
+                        <div><dt>Default admin</dt><dd id="baas-settings-user">—</dd></div>
+                        <div><dt>Admin password</dt><dd class="db-secret-value"><span id="baas-settings-pass">••••••••</span><button type="button" onclick="App.Databases.toggleBaaSPasswordVisibility()" class="db-inline-button" aria-label="Show or hide admin password"><i class="far fa-eye" id="baas-settings-pass-eye" aria-hidden="true"></i>Show / hide</button></dd></div>
+                    </dl>
+                </section>
+                <section class="db-admin-card db-danger-section" aria-labelledby="baas-delete-heading">
+                    <div class="db-admin-card-heading"><div><h4 id="baas-delete-heading">Delete service</h4><p>Deleting this service removes its deployment and configuration. Save a snapshot before continuing.</p></div></div>
+                    <div class="db-danger-options">
+                        <label for="baas-delete-volume-check" class="db-checkbox-label"><input type="checkbox" id="baas-delete-volume-check" checked><span>Also delete volumes, databases, and uploaded assets<small>Permanently remove stored data from the server.</small></span></label>
+                        <button type="button" onclick="App.Databases.deleteBaaSInstance()" class="db-danger-button"><i class="far fa-trash-alt" aria-hidden="true"></i>Delete service</button>
                     </div>
-                </div>
+                </section>
             </div>
         </div>
     </div>
@@ -2054,14 +1630,14 @@
 
     <!-- Provision Database Modal -->
     <div id="provision-db-modal"
-        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
         <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-95 border border-gray-700">
             <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
                 <div class="flex items-center space-x-3">
                     <div class="p-2 bg-blue-900/30 rounded-lg">
                         <i class="fas fa-database text-blue-400 text-xl"></i>
                     </div>
-                    <h3 class="text-xl font-bold text-white">Provision Database Cluster</h3>
+                    <h3 class="text-xl font-bold text-white">Provision database</h3>
                 </div>
                 <button onclick="App.Databases.closeProvisionModal()"
                     class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
@@ -2070,36 +1646,35 @@
             </div>
 
             <div class="p-6 space-y-5">
-                <div class="grid grid-cols-2 gap-4">
+                <p id="db-prov-engine-help" class="db-engine-help"></p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-2">Friendly Cluster Name</label>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Instance name</label>
                         <input type="text" id="db-prov-name" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" placeholder="e.g. Production MySQL">
                     </div>
                     <div>
-                        <label class="block text-gray-400 text-sm font-bold mb-2">Database Engine</label>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Database engine</label>
                         <select id="db-prov-type" onchange="App.Databases.onProvTypeChange()" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm">
-                            <option value="mysql">MySQL 8.0</option>
-                            <option value="postgres">PostgreSQL 15</option>
-                            <option value="mongodb">MongoDB 6.0</option>
-                            <option value="redis">Redis 7.0 (Key-Value)</option>
-                            <option value="sqlite">SQLite 3 (Embedded)</option>
-                            <option value="pocketbase">PocketBase (BaaS Engine)</option>
+                            <optgroup label="Relational"><option value="mysql">MySQL 8.0</option><option value="postgres">PostgreSQL 15</option><option value="sqlite">SQLite 3</option></optgroup>
+                            <optgroup label="Document &amp; key-value"><option value="mongodb">MongoDB 6.0</option><option value="redis">Redis 7.0</option></optgroup>
+                            <optgroup label="Vector"><option value="qdrant">Qdrant — vector database</option></optgroup>
+                            <optgroup label="Backend services"><option value="pocketbase">PocketBase</option><option value="appwrite">Appwrite</option></optgroup>
                         </select>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div id="db-prov-dbname-wrapper">
                         <label class="block text-gray-400 text-sm font-bold mb-2">Default Database Name</label>
                         <input type="text" id="db-prov-dbname" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" value="gopulse">
                     </div>
                     <div id="db-prov-port-wrapper">
-                        <label class="block text-gray-400 text-sm font-bold mb-2">Host Port Mapping</label>
+                        <label class="block text-gray-400 text-sm font-bold mb-2">Host port</label>
                         <input type="number" id="db-prov-port" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" value="3306">
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
+                <div id="db-prov-credentials" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-gray-400 text-sm font-bold mb-2" id="db-prov-user-label">Admin Username</label>
                         <input type="text" id="db-prov-user" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm" value="root">
@@ -2107,23 +1682,34 @@
                     <div>
                         <label class="block text-gray-400 text-sm font-bold mb-2" id="db-prov-pass-label">Admin Password</label>
                         <div class="flex space-x-2">
-                            <input type="text" id="db-prov-pass" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm font-mono" placeholder="Secret password">
+                            <input type="password" autocomplete="new-password" id="db-prov-pass" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-blue-500 transition-colors text-sm font-mono" placeholder="Secret password">
                             <button onclick="App.Databases.generatePass()" class="bg-gray-600 hover:bg-gray-500 text-white font-semibold px-4 rounded-lg transition-colors text-sm">Generate</button>
                         </div>
                     </div>
                 </div>
+                <details id="db-prov-vector-config" class="db-vector-config hidden">
+                    <summary>Advanced Qdrant settings</summary>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                        <label>Private bind address<input id="db-prov-vector-bind" value="127.0.0.1" class="w-full mt-2 p-2.5" placeholder="127.0.0.1"></label>
+                        <label>Version<input id="db-prov-vector-version" value="v1.19.0" class="w-full mt-2 p-2.5"></label>
+                        <label class="sm:col-span-2">Storage directory <span>(optional)</span><input id="db-prov-vector-storage" class="w-full mt-2 p-2.5" placeholder="/var/lib/gopulse/databases/my-qdrant"></label>
+                        <label class="sm:col-span-2">API key <span>(optional)</span><input id="db-prov-vector-key" type="password" autocomplete="new-password" class="w-full mt-2 p-2.5" placeholder="Generated securely when left empty"></label>
+                    </div>
+                    <p class="mt-3">Qdrant binds to loopback by default. Use a private address for access from other servers; configure network access separately.</p>
+                </details>
+                <p id="db-prov-error" class="db-provision-error" role="alert"></p>
             </div>
 
             <div class="p-6 border-t border-gray-700 flex justify-end space-x-3 bg-gray-900 bg-opacity-35 rounded-b-lg">
                 <button onclick="App.Databases.closeProvisionModal()" class="px-5 py-2.5 text-gray-400 hover:text-white rounded-lg transition-colors font-semibold">Cancel</button>
-                <button onclick="App.Databases.submitProvision()" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-semibold shadow-lg">Provision Cluster</button>
+                <button onclick="App.Databases.submitProvision()" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors font-semibold shadow-lg" id="db-provision-submit">Provision database</button>
             </div>
         </div>
     </div>
 
     <!-- Add Domain Modal -->
     <div id="add-domain-modal"
-        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
         <div
             class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg transform transition-all duration-300 scale-95 border border-gray-700">
             <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
@@ -2185,7 +1771,7 @@
 
     <!-- Create Load Balancer Modal -->
     <div id="add-lb-modal"
-        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
         <div
             class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg transform transition-all duration-300 scale-95 border border-gray-700">
             <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
@@ -2280,7 +1866,7 @@
 
     <!-- Add Backend Target Modal -->
     <div id="add-lb-backend-modal"
-        class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+        class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
         <div
             class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-lg transform transition-all duration-300 scale-95 border border-gray-700">
             <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
@@ -2374,262 +1960,35 @@
         </div>
     </div>
 
-    <!-- Create Project Modal -->
-    <div id="create-project-modal"
-        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-955/80 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
-        <style>
-            .tech-card.border-blue-500 {
-                background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(99, 102, 241, 0.05) 100%) !important;
-                border-color: rgba(59, 130, 246, 0.6) !important;
-                box-shadow: 0 0 25px rgba(59, 130, 246, 0.15) !important;
-            }
-            .tech-card.border-blue-500 .check-indicator {
-                opacity: 1 !important;
-                transform: scale(1) !important;
-            }
-            .tech-card.border-blue-500 .icon-wrapper {
-                background-color: rgba(59, 130, 246, 0.2) !important;
-                border-color: rgba(59, 130, 246, 0.4) !important;
-            }
-            .tech-card.border-blue-500 i {
-                color: #60a5fa !important;
-            }
-        </style>
-        <div
-            class="bg-slate-900/95 border border-slate-800 rounded-2xl w-full max-w-4xl transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh] shadow-[0_0_50px_rgba(0,0,0,0.6)] border-t-2 border-t-blue-500/50">
-            <!-- Header -->
-            <div class="flex items-center justify-between p-6 border-b border-slate-800 bg-slate-950/40 rounded-t-2xl">
-                <div class="flex items-center space-x-3">
-                    <div class="p-2.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-xl shadow-[0_0_15px_rgba(59,130,246,0.1)]">
-                        <i class="fas fa-rocket text-lg"></i>
+    <!-- Create application: existing field IDs and submission flows are retained. -->
+    <div id="create-project-modal" class="ui-dialog-overlay fixed inset-0 z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div class="app-create-panel w-full transform scale-95 transition-transform duration-300 flex flex-col">
+            <div class="app-create-header"><div><h3>Create application</h3><p>Choose a technology and add your source code.</p></div><button type="button" onclick="App.Projects.closeCreateModal()" class="app-toolbar-button" aria-label="Close create application dialog"><i class="fas fa-times" aria-hidden="true"></i></button></div>
+            <div class="app-create-body">
+                <section aria-labelledby="app-technology-label"><h4 id="app-technology-label">Technology</h4><input type="hidden" id="selected-tech"><div class="app-tech-options">
+                        <button type="button" aria-pressed="false" id="tech-nextjs" onclick="App.Projects.selectTech('nextjs')" class="tech-card app-tech-option"><i class="fab fa-react" aria-hidden="true"></i><span>Next.js</span><i class="fas fa-check app-tech-check" aria-hidden="true"></i></button>
+                        <button type="button" aria-pressed="false" id="tech-nodejs" onclick="App.Projects.selectTech('nodejs')" class="tech-card app-tech-option"><i class="fab fa-node-js" aria-hidden="true"></i><span>Node.js</span><i class="fas fa-check app-tech-check" aria-hidden="true"></i></button>
+                        <button type="button" aria-pressed="false" id="tech-go" onclick="App.Projects.selectTech('go')" class="tech-card app-tech-option"><i class="fab fa-golang" aria-hidden="true"></i><span>Go</span><i class="fas fa-check app-tech-check" aria-hidden="true"></i></button>
+                        <button type="button" aria-pressed="false" id="tech-laravel" onclick="App.Projects.selectTech('laravel')" class="tech-card app-tech-option"><i class="fab fa-laravel" aria-hidden="true"></i><span>Laravel</span><i class="fas fa-check app-tech-check" aria-hidden="true"></i></button>
+                </div></section>
+                <section class="app-name-fields">
+                    <div><label for="project-name">Application name</label><input type="text" id="project-name" placeholder="my-application" autocomplete="off"></div>
+                    <div><label for="project-port">Port <span>Optional</span></label><input type="number" id="project-port" placeholder="3000"></div>
+                </section>
+                <section aria-labelledby="app-source-heading"><h4 id="app-source-heading">Source code</h4><input type="hidden" id="project-repo-url">
+                    <div class="app-source-options">
+                        <button type="button" onclick="App.Projects.openGitHubModal()"><i class="fab fa-github" aria-hidden="true"></i><span>GitHub repository<small>Choose a repository to clone</small></span><i class="fas fa-chevron-right" aria-hidden="true"></i></button>
+                        <div><input type="file" id="project-file" class="hidden" accept=".zip,.tar.gz" onchange="App.Projects.handleFileSelect(this)"><button type="button" onclick="document.getElementById('project-file').click()"><i class="fas fa-upload" aria-hidden="true"></i><span><span id="project-file-label">Upload archive</span><small>ZIP or TAR.GZ source files</small></span><i class="fas fa-chevron-right" aria-hidden="true"></i></button></div>
                     </div>
-                    <div>
-                        <h3 class="text-lg font-bold text-white tracking-tight">Create New Project</h3>
-                        <p class="text-xs text-slate-400 mt-0.5">Configure and deploy your application to production</p>
-                    </div>
-                </div>
-                <button onclick="App.Projects.closeCreateModal()"
-                    class="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-800/60 rounded-full">
-                    <i class="fas fa-times text-lg"></i>
-                </button>
+                    <p id="app-source-selection" class="app-source-selection hidden" role="status"></p>
+                </section>
+                <section class="app-runtime-fields" aria-labelledby="app-runtime-heading"><div><h4 id="app-runtime-heading">Build &amp; runtime</h4><p class="app-create-help">Technology selection fills the defaults. Customize them for your application.</p></div>
+                    <div class="app-command-fields"><div><label for="project-build-cmd">Build command <span>Optional</span></label><input type="text" id="project-build-cmd" class="app-mono" placeholder="npm run build" spellcheck="false"></div><div><label for="project-start-cmd">Start command</label><input type="text" id="project-start-cmd" class="app-mono" placeholder="npm start" value="npm start" spellcheck="false"></div></div>
+                    <label class="app-boot-option" for="project-restart-on-boot"><input type="checkbox" id="project-restart-on-boot"><span>Restart on boot<small>Start this application when the server restarts.</small></span></label>
+                </section>
+                <div id="project-upload-progress" class="app-upload-progress hidden"><div><span><i class="fas fa-spinner fa-spin" aria-hidden="true"></i>Uploading archive…</span><span id="project-upload-percent">0%</span></div><div class="app-progress-track"><div id="project-upload-bar" style="width:0%"></div></div></div>
             </div>
-
-            <!-- Body -->
-            <div class="p-8 overflow-y-auto space-y-8 flex-1">
-                <!-- Stepper visualization -->
-                <div class="flex items-center justify-between px-2 pb-6 border-b border-slate-800/60 mb-2">
-                    <div class="flex items-center space-x-2.5">
-                        <div class="flex items-center justify-center w-7 h-7 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold shadow-[0_0_15px_rgba(59,130,246,0.1)]">1</div>
-                        <span class="text-xs font-bold uppercase tracking-wider text-white">Technology</span>
-                    </div>
-                    <div class="flex-1 h-px bg-slate-800 mx-4"></div>
-                    <div class="flex items-center space-x-2.5">
-                        <div class="flex items-center justify-center w-7 h-7 rounded-full bg-slate-800/80 text-slate-400 border border-slate-700/60 text-xs font-bold">2</div>
-                        <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Configure</span>
-                    </div>
-                    <div class="flex-1 h-px bg-slate-800 mx-4"></div>
-                    <div class="flex items-center space-x-2.5">
-                        <div class="flex items-center justify-center w-7 h-7 rounded-full bg-slate-800/80 text-slate-400 border border-slate-700/60 text-xs font-bold">3</div>
-                        <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Source</span>
-                    </div>
-                </div>
-
-                <!-- Step 1: Technology Selection -->
-                <div class="space-y-4">
-                    <h4 class="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center">
-                        Choose Technology
-                    </h4>
-                    <input type="hidden" id="selected-tech">
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <!-- Next.js -->
-                        <div id="tech-nextjs" onclick="App.Projects.selectTech('nextjs')"
-                            class="tech-card cursor-pointer border border-slate-800 bg-slate-900/40 p-4 rounded-xl hover:border-blue-500/50 hover:bg-slate-800/30 transition-all duration-300 group relative flex flex-col justify-between h-40">
-                            <div class="flex justify-between items-start">
-                                <div class="icon-wrapper p-2 bg-slate-950/60 border border-slate-800/80 rounded-xl group-hover:bg-blue-955/20 group-hover:border-blue-500/30 transition-all">
-                                    <i class="fab fa-react text-xl text-slate-400 group-hover:text-blue-400 transition-colors"></i>
-                                </div>
-                                <div class="h-4.5 w-4.5 rounded-full border border-slate-750 group-hover:border-blue-500/80 flex items-center justify-center transition-colors">
-                                    <div class="h-2 w-2 rounded-full bg-blue-500 opacity-0 transition-all scale-75 check-indicator"></div>
-                                </div>
-                            </div>
-                            <div>
-                                <h5 class="text-white font-bold text-sm mb-0.5">Next.js</h5>
-                                <p class="text-2xs text-slate-500 group-hover:text-slate-400 transition-colors">The React framework for high performance apps</p>
-                            </div>
-                        </div>
-
-                        <!-- Node.js -->
-                        <div id="tech-nodejs" onclick="App.Projects.selectTech('nodejs')"
-                            class="tech-card cursor-pointer border border-slate-800 bg-slate-900/40 p-4 rounded-xl hover:border-blue-500/50 hover:bg-slate-800/30 transition-all duration-300 group relative flex flex-col justify-between h-40">
-                            <div class="flex justify-between items-start">
-                                <div class="icon-wrapper p-2 bg-slate-950/60 border border-slate-800/80 rounded-xl group-hover:bg-emerald-955/20 group-hover:border-emerald-500/30 transition-all">
-                                    <i class="fab fa-node-js text-xl text-slate-400 group-hover:text-emerald-400 transition-colors"></i>
-                                </div>
-                                <div class="h-4.5 w-4.5 rounded-full border border-slate-750 group-hover:border-blue-500/80 flex items-center justify-center transition-colors">
-                                    <div class="h-2 w-2 rounded-full bg-blue-500 opacity-0 transition-all scale-75 check-indicator"></div>
-                                </div>
-                            </div>
-                            <div>
-                                <h5 class="text-white font-bold text-sm mb-0.5">Node.js</h5>
-                                <p class="text-2xs text-slate-500 group-hover:text-slate-400 transition-colors">JavaScript runtime for event-driven services</p>
-                            </div>
-                        </div>
-
-                        <!-- Go -->
-                        <div id="tech-go" onclick="App.Projects.selectTech('go')"
-                            class="tech-card cursor-pointer border border-slate-800 bg-slate-900/40 p-4 rounded-xl hover:border-blue-500/50 hover:bg-slate-800/30 transition-all duration-300 group relative flex flex-col justify-between h-40">
-                            <div class="flex justify-between items-start">
-                                <div class="icon-wrapper p-2 bg-slate-950/60 border border-slate-800/80 rounded-xl group-hover:bg-cyan-955/20 group-hover:border-cyan-500/30 transition-all">
-                                    <i class="fab fa-golang text-xl text-slate-400 group-hover:text-cyan-400 transition-colors"></i>
-                                </div>
-                                <div class="h-4.5 w-4.5 rounded-full border border-slate-750 group-hover:border-blue-500/80 flex items-center justify-center transition-colors">
-                                    <div class="h-2 w-2 rounded-full bg-blue-500 opacity-0 transition-all scale-75 check-indicator"></div>
-                                </div>
-                            </div>
-                            <div>
-                                <h5 class="text-white font-bold text-sm mb-0.5">Go</h5>
-                                <p class="text-2xs text-slate-500 group-hover:text-slate-400 transition-colors">Reliable and blazing fast compiled backends</p>
-                            </div>
-                        </div>
-
-                        <!-- Laravel -->
-                        <div id="tech-laravel" onclick="App.Projects.selectTech('laravel')"
-                            class="tech-card cursor-pointer border border-slate-800 bg-slate-900/40 p-4 rounded-xl hover:border-blue-500/50 hover:bg-slate-800/30 transition-all duration-300 group relative flex flex-col justify-between h-40">
-                            <div class="flex justify-between items-start">
-                                <div class="icon-wrapper p-2 bg-slate-950/60 border border-slate-800/80 rounded-xl group-hover:bg-red-955/20 group-hover:border-red-500/30 transition-all">
-                                    <i class="fab fa-laravel text-xl text-slate-400 group-hover:text-red-500 transition-colors"></i>
-                                </div>
-                                <div class="h-4.5 w-4.5 rounded-full border border-slate-750 group-hover:border-blue-500/80 flex items-center justify-center transition-colors">
-                                    <div class="h-2 w-2 rounded-full bg-blue-500 opacity-0 transition-all scale-75 check-indicator"></div>
-                                </div>
-                            </div>
-                            <div>
-                                <h5 class="text-white font-bold text-sm mb-0.5">Laravel</h5>
-                                <p class="text-2xs text-slate-500 group-hover:text-slate-400 transition-colors">Elegant PHP framework for web artisans</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Step 2: Project Details -->
-                <div class="space-y-4">
-                    <h4 class="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center">
-                        Project Configuration
-                    </h4>
-
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div class="md:col-span-2">
-                            <label class="block text-slate-400 text-2xs font-bold mb-2 uppercase tracking-wider">Project Name</label>
-                            <div class="relative">
-                                <i class="fas fa-folder-open absolute left-4 top-3.5 text-slate-500 text-sm"></i>
-                                <input type="text" id="project-name"
-                                    class="w-full bg-slate-950/40 border border-slate-800 rounded-lg pl-11 pr-4 py-2.5 text-white placeholder-slate-600 focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 focus:outline-none transition-all duration-200 text-sm"
-                                    placeholder="my-awesome-project">
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-slate-400 text-2xs font-bold mb-2 uppercase tracking-wider">Port (Optional)</label>
-                            <div class="relative">
-                                <i class="fas fa-network-wired absolute left-4 top-3.5 text-slate-500 text-sm"></i>
-                                <input type="number" id="project-port"
-                                    class="w-full bg-slate-950/40 border border-slate-800 rounded-lg pl-11 pr-4 py-2.5 text-white placeholder-slate-600 focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 focus:outline-none transition-all duration-200 text-sm"
-                                    placeholder="3000">
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                            <label class="block text-slate-400 text-2xs font-bold mb-2 uppercase tracking-wider">Build Command (Optional)</label>
-                            <div class="relative">
-                                <i class="fas fa-tools absolute left-4 top-3.5 text-slate-500 text-sm"></i>
-                                <input type="text" id="project-build-cmd"
-                                    class="w-full bg-slate-950/40 border border-slate-800 rounded-lg pl-11 pr-4 py-2.5 text-white placeholder-slate-600 focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 focus:outline-none transition-all duration-200 font-mono text-xs"
-                                    placeholder="npm run build">
-                            </div>
-                            <span class="text-3xs text-slate-500 mt-1 block">Command run before deploying to compile assets</span>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-slate-400 text-2xs font-bold mb-2 uppercase tracking-wider">Start Command</label>
-                            <div class="relative">
-                                <i class="fas fa-play absolute left-4 top-3.5 text-slate-500 text-sm"></i>
-                                <input type="text" id="project-start-cmd"
-                                    class="w-full bg-slate-950/40 border border-slate-800 rounded-lg pl-11 pr-4 py-2.5 text-white placeholder-slate-600 focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 focus:outline-none transition-all duration-200 font-mono text-xs"
-                                    placeholder="npm start" value="npm start">
-                            </div>
-                            <span class="text-3xs text-slate-500 mt-1 block">Executable command to launch the application</span>
-                        </div>
-                    </div>
-
-                    <div class="mt-4">
-                        <label class="flex items-center space-x-3 cursor-pointer p-3.5 rounded-xl hover:bg-slate-800/40 transition-all border border-slate-800 bg-slate-950/20">
-                            <input type="checkbox" id="project-restart-on-boot" class="form-checkbox text-blue-500 rounded border-slate-800 focus:ring-0">
-                            <div>
-                                <span class="text-sm font-semibold text-white">Restart on boot</span>
-                                <p class="text-xs text-slate-400">Automatically boot the project container or process when the server restarts</p>
-                            </div>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Step 3: Source Code -->
-                <div class="space-y-4">
-                    <h4 class="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center">
-                        Select Code Source
-                    </h4>
-                    <input type="hidden" id="project-repo-url">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <button onclick="App.Projects.openGitHubModal()"
-                            class="flex flex-col items-center justify-center text-center p-8 bg-slate-900/30 hover:bg-slate-850/40 border border-slate-800 hover:border-slate-700 rounded-xl hover:shadow-[0_4px_25px_rgba(255,255,255,0.02)] transition-all duration-300 group h-36 w-full">
-                            <div class="p-3 bg-slate-955/60 group-hover:bg-slate-900 rounded-full mb-3 text-slate-400 group-hover:text-white border border-slate-800/80 transition-all duration-300 shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
-                                <i class="fab fa-github text-xl"></i>
-                            </div>
-                            <span class="font-bold text-white text-xs mb-1">Select from GitHub</span>
-                            <span class="text-2xs text-slate-500 group-hover:text-slate-400 transition-colors">Import repositories directly</span>
-                        </button>
-                        <div class="relative">
-                            <input type="file" id="project-file" class="hidden" accept=".zip,.tar.gz"
-                                onchange="App.Projects.handleFileSelect(this)">
-                            <button onclick="document.getElementById('project-file').click()"
-                                class="w-full flex flex-col items-center justify-center text-center p-8 bg-slate-900/30 hover:bg-slate-850/40 border border-slate-800 hover:border-slate-700 rounded-xl hover:shadow-[0_4px_25px_rgba(59,130,246,0.02)] transition-all duration-300 group h-36">
-                                <div class="p-3 bg-slate-955/60 group-hover:bg-slate-900 rounded-full mb-3 text-slate-400 group-hover:text-blue-400 border border-slate-800/80 transition-all duration-300 shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
-                                    <i class="fas fa-upload text-xl"></i>
-                                </div>
-                                <span id="project-file-label" class="font-bold text-white text-xs mb-1">Upload Zip File</span>
-                                <span class="text-2xs text-slate-500 group-hover:text-slate-400 transition-colors">Deploy direct local ZIP archive</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Upload progress -->
-            <div class="px-8 py-3 bg-slate-955/20 border-t border-slate-850/60">
-                <div id="project-upload-progress" class="hidden bg-slate-950/50 p-3 border border-slate-850 rounded-xl">
-                    <div class="flex justify-between mb-1.5">
-                        <span class="text-2xs font-semibold text-blue-400 flex items-center">
-                            <i class="fas fa-spinner fa-spin mr-1.5"></i>Uploading archive...
-                        </span>
-                        <span class="text-2xs font-bold text-blue-400" id="project-upload-percent">0%</span>
-                    </div>
-                    <div class="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
-                        <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-1.5 rounded-full transition-all duration-150" id="project-upload-bar" style="width: 0%"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Footer Buttons -->
-            <div class="p-6 border-t border-slate-800 bg-slate-950/50 flex justify-end space-x-3 rounded-b-2xl">
-                <button onclick="App.Projects.closeCreateModal()"
-                    class="px-5 py-2 bg-slate-800 hover:bg-slate-750 text-slate-300 hover:text-white rounded-lg border border-slate-700/60 hover:border-slate-600 transition-all duration-200 font-medium text-xs">Cancel</button>
-                <button id="create-project-btn-submit" onclick="App.Projects.createProject()"
-                    class="px-7 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg transition-all duration-200 font-semibold text-xs shadow-lg shadow-blue-500/10 flex items-center hover:shadow-blue-500/20 active:scale-98">
-                    <i class="fas fa-paper-plane mr-1.5 text-3xs"></i>
-                    Create Project
-                </button>
-            </div>
+            <div class="app-create-footer"><button type="button" onclick="App.Projects.closeCreateModal()" class="console-button secondary">Cancel</button><button type="button" id="create-project-btn-submit" onclick="App.Projects.createProject()" class="console-button">Create application</button></div>
         </div>
     </div>
 </div>
@@ -2670,7 +2029,7 @@
     }
 </style>
 <div id="file-editor-modal"
-    class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div
         class="bg-gray-800 rounded-lg shadow-2xl w-11/12 max-w-4xl h-5/6 flex flex-col transform transition-all duration-300 scale-95 border border-gray-700">
         <div class="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-900 bg-opacity-50">
@@ -2740,7 +2099,7 @@
 </div>
 <!-- Edit Project Modal -->
 <div id="edit-project-modal"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+    class="ui-dialog-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
     <div
         class="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]">
         <div class="flex items-center justify-between p-6 border-b border-gray-800">
@@ -2809,7 +2168,7 @@
 
 <!-- Git Webhook Info Modal -->
 <div id="project-webhook-modal"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+    class="ui-dialog-overlay fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
     <div
         class="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-xl transform scale-95 transition-transform duration-300 flex flex-col">
         <div class="flex items-center justify-between p-6 border-b border-gray-800">
@@ -2905,7 +2264,7 @@
 
 <!-- GitHub Repositories Modal -->
 <div id="github-repos-modal"
-    class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div
         class="bg-gray-900 rounded-xl shadow-2xl w-full max-w-2xl transform scale-95 transition-transform duration-300 border border-gray-800 flex flex-col max-h-[80vh]">
         <div class="p-6 border-b border-gray-800 flex justify-between items-center">
@@ -2947,7 +2306,7 @@
 
 <!-- Create Item Modal -->
 <div id="create-item-modal"
-    class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    class="ui-dialog-overlay fixed inset-0 bg-black/60 backdrop-blur-sm hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div
         class="bg-gray-900/95 border border-gray-800 backdrop-blur-md rounded-2xl shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 ring-1 ring-white/5 overflow-hidden">
         <div class="flex items-center justify-between p-4 border-b border-gray-800/80 bg-gray-950/40">
@@ -3005,47 +2364,10 @@
 </div>
 </div>
 <!-- Docker Logs Modal -->
-<div id="docker-logs-modal"
-    class="fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
-    <div
-        class="bg-black rounded-lg shadow-2xl w-full max-w-5xl h-3/4 flex flex-col transform transition-all duration-300 scale-95 border border-gray-800 font-mono text-sm overflow-hidden ring-1 ring-gray-800">
-        <!-- Header -->
-        <div class="flex items-center justify-between px-4 py-2 bg-[#1a1a1a] border-b border-gray-800">
-            <div class="flex items-center space-x-3">
-                <div class="flex space-x-1.5 mr-2">
-                    <div onclick="App.Docker.Containers.closeLogs()"
-                        class="w-3 h-3 rounded-full bg-red-500 hover:bg-red-600 cursor-pointer"></div>
-                    <div class="w-3 h-3 rounded-full bg-yellow-500 hover:bg-yellow-600 cursor-not-allowed"></div>
-                    <div class="w-3 h-3 rounded-full bg-green-500 hover:bg-green-600 cursor-not-allowed"></div>
-                </div>
-                <div class="flex items-center text-gray-400 text-xs">
-                    <i class="fas fa-box mr-2"></i>
-                    <span>container:</span>
-                    <span id="docker-logs-title" class="text-blue-400 ml-1"></span>
-                </div>
-            </div>
-            <div class="flex items-center space-x-3">
-                <button onclick="App.Docker.Containers.refreshLogs()"
-                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
-                    <i class="fas fa-sync-alt mr-1"></i>Refresh
-                </button>
-                <button onclick="App.Docker.Containers.closeLogs()"
-                    class="text-xs text-gray-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-800">
-                    <i class="fas fa-times mr-1"></i>Close
-                </button>
-            </div>
-        </div>
-
-        <!-- Output Area -->
-        <div id="docker-logs-output"
-            class="flex-1 p-4 overflow-y-auto text-gray-300 font-mono bg-black scrollbar-thin scrollbar-thumb-gray-800 scrollbar-track-transparent">
-            <div class="text-gray-500 mb-1 opacity-50"># Fetching logs...</div>
-        </div>
-    </div>
-</div>
+<div id="docker-logs-modal" class="ui-dialog-overlay docker-dialog fixed inset-0 hidden flex items-center justify-center z-50 opacity-0 transition-opacity duration-300"><div class="docker-dialog-panel docker-dialog-wide docker-log-panel flex flex-col"><div class="docker-dialog-header"><div><h3>Container logs</h3><p><span id="docker-logs-title">Container</span></p></div><button type="button" onclick="App.Docker.Containers.closeLogs()" class="docker-icon-button" aria-label="Close dialog"><i class="fas fa-times" aria-hidden="true"></i></button></div><div class="docker-log-toolbar"><span>Recent runtime output</span><button onclick="App.Docker.Containers.refreshLogs()" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button></div><div id="docker-logs-output" class="docker-stream-output" tabindex="0" aria-label="Container log output">Fetching logs…</div></div></div>
 <!-- Load Balancer Logs Modal -->
 <div id="lb-logs-modal"
-    class="fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div
         class="bg-black rounded-lg shadow-2xl w-full max-w-5xl h-3/4 flex flex-col transform transition-all duration-300 scale-95 border border-gray-800 font-mono text-sm overflow-hidden ring-1 ring-gray-800">
         <!-- Header -->
@@ -3100,7 +2422,7 @@
 </div>
 <!-- Terminal Modal -->
 <div id="terminal-modal"
-    class="fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-90 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div
         class="bg-black rounded-lg shadow-2xl w-full max-w-4xl h-3/4 flex flex-col transform transition-all duration-300 scale-95 border border-gray-800 font-mono text-sm overflow-hidden ring-1 ring-gray-800">
         <!-- Header -->
@@ -3143,311 +2465,27 @@
     </div>
 </div>
 <!-- Run Image Modal -->
-<div id="run-image-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
-    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-md flex flex-col">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-            <h3 class="text-xl font-bold text-white"><i class="fas fa-play mr-2 text-green-500"></i>Run Image</h3>
-            <button onclick="App.Docker.Run.closeModal()" class="text-gray-400 hover:text-white">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-        <div class="p-6 space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-2">Image</label>
-                <input type="text" id="run-image-name"
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white font-mono" readonly>
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-2">Container Name (Optional)</label>
-                <input type="text" id="run-container-name"
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    placeholder="my-container">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-400 mb-2">Ports (Optional)</label>
-                <input type="text" id="run-container-ports"
-                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                    placeholder="8080:80">
-                <p class="text-xs text-gray-500 mt-1">Format: hostPort:containerPort</p>
-            </div>
-        </div>
-        <div class="px-6 py-4 border-t border-gray-700 flex justify-end space-x-3">
-            <button onclick="App.Docker.Run.closeModal()"
-                class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">Cancel</button>
-            <button onclick="App.Docker.Run.submit()"
-                class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded transition-colors font-bold">
-                <i class="fas fa-play mr-2"></i> Run
-            </button>
-        </div>
-    </div>
-</div>
+<div id="run-image-modal" class="ui-dialog-overlay docker-dialog fixed inset-0 hidden flex items-center justify-center z-50 "><div class="docker-dialog-panel   flex flex-col"><div class="docker-dialog-header"><div><h3>Run image</h3><p>Create and start a container from this image.</p></div><button type="button" onclick="App.Docker.Run.closeModal()" class="docker-icon-button" aria-label="Close dialog"><i class="fas fa-times" aria-hidden="true"></i></button></div><div class="docker-dialog-body"><div><label for="run-image-name">Image</label><input type="text" id="run-image-name" class="font-mono" readonly></div><div><label for="run-container-name">Container name <span>Optional</span></label><input type="text" id="run-container-name" placeholder="my-container"></div><div><label for="run-container-ports">Port mapping <span>Optional</span></label><input type="text" id="run-container-ports" class="font-mono" placeholder="8080:80"><p class="docker-field-help">Format: hostPort:containerPort</p></div></div><div class="docker-dialog-footer"><button type="button" onclick="App.Docker.Run.closeModal()" class="console-button secondary">Cancel</button><button type="button" id="run-image-submit" onclick="App.Docker.Run.submit()" class="console-button">Run container</button></div></div></div>
 
 <!-- Build Modal -->
-<div id="build-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
-    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl h-[80vh] flex flex-col">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-            <h3 class="text-xl font-bold text-white"><i class="fas fa-hammer mr-2 text-yellow-500"></i>Build Image</h3>
-            <button onclick="App.Docker.Build.closeModal()" class="text-gray-400 hover:text-white">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-
-        <div class="p-6 flex-1 flex flex-col min-h-0">
-            <div class="flex flex-col space-y-4 mb-6">
-                <div class="flex space-x-4">
-                    <div class="w-1/4">
-                        <label class="block text-sm font-medium text-gray-400 mb-2">Build Type</label>
-                        <select id="build-type"
-                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                            onchange="App.Docker.Build.toggleType()">
-                            <option value="dockerfile">Dockerfile</option>
-                            <option value="compose">Docker Compose</option>
-                        </select>
-                    </div>
-                    <div class="w-1/4">
-                        <label class="block text-sm font-medium text-gray-400 mb-2">Source</label>
-                        <select id="build-source"
-                            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                            onchange="App.Docker.Build.toggleType()">
-                            <option value="path">Project Directory</option>
-                            <option value="content">Direct Content</option>
-                        </select>
-                    </div>
-                    <div class="flex-1" id="build-path-wrapper">
-                        <div id="build-path-group">
-                            <label class="block text-sm font-medium text-gray-400 mb-2">Project Directory</label>
-                            <input type="hidden" id="build-path">
-                            <div
-                                class="flex items-center space-x-2 bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <span id="build-path-display" class="flex-1 text-gray-400 italic text-sm truncate">No
-                                    directory selected</span>
-                                <button onclick="App.Docker.FilePicker.open('build-path', 'directory')"
-                                    class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs transition-colors whitespace-nowrap">
-                                    <i class="fas fa-folder-open mr-1"></i> Choose Directory
-                                </button>
-                            </div>
-                        </div>
-                        <div id="compose-file-group" class="hidden">
-                            <label class="block text-sm font-medium text-gray-400 mb-2">Compose File</label>
-                            <input type="hidden" id="compose-file">
-                            <div
-                                class="flex items-center space-x-2 bg-gray-700 border border-gray-600 rounded px-3 py-2">
-                                <span id="compose-file-display" class="flex-1 text-gray-400 italic text-sm truncate">No
-                                    file
-                                    selected</span>
-                                <button onclick="App.Docker.FilePicker.open('compose-file', 'file')"
-                                    class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs transition-colors whitespace-nowrap">
-                                    <i class="fas fa-file-code mr-1"></i> Choose File
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="w-1/4" id="build-tag-group">
-                    <label class="block text-sm font-medium text-gray-400 mb-2">Image Tag</label>
-                    <input type="text" id="build-tag"
-                        class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                        placeholder="my-image:latest">
-                </div>
-            </div>
-
-            <!-- Content Area -->
-            <div id="build-content-group" class="hidden">
-                <div class="flex justify-between items-center mb-2">
-                    <label class="block text-sm font-medium text-gray-400">Content</label>
-                    <div>
-                        <input type="file" id="build-file-upload" class="hidden"
-                            onchange="App.Docker.Build.loadFromFile(this)">
-                        <button onclick="document.getElementById('build-file-upload').click()"
-                            class="text-xs bg-gray-600 hover:bg-gray-500 text-white px-2 py-1 rounded transition-colors">
-                            <i class="fas fa-file-upload mr-1"></i> Load from File
-                        </button>
-                    </div>
-                </div>
-                <p class="text-xs text-gray-500 mb-2">
-                    Paste your Dockerfile or Docker Compose content directly here. This is useful for quick builds
-                    without
-                    creating files on the server.
-                </p>
-                <textarea id="build-content"
-                    class="w-full h-64 bg-gray-900 border border-gray-700 rounded p-4 text-gray-300 font-mono text-sm focus:outline-none focus:border-blue-500 resize-y leading-relaxed"
-                    spellcheck="false" placeholder="# Example Dockerfile
-FROM alpine:latest
-RUN apk add --no-cache python3
-CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
-            </div>
-
-            <div class="flex justify-end pt-2">
-                <button onclick="App.Docker.Build.start()"
-                    class="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2 rounded font-medium transition-colors shadow-lg">
-                    <i class="fas fa-play mr-2"></i>Start Build
-                </button>
-            </div>
-        </div>
-
-        <div id="build-terminal-container"
-            class="flex-1 bg-black rounded p-4 overflow-hidden flex flex-col hidden transition-all duration-300">
-            <div class="flex justify-between items-center mb-2 text-xs text-gray-500 font-mono">
-                <span>Terminal Output</span>
-                <button onclick="App.Docker.Build.clearTerminal()" class="hover:text-white">Clear</button>
-            </div>
-            <pre id="build-terminal"
-                class="flex-1 overflow-auto font-mono text-xs text-green-400 whitespace-pre-wrap leading-relaxed"></pre>
-        </div>
-    </div>
-</div>
+<div id="build-modal" class="ui-dialog-overlay docker-dialog fixed inset-0 hidden flex items-center justify-center z-50 "><div class="docker-dialog-panel docker-dialog-wide  flex flex-col"><div class="docker-dialog-header"><div><h3>Build configuration</h3><p>Build an image or deploy a Docker Compose project.</p></div><button type="button" onclick="App.Docker.Build.closeModal()" class="docker-icon-button" aria-label="Close dialog"><i class="fas fa-times" aria-hidden="true"></i></button></div><div class="docker-dialog-body docker-build-body"><div class="docker-form-row"><div><label for="build-type">Build type</label><select id="build-type" onchange="App.Docker.Build.toggleType()"><option value="dockerfile">Dockerfile</option><option value="compose">Docker Compose</option></select></div><div><label for="build-source">Source</label><select id="build-source" onchange="App.Docker.Build.toggleType()"><option value="path">Project directory</option><option value="content">Paste content</option></select></div></div>
+                <div id="build-path-wrapper"><div id="build-path-group"><label>Project directory</label><input type="hidden" id="build-path"><div class="docker-path-field"><span id="build-path-display">No directory selected</span><button onclick="App.Docker.FilePicker.open('build-path', 'directory')" class="console-button secondary"><i class="far fa-folder" aria-hidden="true"></i>Browse</button></div></div><div id="compose-file-group" class="hidden"><label>Compose file</label><input type="hidden" id="compose-file"><div class="docker-path-field"><span id="compose-file-display">No file selected</span><button onclick="App.Docker.FilePicker.open('compose-file', 'file')" class="console-button secondary">Browse</button></div></div></div>
+                <div id="build-tag-group"><label for="build-tag">Image tag</label><input type="text" id="build-tag" class="font-mono" placeholder="my-image:latest"></div>
+                <div id="build-content-group" class="hidden"><div class="docker-editor-heading"><label for="build-content">Content</label><input type="file" id="build-file-upload" class="hidden" onchange="App.Docker.Build.loadFromFile(this)"><button onclick="document.getElementById('build-file-upload').click()" class="console-button secondary">Load from file</button></div><textarea id="build-content" rows="8" spellcheck="false" placeholder="Paste your Dockerfile or Docker Compose configuration"></textarea></div>
+                <div id="build-terminal-container" class="docker-stream-card hidden"><div><span>Build output</span><button onclick="App.Docker.Build.clearTerminal()">Clear</button></div><pre id="build-terminal" class="docker-stream-output" tabindex="0" aria-label="Build output"></pre></div>
+            </div><div class="docker-dialog-footer"><button type="button" onclick="App.Docker.Build.closeModal()" class="console-button secondary">Cancel</button><button type="button"  onclick="App.Docker.Build.start()" class="console-button">Start build</button></div></div></div>
 </div>
 <!-- Pull Image Modal -->
-<div id="pull-modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
-    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl flex flex-col">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-            <h3 class="text-xl font-bold text-white"><i class="fas fa-cloud-download-alt mr-2 text-blue-500"></i>Pull
-                Image</h3>
-            <button onclick="App.Docker.Images.closePullModal()" class="text-gray-400 hover:text-white">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-
-        <div class="p-6 flex flex-col h-full bg-gray-900 rounded-b-lg">
-            <!-- Terminal at the top -->
-            <div class="bg-black rounded border border-gray-700 p-4 mb-6 overflow-hidden flex flex-col h-96">
-                <div
-                    class="flex justify-between items-center mb-2 text-xs text-gray-500 font-mono border-b border-gray-800 pb-2">
-                    <span class="uppercase tracking-wider">Terminal Output</span>
-                    <button onclick="App.Docker.Images.clearPullTerminal()"
-                        class="hover:text-white transition-colors text-gray-400 text-[10px] uppercase tracking-wide">Clear</button>
-                </div>
-                <pre id="pull-terminal"
-                    class="flex-1 overflow-auto font-mono text-xs text-green-400 whitespace-pre-wrap leading-relaxed scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent"></pre>
-            </div>
-
-            <!-- Input at the bottom -->
-            <div class="flex space-x-4">
-                <div class="flex-1">
-                    <label class="block text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">Image
-                        Name</label>
-                    <input type="text" id="pull-image-name"
-                        class="w-full bg-gray-800 border border-gray-700 rounded px-4 py-3 text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all font-mono text-sm placeholder-gray-600"
-                        placeholder="e.g. nginx:latest or redis:alpine">
-                </div>
-                <div class="flex items-end">
-                    <button onclick="App.Docker.Images.startPull()"
-                        class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded font-medium transition-all shadow-lg hover:shadow-blue-500/20 active:transform active:scale-95 flex items-center">
-                        <i class="fas fa-download mr-2"></i>Pull
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+<div id="pull-modal" class="ui-dialog-overlay docker-dialog fixed inset-0 hidden flex items-center justify-center z-50 "><div class="docker-dialog-panel docker-dialog-wide  flex flex-col"><div class="docker-dialog-header"><div><h3>Pull image</h3><p>Download an image from its registry to this server.</p></div><button type="button" onclick="App.Docker.Images.closePullModal()" class="docker-icon-button" aria-label="Close dialog"><i class="fas fa-times" aria-hidden="true"></i></button></div><div class="docker-dialog-body"><div><label for="pull-image-name">Image name</label><input type="text" id="pull-image-name" class="font-mono" placeholder="nginx:latest or registry.example.com/app:tag"><p class="docker-field-help">Include the repository and tag you want to download.</p></div><div class="docker-stream-card"><div><span>Pull output</span><button onclick="App.Docker.Images.clearPullTerminal()">Clear</button></div><pre id="pull-terminal" class="docker-stream-output" tabindex="0" aria-label="Image pull output"></pre></div></div><div class="docker-dialog-footer"><button type="button" onclick="App.Docker.Images.closePullModal()" class="console-button secondary">Cancel</button><button type="button"  onclick="App.Docker.Images.startPull()" class="console-button">Pull image</button></div></div></div>
 
 <!-- Edit Project Modal -->
-<div id="edit-project-modal"
-    class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
-    <div
-        class="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-2xl transform scale-95 transition-transform duration-300 flex flex-col max-h-[90vh]">
-        <div class="flex items-center justify-between p-6 border-b border-gray-800">
-            <h3 class="text-xl font-bold text-white">Edit Project</h3>
-            <button onclick="App.Projects.closeEditModal()" class="text-gray-400 hover:text-white transition-colors">
-                <i class="fas fa-times text-xl"></i>
-            </button>
-        </div>
 
-        <input type="hidden" id="edit-project-id">
-
-        <div class="p-8 overflow-y-auto">
-            <div class="space-y-6">
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-2">Project Name</label>
-                    <input type="text" id="edit-project-name"
-                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors"
-                        placeholder="my-awesome-app">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-2">Port</label>
-                    <input type="number" id="edit-project-port"
-                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors overflow-hidden appearance-none m-0"
-                        placeholder="3000">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-2">Build Command</label>
-                    <input type="text" id="edit-project-build-cmd"
-                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
-                        placeholder="npm install && npm run build">
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-2">Start Command</label>
-                    <input type="text" id="edit-project-start-cmd"
-                        class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-blue-500 focus:outline-none transition-colors font-mono text-sm"
-                        placeholder="npm start">
-                </div>
-            </div>
-        </div>
-
-        <div class="p-6 border-t border-gray-800 flex justify-end space-x-3 bg-gray-900/50 rounded-b-xl">
-            <button onclick="App.Projects.closeEditModal()"
-                class="px-6 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors">
-                Cancel
-            </button>
-            <button onclick="App.Projects.updateProject()" id="update-project-btn"
-                class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2 rounded-lg font-medium transition-colors shadow-lg shadow-blue-900/20 flex items-center">
-                <span>Save Changes</span>
-            </button>
-        </div>
-    </div>
-</div>
 
 <!-- File Picker Modal -->
-<div id="file-picker-modal"
-    class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-[60] transition-opacity duration-300 opacity-0">
-    <div
-        class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl h-[70vh] flex flex-col transform transition-all duration-300 scale-95 border border-gray-700">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-700 bg-gray-900 bg-opacity-50">
-            <h3 class="text-xl font-bold text-white flex items-center">
-                <i class="fas fa-search mr-2 text-blue-400"></i>
-                <span id="file-picker-title">Select File</span>
-            </h3>
-            <button onclick="App.Docker.FilePicker.close()"
-                class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
-                <i class="fas fa-times text-xl"></i>
-            </button>
-        </div>
-
-        <div class="p-4 bg-gray-800 border-b border-gray-700 flex items-center space-x-2">
-            <button onclick="App.Docker.FilePicker.up()" class="text-gray-400 hover:text-white p-2">
-                <i class="fas fa-level-up-alt"></i>
-            </button>
-            <div class="flex-1 bg-gray-900 rounded px-3 py-2 text-sm text-gray-300 font-mono" id="file-picker-path">
-                /
-            </div>
-        </div>
-
-        <div class="flex-1 overflow-y-auto p-0 relative" id="file-picker-list-container">
-            <div id="file-picker-loading"
-                class="absolute inset-0 bg-gray-800 bg-opacity-90 flex items-center justify-center z-10 hidden">
-                <i class="fas fa-circle-notch fa-spin text-3xl text-blue-500"></i>
-            </div>
-            <table class="w-full text-left">
-                <tbody id="file-picker-tbody" class="divide-y divide-gray-700 text-sm">
-                    <!-- Files will be injected here -->
-                </tbody>
-            </table>
-        </div>
-
-        <div class="p-4 border-t border-gray-700 bg-gray-900 bg-opacity-50 flex justify-end">
-            <button onclick="App.Docker.FilePicker.close()"
-                class="px-4 py-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all duration-200 font-medium">
-                Cancel
-            </button>
-        </div>
-    </div>
-</div>
+<div id="file-picker-modal" class="ui-dialog-overlay docker-dialog fixed inset-0 hidden flex items-center justify-center z-[60] opacity-0 transition-opacity duration-300"><div class="docker-dialog-panel docker-dialog-wide  flex flex-col"><div class="docker-dialog-header"><div><h3><span id="file-picker-title">Select file</span></h3><p>Browse the files and directories on this server.</p></div><button type="button" onclick="App.Docker.FilePicker.close()" class="docker-icon-button" aria-label="Close dialog"><i class="fas fa-times" aria-hidden="true"></i></button></div><div class="docker-picker-toolbar"><button onclick="App.Docker.FilePicker.up()" class="docker-icon-button" aria-label="Parent directory"><i class="fas fa-arrow-up" aria-hidden="true"></i></button><span id="file-picker-path">/</span></div><div id="file-picker-list-container" class="docker-picker-list"><div id="file-picker-loading" class="hidden"><i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i></div><table class="docker-resource-table"><tbody id="file-picker-tbody"></tbody></table></div><div class="docker-dialog-footer"><button onclick="App.Docker.FilePicker.close()" class="console-button secondary">Cancel</button></div></div></div>
 <!-- Environment Variables Modal -->
 <div id="env-vars-modal"
-    class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+    class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div
         class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-95 border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
@@ -3494,7 +2532,7 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 </div>
 
 <!-- Create Database/Schema Modal -->
-<div id="db-create-schema-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+<div id="db-create-schema-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <div class="flex items-center space-x-3">
@@ -3521,7 +2559,7 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 </div>
 
 <!-- Create Table/Collection Modal -->
-<div id="db-create-table-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+<div id="db-create-table-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <div class="flex items-center space-x-3">
@@ -3565,7 +2603,7 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 </div>
 
 <!-- Insert Row/Document Modal -->
-<div id="db-insert-row-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+<div id="db-insert-row-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-95 border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <div class="flex items-center space-x-3">
@@ -3591,7 +2629,7 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 </div>
 
 <!-- Edit Row/Document Modal -->
-<div id="db-edit-row-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+<div id="db-edit-row-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-95 border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <div class="flex items-center space-x-3">
@@ -3617,36 +2655,36 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 </div>
 
 <!-- Add Database User Modal -->
-<div id="db-add-user-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
+<div id="db-add-user-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300 opacity-0">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md transform transition-all duration-300 scale-95 border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <div class="flex items-center space-x-3">
                 <div class="p-2 bg-indigo-900/30 rounded-lg">
                     <i class="fas fa-user-shield text-indigo-400 text-xl"></i>
                 </div>
-                <h3 class="text-xl font-bold text-white">Add Access User</h3>
+                <h3 class="text-xl font-bold text-white">Add database user</h3>
             </div>
-            <button onclick="App.Databases.closeAddUserModal()" class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
+            <button aria-label="Close add user dialog" onclick="App.Databases.closeAddUserModal()" class="text-gray-400 hover:text-white transition-colors p-2 hover:bg-gray-700 rounded-full">
                 <i class="fas fa-times text-xl"></i>
             </button>
         </div>
         
         <div class="p-6 space-y-4">
             <div>
-                <label class="block text-gray-400 text-sm font-bold mb-2">Username</label>
+                <label for="db-user-username" class="db-field-label">Username</label>
                 <input type="text" id="db-user-username" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-indigo-500 transition-colors text-sm font-semibold" placeholder="e.g. app_user">
             </div>
             <div>
-                <label class="block text-gray-400 text-sm font-bold mb-2">Password</label>
+                <label for="db-user-password" class="db-field-label">Password</label>
                 <div class="flex bg-gray-700 border border-gray-600 rounded-lg overflow-hidden focus-within:border-indigo-500 transition-colors">
                     <input type="password" id="db-user-password" class="flex-1 bg-transparent px-4 py-2.5 text-white focus:outline-none text-sm font-semibold" placeholder="••••••••">
-                    <button onclick="App.Databases.toggleUserPassVisibility(this)" class="px-4 text-gray-400 hover:text-white transition-colors">
+                    <button aria-label="Show or hide password" onclick="App.Databases.toggleUserPassVisibility(this)" class="px-4 text-gray-400 hover:text-white transition-colors">
                         <i class="far fa-eye"></i>
                     </button>
                 </div>
             </div>
             <div>
-                <label class="block text-gray-400 text-sm font-bold mb-2">Privilege Scope</label>
+                <label for="db-user-scope" class="db-field-label">Permissions</label>
                 <select id="db-user-scope" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-indigo-500 transition-colors text-sm font-semibold">
                     <option value="read">Read-Only (SELECT / read)</option>
                     <option value="readWrite" selected>Read & Write (DML / readWrite)</option>
@@ -3655,7 +2693,7 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
                 <p class="text-[10px] text-gray-500 mt-1.5"><i class="fas fa-info-circle mr-1"></i>Scope mapping varies slightly depending on whether the engine is SQL or NoSQL.</p>
             </div>
             <div>
-                <label class="block text-gray-400 text-sm font-bold mb-2">Target Database / Schema</label>
+                <label for="db-user-database" class="db-field-label">Database / schema</label>
                 <select id="db-user-database" class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2.5 px-4 focus:outline-none focus:border-indigo-500 transition-colors text-sm font-mono font-semibold">
                     <option value="*">* (All Databases)</option>
                     <!-- Populated dynamically -->
@@ -3666,13 +2704,13 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 
         <div class="p-6 border-t border-gray-700 flex justify-end space-x-3 bg-gray-900 bg-opacity-35 rounded-b-lg">
             <button onclick="App.Databases.closeAddUserModal()" class="px-5 py-2.5 text-gray-400 hover:text-white rounded-lg transition-colors font-semibold">Cancel</button>
-            <button onclick="App.Databases.submitAddUser()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-semibold shadow-lg">Add User</button>
+            <button onclick="App.Databases.submitAddUser()" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors font-semibold shadow-lg">Add user</button>
         </div>
     </div>
 </div>
 
 <!-- Modify Default Policies Modal -->
-<div id="fw-policy-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300">
+<div id="fw-policy-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <h3 class="text-xl font-bold text-white">Default Policies</h3>
@@ -3706,7 +2744,7 @@ CMD [&quot;python3&quot;, &quot;-m&quot;, &quot;http.server&quot;]"></textarea>
 </div>
 
 <!-- Create Firewall Backup Modal -->
-<div id="fw-backup-modal" class="fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300">
+<div id="fw-backup-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden flex items-center justify-center z-50 transition-opacity duration-300">
     <div class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md border border-gray-700">
         <div class="flex items-center justify-between p-6 border-b border-gray-700 bg-gray-900 bg-opacity-50">
             <h3 class="text-xl font-bold text-white">Create Rules Backup</h3>

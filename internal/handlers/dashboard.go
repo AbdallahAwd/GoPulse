@@ -4,7 +4,9 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strings"
 
+	"github.com/amaa/gopulse/internal/middleware"
 	"github.com/amaa/gopulse/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -20,63 +22,50 @@ func NewDashboardHandler(assets fs.FS, store *store.ServerStore) *DashboardHandl
 	return &DashboardHandler{assets: assets, store: store}
 }
 
-// Index renders the server list page
+// Index starts with the servers the current user manages.
 func (h *DashboardHandler) Index(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"Title": "GoPulse - Servers",
-		"Page":  "servers",
+	h.Servers(w, r)
+}
+
+// Servers keeps the existing inventory and onboarding workflows available.
+func (h *DashboardHandler) Servers(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{"Title": "GoPulse - Servers", "Page": "servers", "GlobalSection": "servers"}
+	if err := h.render(w, r, "server_list.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
 
-	// We need to define which template to render as "content"
-	// For base.html to include server_list.html, we likely need to parse them together or associate them.
-	// Since we parsed "templates/*.html", we have access to all named templates.
-	// In Go templates, {{block "content" .}}{{end}} works if the child template defines it.
-	// But usually we execute the specific child template which includes the base, or execute base with data.
-	// Assuming base.html has {{template "content" .}}, and server_list.html defines "content".
-
-	// However, if both server_list.html and dashboard.html define "content", the last parsed one wins in a single template set.
-	// We might need separate template instances or use explicit template names.
-	// For simplicity with shared ParseFS, let's assume we can target the template name if defined distinctly,
-	// but standard "content" block overriding is tricky with a single set.
-
-	// A common pattern is:
-	// t.Clone() -> t.ParseFiles("server_list.html") -> t.Execute("base.html", data)
-	// But we already pre-parsed everything into `h.templates`.
-
-	// Let's assume we update the templates to define unique names like "content-server-list" and "content-dashboard"
-	// and base.html dynamically picks one, or we just Clone and re-parse.
-
-	// Actually, if we use block definitions, we need to be careful.
-	// Let's try to clone and execute specific "server_list.html" if it's a standalone file that extends base.
-	// If the files just define {{judge "content"}}, they fight.
-
-	// Let's just execute "server_list.html" directly if it contains the full page or extends base?
-	// Usually:
-	// {{define "content"}} ... {{end}} in server_list.html
-	// To render it, we simply execute "base.html".
-	// But if dashboard.html ALSO defines "content", they conflict in the same `*template.Template`.
-
-	// Strategy: Parse templates on the fly or group them?
-	// Or give them distinct names and have base.html accept a "ContentTemplate" variable?
-	// Let's try the variable approach.
-	// base.html: {{template (or .ContentTemplate "content") .}} -> dynamic template execution is not direct in standard text/template without a func map.
-
-	// Better: Clone the common layout and parse the specific page.
-	// But `h.templates` has all of them.
-
-	// Let's look at `base.html` again. It has `{{template "content" .}}`.
-	// If I modify `server_list.html` to `{{define "server_list_content"}}` and `dashboard.html` to `{{define "dashboard_content"}}`
-	// Then pass "server_list_content" as a variable to base?
-	// Base would need `{{template (print .Page "_content") .}}`? No, `template` action needs a string literal or we need a func.
-
-	// Let's assume for this step I will rename the definitions in the HTML files and use a custom func or just distinct base templates?
-	// Or simpler: clone the base and parse the specific file.
-	// `t := template.Must(template.ParseFS(web.Assets, "templates/base.html", "templates/components/*.html", "templates/server_list.html"))`
-
-	// Re-parsing per request is fine for low traffic MVP.
-	// Let's use `h.render(w, "server_list.html", data)` helper.
-
-	if err := h.render(w, "server_list.html", data); err != nil {
+// Workspace renders secondary console screens and redirects legacy resource URLs.
+func (h *DashboardHandler) Workspace(w http.ResponseWriter, r *http.Request) {
+	section := strings.Trim(r.URL.Path, "/")
+	if section == "" {
+		h.Servers(w, r)
+		return
+	}
+	// Old global-resource bookmarks now start with the appropriate server filter.
+	legacyRoles := map[string]string{"applications": "apps", "databases": "data", "networking": "edge"}
+	if role, ok := legacyRoles[section]; ok {
+		http.Redirect(w, r, "/?role="+role, http.StatusFound)
+		return
+	}
+	titles := map[string]string{"activity": "Activity", "settings": "Settings", "agents": "Agents"}
+	title, ok := titles[section]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	descriptions := map[string]string{
+		"activity": "Inspect deployment attempts and your infrastructure operations.",
+		"agents":   "Connect Claude Code, Codex, or another MCP client to your servers.",
+		"settings": "Manage team access, integrations, and dashboard configuration.",
+	}
+	data := map[string]interface{}{"Title": "GoPulse - " + title, "Page": "workspace", "GlobalSection": section, "SectionTitle": title, "SectionDescription": descriptions[section]}
+	view := "workspace.html"
+	if section == "agents" {
+		view = "agents.html"
+		data["Page"] = "agents"
+	}
+	if err := h.render(w, r, view, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -96,9 +85,11 @@ func (h *DashboardHandler) ServerDashboard(w http.ResponseWriter, r *http.Reques
 		"ServerID":   server.ID,
 		"ServerName": server.Name,
 		"IsDbOnly":   server.IsDbOnly,
+		"ServerHost": server.Host,
+		"ServerPort": server.Port,
 	}
 
-	if err := h.render(w, "dashboard.html", data); err != nil {
+	if err := h.render(w, r, "dashboard.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -110,7 +101,7 @@ func (h *DashboardHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"Page":  "login",
 	}
 
-	if err := h.render(w, "login.html", data); err != nil {
+	if err := h.render(w, r, "login.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -122,7 +113,7 @@ func (h *DashboardHandler) Register(w http.ResponseWriter, r *http.Request) {
 		"Page":  "register",
 	}
 
-	if err := h.render(w, "register.html", data); err != nil {
+	if err := h.render(w, r, "register.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -137,12 +128,48 @@ func (h *DashboardHandler) Users(w http.ResponseWriter, r *http.Request) {
 		"Servers": servers,
 	}
 
-	if err := h.render(w, "users.html", data); err != nil {
+	if err := h.render(w, r, "users.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
 
-func (h *DashboardHandler) render(w http.ResponseWriter, view string, data interface{}) error {
+func (h *DashboardHandler) render(w http.ResponseWriter, r *http.Request, view string, data map[string]interface{}) error {
+	data["CanManageUsers"] = middleware.HasPermission(r, "user:manage")
+	data["CanManageServers"] = middleware.HasPermission(r, "server:write")
+	data["CanWriteCron"] = middleware.HasPermission(r, "cron:write")
+	data["CanWriteProjects"] = middleware.HasPermission(r, "projects:write")
+	data["CanWriteDatabases"] = middleware.HasPermission(r, "database:write")
+	data["CanTransferConfiguration"] = middleware.HasPermission(r, "*")
+	if data["GlobalSection"] == nil {
+		data["GlobalSection"] = "settings"
+		if data["Page"] == "dashboard" {
+			data["GlobalSection"] = "servers"
+		}
+	}
+	data["ServerNavigation"] = []struct {
+		Key, Label, Icon, Group string
+		AppOnly                 bool
+	}{
+		{"overview", "Overview", "fa-gauge-high", "Resources", false},
+		{"projects", "Applications", "fa-cubes", "Resources", true},
+		{"databases", "Databases", "fa-database", "Resources", false},
+		{"domains", "Domains and TLS", "fa-globe", "Resources", true},
+		{"load-balancers", "Load balancers", "fa-network-wired", "Resources", true},
+		{"processes", "Processes", "fa-list", "Server tools", false},
+		{"docker", "Docker", "fa-box", "Server tools", false},
+		{"cron", "Cron jobs", "fa-clock", "Server tools", false},
+		{"files", "Files", "fa-folder", "Server tools", false},
+		{"terminal", "Terminal", "fa-terminal", "Server tools", false},
+		{"system-users", "Server users", "fa-users", "Server tools", false},
+		{"firewall", "Firewall", "fa-shield-halved", "Server tools", false},
+		{"settings", "Server settings", "fa-gear", "Server tools", false},
+	}
+	data["GlobalNavigation"] = []struct{ Key, Label, URL, Icon string }{
+		{"servers", "Servers", "/", "fa-server"},
+		{"activity", "Activity", "/activity", "fa-clock-rotate-left"},
+		{"agents", "Agents", "/agents", "fa-robot"},
+		{"settings", "Settings", "/settings", "fa-gear"},
+	}
 	tmpl, err := template.ParseFS(h.assets, "templates/base.html", "templates/"+view)
 	if err != nil {
 		return err

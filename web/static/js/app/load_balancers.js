@@ -127,6 +127,9 @@ App.LoadBalancers = {
         if (!lb) return;
 
         App.UI.el('lb-details-title').textContent = `Manage Backends - ${lb.name}`;
+        let actions = document.getElementById('lb-deploy-actions');
+        if (!actions) {actions=document.createElement('div');actions.id='lb-deploy-actions';App.UI.el('lb-details-domain').after(actions);}
+        actions.innerHTML = `<button class="text-blue-300 mr-4" onclick="App.LoadBalancerWizard.edit('${lb.id}')">Edit configuration</button><button class="text-blue-300" onclick="App.LoadBalancerWizard.retry('${lb.id}')">Deploy / Retry verification</button>`;
         App.UI.el('lb-details-domain').textContent = `${lb.domain} (Algorithm: ${lb.algorithm})`;
         App.UI.el('lb-details-panel').classList.remove('hidden');
 
@@ -134,7 +137,7 @@ App.LoadBalancers = {
         const errBanner = App.UI.el('lb-error-banner');
         const errMsg = App.UI.el('lb-error-message');
         if (errBanner && errMsg) {
-            if (lb.status === 'error' && lb.error_message) {
+            if (lb.error_message) {
                 errMsg.textContent = lb.error_message;
                 errBanner.classList.remove('hidden');
             } else {
@@ -274,12 +277,12 @@ App.LoadBalancers = {
     },
 
     async removeLoadBalancer(id, name) {
-        if (!confirm(`Are you sure you want to remove "${name}"?\n\nThis will clean up the Nginx configuration on the entry-point VPS.`)) {
+        if (!await App.UI.confirm(`Are you sure you want to remove "${name}"?\n\nThis will clean up the Nginx configuration on the entry-point VPS.`)) {
             return;
         }
 
         try {
-            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/load-balancers/${id}`);
+            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/load-balancers/${id}?confirm=${encodeURIComponent(id)}`);
             if (res.success) {
                 App.UI.toast('success', 'Load balancer removed successfully');
                 if (this.currentLbId === id) this.hideDetailsPanel();
@@ -425,9 +428,9 @@ App.LoadBalancers = {
             });
 
             if (res.success) {
-                App.UI.toast('success', 'Backend target added and deployed');
                 this.closeAddBackendModal();
-                this.load();
+                const root = App.Infrastructure.dialog('Deploy backend change', '<p>Deployment queued…</p>');
+                await App.Infrastructure.track(res.data.operation_id, root, () => this.load());
             } else {
                 App.UI.toast('error', res.error || 'Failed to add backend');
             }
@@ -444,15 +447,15 @@ App.LoadBalancers = {
     async removeBackend(backendID) {
         if (!this.currentLbId) return;
 
-        if (!confirm('Are you sure you want to remove this backend node? This will trigger an Nginx reload.')) {
+        if (!await App.UI.confirm('Are you sure you want to remove this backend node? This will trigger an Nginx reload.')) {
             return;
         }
 
         try {
             const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/load-balancers/${this.currentLbId}/backends/${backendID}`);
             if (res.success) {
-                App.UI.toast('success', 'Backend node removed successfully');
-                this.load();
+                const root = App.Infrastructure.dialog('Deploy backend removal', '<p>Deployment queued…</p>');
+                await App.Infrastructure.track(res.data.operation_id, root, () => this.load());
             } else {
                 App.UI.toast('error', res.error || 'Failed to remove backend');
             }

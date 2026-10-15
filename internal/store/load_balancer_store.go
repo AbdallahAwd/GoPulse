@@ -149,7 +149,12 @@ func (s *LoadBalancerStore) AddLoadBalancer(lb models.LoadBalancer) error {
 		errMsg = sql.NullString{String: lb.ErrorMessage, Valid: true}
 	}
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(
 		`INSERT INTO load_balancers (id, server_id, name, domain, port, algorithm, ssl, health_check_path, health_check_interval, status, error_message, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		lb.ID,
@@ -165,7 +170,16 @@ func (s *LoadBalancerStore) AddLoadBalancer(lb models.LoadBalancer) error {
 		errMsg,
 		timeToText(lb.CreatedAt),
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, backend := range lb.Backends {
+		backend.LoadBalancerID = lb.ID
+		if err := insertBackendTx(tx, backend); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // GetLoadBalancer returns a load balancer by ID.
@@ -368,7 +382,7 @@ func (s *LoadBalancerStore) UpdateBackendStatus(backendID string, status string)
 	defer s.mu.Unlock()
 
 	result, err := s.db.Exec(
-		`UPDATE load_balancer_backends SET status = ? WHERE id = ?`,
+		`UPDATE load_balancer_backends SET status = ? WHERE id = ? AND status != 'disabled'`,
 		status,
 		backendID,
 	)
@@ -377,7 +391,48 @@ func (s *LoadBalancerStore) UpdateBackendStatus(backendID string, status string)
 	}
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
+		var current string
+		if err := s.db.QueryRow(`SELECT status FROM load_balancer_backends WHERE id = ?`, backendID).Scan(&current); err == nil && current == "disabled" {
+			return nil
+		}
 		return fmt.Errorf("backend not found")
 	}
 	return nil
+}
+
+func insertBackendTx(tx *sql.Tx, b models.LoadBalancerBackend) error {
+	if b.CreatedAt.IsZero() {
+		b.CreatedAt = time.Now()
+	}
+	_, err := tx.Exec(`INSERT INTO load_balancer_backends(id,load_balancer_id,target_server_id,target_project_id,host,port,weight,backup,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, b.ID, b.LoadBalancerID, b.TargetServerID, b.TargetProjectID, b.Host, b.Port, b.Weight, boolToInt(b.Backup), b.Status, timeToText(b.CreatedAt))
+	return err
+}
+
+// ReplaceLoadBalancer commits configuration and backends together after remote validation/application.
+func (s *LoadBalancerStore) ReplaceLoadBalancer(lb models.LoadBalancer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE load_balancers SET name=?,domain=?,port=?,algorithm=?,ssl=?,health_check_path=?,health_check_interval=?,status=?,error_message=? WHERE id=?`, lb.Name, lb.Domain, lb.Port, lb.Algorithm, boolToInt(lb.SSL), lb.HealthCheckPath, lb.HealthCheckInterval, lb.Status, lb.ErrorMessage, lb.ID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n != 1 {
+		return fmt.Errorf("load balancer not found")
+	}
+	if _, err := tx.Exec(`DELETE FROM load_balancer_backends WHERE load_balancer_id=?`, lb.ID); err != nil {
+		return err
+	}
+	for _, b := range lb.Backends {
+		b.LoadBalancerID = lb.ID
+		if err := insertBackendTx(tx, b); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

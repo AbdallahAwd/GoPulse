@@ -1,0 +1,74 @@
+{{define "content"}}
+<main class="workspace-page" id="workspace-page" data-section="{{.GlobalSection}}">
+    <div class="workspace-page-heading">
+        <div><h1>{{.SectionTitle}}</h1><p>{{.SectionDescription}}</p></div>
+        <div class="flex flex-wrap gap-2">
+            {{if eq .GlobalSection "applications"}}{{if .CanWriteProjects}}<button class="workspace-button" id="workspace-create" data-view="projects">New application</button>{{end}}{{end}}
+            {{if eq .GlobalSection "databases"}}{{if .CanWriteDatabases}}<button class="workspace-button" id="workspace-create" data-view="databases">New database</button>{{end}}{{end}}
+            {{if eq .GlobalSection "networking"}}<button class="workspace-button secondary" id="workspace-create" data-view="domains">Open server networking</button>{{end}}
+            {{if eq .GlobalSection "overview"}}{{if .CanManageServers}}<a href="/servers?action=connect" class="workspace-button">Connect server</a>{{end}}{{end}}
+        </div>
+    </div>
+
+    {{if eq .GlobalSection "settings"}}
+    <section class="workspace-panel master-domain-panel" id="master-domain-panel" data-admin="{{.CanTransferConfiguration}}" aria-labelledby="master-domain-title">
+        <div class="master-domain-heading"><div class="master-domain-heading-copy"><span class="master-domain-icon" aria-hidden="true"><i class="fas fa-globe"></i></span><div><h2 id="master-domain-title">Master dashboard domain</h2><p>Give your GoPulse dashboard a dedicated address with automatic HTTPS.</p></div></div><span class="master-domain-status" id="master-domain-status">Loading…</span></div>
+        {{if .CanTransferConfiguration}}
+        <div class="master-domain-error" id="master-domain-error" role="alert" hidden></div>
+        <div class="master-domain-layout">
+            <form id="master-domain-form" class="master-domain-form">
+                <label for="master-domain-hostname">Dashboard domain<input id="master-domain-hostname" class="workspace-input" placeholder="dashboard.example.com" autocomplete="off" maxlength="253" required><small>Use a subdomain that points to this dashboard's host.</small></label>
+                <label for="master-domain-ip">Master public IP <span class="master-domain-optional">Optional</span><input id="master-domain-ip" class="workspace-input" placeholder="Your master host's IPv4 or IPv6 address" autocomplete="off"><small>Use this to check that your DNS record points to the right host.</small></label>
+                <label class="master-domain-switch" for="master-domain-https"><span><strong>Enable HTTPS</strong><small>Free Let's Encrypt certificate with automatic renewal.</small></span><input id="master-domain-https" type="checkbox" checked></label>
+                <div id="master-domain-certificate" class="master-domain-certificate">
+                    <label for="master-domain-email">Certificate contact email<input id="master-domain-email" class="workspace-input" type="email" autocomplete="email" placeholder="admin@example.com" maxlength="254" required></label>
+                    <label class="master-domain-terms" for="master-domain-terms"><input id="master-domain-terms" type="checkbox" required><span>I accept the <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let's Encrypt subscriber agreement</a> for this certificate.</span></label>
+                </div>
+                <div class="master-domain-form-footer"><p id="master-domain-save-note">Save your settings, then apply setup on the master host.</p><button class="workspace-button secondary" id="master-domain-save" type="submit">Save settings</button></div>
+            </form>
+            <aside class="master-domain-setup" aria-label="Domain setup">
+                <div class="master-domain-current"><span class="console-eyebrow">DASHBOARD ADDRESS</span><a id="master-domain-current-url" target="_blank" rel="noopener noreferrer"></a><small id="master-domain-address-note">Your current address stays available during setup.</small></div>
+                <ol class="master-domain-steps">
+                    <li><span>1</span><div><strong>Point your DNS</strong><p>Add an A or AAAA record for your domain to the master host's public IP. Allow inbound ports 80 and 443.</p><div id="master-domain-dns-records"></div></div></li>
+                    <li><span>2</span><div><strong>Configure the master host</strong><p id="master-domain-runtime">Checking dashboard listener…</p><small id="master-domain-platform"></small></div></li>
+                    <li><span>3</span><div><strong>Verify the connection</strong><p id="master-domain-check-message">Check DNS and confirm that the address reaches this GoPulse instance.</p><small id="master-domain-check-time"></small></div></li>
+                </ol>
+                <div class="master-domain-actions"><button class="workspace-button" type="button" id="master-domain-apply" disabled>Set up domain</button><button class="workspace-button secondary" type="button" id="master-domain-check" disabled>Check connection</button></div>
+                <p class="master-domain-help" id="master-domain-apply-note">Saving settings does not change host routing.</p>
+                <div id="master-domain-operation" class="master-domain-operation" role="status" aria-live="polite" hidden><strong id="master-domain-operation-status"></strong><ol id="master-domain-operation-steps"></ol></div>
+            </aside>
+        </div>
+        <details class="master-domain-preview" id="master-domain-preview"><summary>Nginx configuration preview</summary><div class="master-domain-preview-toolbar"><code>/etc/nginx/conf.d/gopulse-dashboard.conf</code><button class="workspace-button secondary" id="master-domain-copy" type="button" disabled>Copy configuration</button></div><pre id="master-domain-nginx">Save a domain to preview its configuration.</pre></details>
+        {{else}}<p class="workspace-help">An administrator or user with full access can configure the master dashboard domain.</p>{{end}}
+    </section>
+    <div class="workspace-grid">
+        <section class="workspace-panel"><h2 class="text-lg font-semibold">Team access</h2><p class="workspace-help mt-2 mb-5">Manage dashboard users, action permissions, and server access.</p>{{if .CanManageUsers}}<a href="/users" class="workspace-button secondary">Manage team</a>{{else}}<p class="workspace-help">Team management requires user management permission.</p>{{end}}</section>
+        <section class="workspace-panel"><h2 class="text-lg font-semibold">Configuration transfer</h2><p class="workspace-help mt-2 mb-5">Export or import dashboard configuration. Exports can contain credentials; database data needs separate backups.</p>{{if .CanTransferConfiguration}}<a href="/servers?settings=backup" class="workspace-button secondary">Open export and import</a>{{else}}<p class="workspace-help">Configuration transfer requires administrator or full-access permission.</p>{{end}}</section>
+        <section class="workspace-panel"><h2 class="text-lg font-semibold">Server integrations</h2><p class="workspace-help mt-2 mb-5">GitHub deployment configuration belongs to each application. Agent connections have their own access settings and audit trail.</p><div class="flex flex-wrap gap-2"><a href="/" class="workspace-button secondary">Choose server</a><a href="/agents" class="workspace-button secondary">Agents</a></div></section>
+    </div>
+    {{else}}
+    <div id="workspace-error" class="workspace-alert" role="alert" hidden></div>
+    {{if eq .GlobalSection "overview"}}
+    <div class="workspace-grid mb-6" id="workspace-summary" aria-live="polite">
+        <a class="workspace-panel workspace-summary" href="/applications">Applications<strong id="workspace-app-count">—</strong><span>Across permitted servers</span></a>
+        <a class="workspace-panel workspace-summary" href="/servers">Servers<strong id="workspace-server-count">—</strong><span>Registered infrastructure</span></a>
+        <a class="workspace-panel workspace-summary" href="/databases">Databases<strong id="workspace-db-count">—</strong><span>Database instances and services</span></a>
+    </div>
+    <section class="workspace-panel mb-6"><h2 class="text-lg font-semibold">Choose your next task</h2><p class="workspace-help mt-2">Start with an application or database. Server tools remain available inside each server.</p><div class="flex flex-wrap gap-3 mt-5"><a href="/applications" class="workspace-button">Manage applications</a><a href="/databases" class="workspace-button secondary">Manage databases</a><a href="/networking" class="workspace-button secondary">Configure networking</a><a href="/activity" class="workspace-button secondary">Inspect activity</a></div></section>
+    {{end}}
+    {{if eq .GlobalSection "activity"}}<div class="flex flex-wrap gap-3 mb-6"><button id="workspace-operations" class="workspace-button secondary">My operations and approvals</button><button id="workspace-ai" class="workspace-button secondary">Connect AI client</button></div>{{end}}
+    <section class="workspace-panel">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4"><h2 class="text-lg font-semibold">{{if eq .GlobalSection "overview"}}Applications{{else if eq .GlobalSection "activity"}}Recent activity{{else}}Resource inventory{{end}}</h2><button id="workspace-refresh" class="workspace-button secondary">Refresh</button></div>
+        <div class="workspace-toolbar">
+            <label class="sr-only" for="workspace-search">Search resources</label><input id="workspace-search" class="workspace-input" type="search" placeholder="Search by name, server, or status">
+            <label class="sr-only" for="workspace-server-filter">Filter by server</label><select id="workspace-server-filter" class="workspace-input"><option value="">All permitted servers</option></select>
+        </div>
+        <p id="workspace-inventory-note" class="workspace-help mb-4">{{if eq .GlobalSection "activity"}}Deployment history and your infrastructure operations are separate records.{{else}}States are reported by the saved resource inventory; they do not establish live health.{{end}}</p>
+        <div id="workspace-results" aria-live="polite"><p class="workspace-empty">Loading resources…</p></div>
+    </section>
+    <dialog id="workspace-server-picker" class="workspace-picker" aria-labelledby="workspace-picker-title">
+        <form id="workspace-picker-form"><h2 id="workspace-picker-title" class="text-xl font-semibold">Choose a server</h2><p class="workspace-help mt-2 mb-5">The existing setup screen opens on the selected server.</p><label for="workspace-target-server">Target server</label><select id="workspace-target-server" class="workspace-input block w-full mt-2 mb-5" required></select><div class="flex justify-end gap-3"><button type="button" id="workspace-picker-cancel" class="workspace-button secondary">Cancel</button><button class="workspace-button">Continue</button></div></form>
+    </dialog>
+    {{end}}
+</main>
+{{end}}

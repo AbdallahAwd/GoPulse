@@ -9,15 +9,14 @@ server:
   idle_timeout: "60s"
 
 auth:
-  # IMPORTANT: Change this in production!
-  jwt_secret: ""
-  admin_username: "admin"
-  admin_password: "changeme"
+  # Required: provide a random secret through GOPULSE_AUTH_JWT_SECRET.
+  jwt_secret: "" # Set GOPULSE_AUTH_JWT_SECRET to a random value of at least 32 characters.
+  # The first registered account becomes admin; no default login is created.
   token_duration: "24h"
 
 github:
-  client_id: "Ov23liocY6oaamvLoZdH"
-  client_secret: ""
+  client_id: "" # Set GOPULSE_GITHUB_CLIENT_ID for your own OAuth application.
+  client_secret: "" # Set GOPULSE_GITHUB_CLIENT_SECRET; never commit it.
   callback_url: "http://104.248.143.117:2886/auth/github/callback"
 
 monitoring:

@@ -35,27 +35,15 @@ App.Docker.Volumes = {
         const tbody = App.UI.el('volumes-tbody');
         if (!tbody) return;
 
-        if (volumes.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-gray-400">No volumes found</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = volumes.map(v => `
-            <tr class="hover:bg-gray-700 transition-colors">
-                <td class="px-4 py-3 font-medium text-white">${v.name}</td>
-                <td class="px-4 py-3 text-gray-400">${v.driver}</td>
-                <td class="px-4 py-3 text-gray-400 truncate max-w-xs" title="${v.mountpoint}">${v.mountpoint}</td>
-                <td class="px-4 py-3 text-right">
-                    <button onclick="App.Docker.Volumes.remove('${v.name}')" class="text-red-400 hover:text-red-300 hover:bg-red-900/30 p-2 rounded transition-colors" title="Remove Volume">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                </td>
-            </tr>
-        `).join('');
+        const count = App.UI.el('docker-volumes-count');
+        if (count) count.textContent = `${volumes.length} ${volumes.length === 1 ? 'volume' : 'volumes'}`;
+        if (volumes.length === 0) { tbody.innerHTML = '<tr><td colspan="4" class="docker-table-state">No volumes found</td></tr>'; return; }
+        const text = value => App.Docker.escapeHTML(value);
+        tbody.innerHTML = volumes.map(v => `<tr><td class="docker-resource-name font-mono">${text(v.name)}</td><td class="docker-table-muted">${text(v.driver)}</td><td class="docker-table-path" title="${text(v.mountpoint)}">${text(v.mountpoint)}</td><td><div class="docker-row-actions"><button onclick="App.Docker.Volumes.remove(${App.Docker.handlerArgument(v.name)})" class="docker-icon-button docker-danger-button" title="Remove volume" aria-label="Remove volume ${text(v.name)}"><i class="far fa-trash-alt" aria-hidden="true"></i></button></div></td></tr>`).join('');
     },
 
     async remove(name) {
-        if (!confirm('Are you sure you want to remove this volume?')) return;
+        if (!await App.UI.confirm('Are you sure you want to remove this volume?')) return;
         try {
             await App.API.delete(`/volumes/${name}`);
             App.UI.toast('success', 'Volume removed successfully');

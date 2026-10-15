@@ -18,16 +18,28 @@ import (
 type contextKey string
 
 const (
-	UserContextKey           contextKey = "user"
-	RoleContextKey           contextKey = "role"
-	PermissionsContextKey    contextKey = "permissions"
-	AllowedServersContextKey contextKey = "allowed_servers"
+	AgentContextKey            contextKey = "agent"
+	UserContextKey             contextKey = "user"
+	UserIDContextKey           contextKey = "user_id"
+	RoleContextKey             contextKey = "role"
+	PermissionsContextKey      contextKey = "permissions"
+	AllowedServersContextKey   contextKey = "allowed_servers"
+	ServerAuthorizerContextKey contextKey = "server_authorizer"
 )
 
 // AuthMiddleware provides JWT-based authentication
 type AuthMiddleware struct {
-	jwtSecret string
-	userStore *store.UserStore
+	jwtSecret        string
+	userStore        *store.UserStore
+	agentStore       *store.AgentStore
+	secureCookieHost func(string) bool
+}
+
+// A configured HTTPS origin uses Secure cookies even when TLS terminates at
+// Nginx. Do not trust arbitrary X-Forwarded-Proto headers from direct clients.
+func (am *AuthMiddleware) SetSecureCookieHost(check func(string) bool) { am.secureCookieHost = check }
+func (am *AuthMiddleware) secureCookie(r *http.Request) bool {
+	return r.TLS != nil || (am.secureCookieHost != nil && am.secureCookieHost(r.Host))
 }
 
 // NewAuthMiddleware creates a new auth middleware
@@ -47,6 +59,10 @@ func (am *AuthMiddleware) GetUserStore() *store.UserStore {
 func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		if path == "/.well-known/gopulse-dashboard" && r.Method == http.MethodGet {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// Always allow static files
 		if strings.HasPrefix(path, "/static/") {
@@ -67,33 +83,48 @@ func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 		claims, isAuthenticated := am.authenticate(r)
 
 		var username string
+		var userID string
 		var role string
 		var permissions []string
 		var allowedServers []string
 
 		if isAuthenticated {
-			if u, ok := claims["username"].(string); ok {
-				username = u
-			}
-			if rl, ok := claims["role"].(string); ok {
-				role = rl
-			}
-			if perms, ok := claims["permissions"].([]interface{}); ok {
-				for _, p := range perms {
-					if ps, ok := p.(string); ok {
-						permissions = append(permissions, ps)
-					}
-				}
-			}
-			if srvs, ok := claims["allowed_servers"].([]interface{}); ok {
-				for _, s := range srvs {
-					if ss, ok := s.(string); ok {
-						allowedServers = append(allowedServers, ss)
-					}
-				}
+			username, _ = claims["username"].(string)
+			// Resolve current privileges on every request, including token revocation.
+			user, err := am.userStore.GetUser(username)
+			if err != nil {
+				isAuthenticated = false
+			} else {
+				role, permissions, allowedServers = user.Role, user.Permissions, user.AllowedServers
+				userID = user.ID
 			}
 		}
 
+		// Agent-scoped tokens cannot bypass approvals using ordinary REST routes.
+		agent, _ := claims["agent"].(bool)
+		if agent {
+			aud, err := claims.GetAudience()
+			if err != nil || len(aud) != 1 || aud[0] != "gopulse-mcp" {
+				isAuthenticated = false
+			}
+		}
+		if isAuthenticated && agent && path != "/api/mcp" && !isAgentDispatch(r.Context()) {
+			http.Error(w, "Agent tokens may access only /api/mcp", http.StatusForbidden)
+			return
+		}
+		// Opaque credentials narrow the owner's current permissions and server
+		// access. Never preserve an administrator role on a scoped credential.
+		var credential *models.AgentCredential
+		if value, ok := claims["agent_credential"].(models.AgentCredential); ok && isAuthenticated {
+			credential = &value
+			role = "operator"
+			permissions, _ = claims["agent_permissions"].([]string)
+			allowedServers, _ = claims["agent_servers"].([]string)
+			user, _ := am.userStore.GetUser(username)
+			if value.AllServers && user.Role == "admin" {
+				role = "agent_all_servers"
+			}
+		}
 		// API routes authentication
 		if strings.HasPrefix(path, "/api/") {
 			// GitHub cannot present a GoPulse JWT. This narrow endpoint is public at
@@ -105,6 +136,9 @@ func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 			}
 
 			if !isAuthenticated {
+				if path == "/api/mcp" {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="GoPulse"`)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				json.NewEncoder(w).Encode(map[string]interface{}{
@@ -115,10 +149,40 @@ func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), UserContextKey, username)
+			ctx := context.WithValue(r.Context(), AgentContextKey, agent)
+			ctx = context.WithValue(ctx, AgentCredentialContextKey, credential)
+			ctx = context.WithValue(ctx, UserContextKey, username)
+			ctx = context.WithValue(ctx, UserIDContextKey, userID)
 			ctx = context.WithValue(ctx, RoleContextKey, role)
 			ctx = context.WithValue(ctx, PermissionsContextKey, permissions)
 			ctx = context.WithValue(ctx, AllowedServersContextKey, allowedServers)
+			expires, _ := claims.GetExpirationTime()
+			ctx = context.WithValue(ctx, ServerAuthorizerContextKey, func(id string) bool {
+				if credential != nil {
+					current, _, targets, err := am.effectiveAgent(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+					if err != nil {
+						return false
+					}
+					user, err := am.userStore.GetUser(username)
+					return err == nil && ((current.AllServers && user.Role == "admin") || containsAgentString(targets, id))
+				}
+				if expires == nil || !time.Now().Before(expires.Time) {
+					return false
+				}
+				user, err := am.userStore.GetUser(username)
+				if err != nil {
+					return false
+				}
+				if user.Role == "admin" {
+					return true
+				}
+				for _, allowed := range user.AllowedServers {
+					if allowed == id {
+						return true
+					}
+				}
+				return false
+			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -152,7 +216,9 @@ func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), UserContextKey, username)
+		ctx := context.WithValue(r.Context(), AgentContextKey, agent)
+		ctx = context.WithValue(ctx, UserContextKey, username)
+		ctx = context.WithValue(ctx, UserIDContextKey, userID)
 		ctx = context.WithValue(ctx, RoleContextKey, role)
 		ctx = context.WithValue(ctx, PermissionsContextKey, permissions)
 		ctx = context.WithValue(ctx, AllowedServersContextKey, allowedServers)
@@ -173,22 +239,23 @@ func isGitHubWebhookPath(path string) bool {
 func (am *AuthMiddleware) authenticate(r *http.Request) (jwt.MapClaims, bool) {
 	var tokenString string
 
-	// 1. Try to read from Cookie first (seamless for browser pages)
-	cookie, err := r.Cookie("jwt_token")
-	if err == nil {
-		tokenString = cookie.Value
-	}
-
-	// 2. Try Bearer header if no cookie found (fallback for API calls)
-	if tokenString == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+	// An explicit bearer token takes precedence, so an invalid agent token cannot fall back to a cookie.
+	header := r.Header.Get("Authorization")
+	if header != "" {
+		if !strings.HasPrefix(header, "Bearer ") {
+			return nil, false
 		}
+		tokenString = strings.TrimPrefix(header, "Bearer ")
+	} else if cookie, err := r.Cookie("jwt_token"); err == nil {
+		tokenString = cookie.Value
 	}
 
 	if tokenString == "" {
 		return nil, false
+	}
+
+	if strings.HasPrefix(tokenString, "gp_agent_") && strings.HasPrefix(header, "Bearer ") {
+		return am.opaqueAgentClaims(r)
 	}
 
 	// Parse and validate the JWT token
@@ -197,7 +264,7 @@ func (am *AuthMiddleware) authenticate(r *http.Request) (jwt.MapClaims, bool) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(am.jwtSecret), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 
 	if err == nil && token.Valid {
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {
@@ -285,7 +352,7 @@ func (am *AuthMiddleware) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false, // Set to true in HTTPS production
+		Secure:   am.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(24 * time.Hour),
 	})
@@ -366,7 +433,7 @@ func (am *AuthMiddleware) RegisterHandler(w http.ResponseWriter, r *http.Request
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   am.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(24 * time.Hour),
 	})
@@ -387,7 +454,7 @@ func (am *AuthMiddleware) LogoutHandler(w http.ResponseWriter, r *http.Request) 
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false,
+		Secure:   am.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0), // Expire instantly
 		MaxAge:   -1,
@@ -422,7 +489,7 @@ func (am *AuthMiddleware) RequirePermission(permission string) func(http.Handler
 			// Check permission list
 			hasPerm := false
 			for _, p := range permissions {
-				if p == "*" || p == permission {
+				if p == "*" || p == permission || (p == "dashboard:admin" && permission == "*") {
 					hasPerm = true
 					break
 				}
@@ -455,7 +522,7 @@ func (am *AuthMiddleware) RequireServerAccess(next http.Handler) http.Handler {
 		allowedServers, _ := r.Context().Value(AllowedServersContextKey).([]string)
 
 		// Admins bypass server restriction checks
-		if role == "admin" {
+		if role == "admin" || role == "agent_all_servers" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -592,4 +659,26 @@ func (am *AuthMiddleware) DeleteUserHandler(w http.ResponseWriter, r *http.Reque
 		"success": true,
 		"message": "User successfully deleted",
 	})
+}
+
+// AgentTokenHandler issues short-lived tokens restricted to the MCP endpoint.
+func (am *AuthMiddleware) AgentTokenHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "" {
+		http.Error(w, "Use a dashboard browser session", 403)
+		return
+	}
+	if _, err := r.Cookie("jwt_token"); err != nil {
+		http.Error(w, "Dashboard session required", 403)
+		return
+	}
+	username, _ := r.Context().Value(UserContextKey).(string)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"username": username, "agent": true, "aud": "gopulse-mcp", "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix()})
+	encoded, err := token.SignedString([]byte(am.jwtSecret))
+	if err != nil {
+		http.Error(w, "Cannot issue token", 500)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": map[string]interface{}{"token": encoded, "expires_in": 3600}})
 }

@@ -34,7 +34,7 @@ func (h *ServerHandler) ListServers(w http.ResponseWriter, r *http.Request) {
 
 	var filteredServers []models.Server
 	for _, s := range servers {
-		if role == "admin" || role == "" {
+		if role == "admin" {
 			filteredServers = append(filteredServers, s)
 		} else {
 			for _, allowedID := range allowedServers {
@@ -50,6 +50,7 @@ func (h *ServerHandler) ListServers(w http.ResponseWriter, r *http.Request) {
 	safeServers := make([]models.Server, len(filteredServers))
 	for i, s := range filteredServers {
 		s.Password = "" // Do not return password
+		s.SSHKeyContent = ""
 		safeServers[i] = s
 	}
 
@@ -88,6 +89,8 @@ func (h *ServerHandler) AddServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	server.Password = ""
+	server.SSHKeyContent = ""
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -124,8 +127,8 @@ func (h *ServerHandler) GetServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	server.Password = "" // Sanitize
-
+	server.Password = ""
+	server.SSHKeyContent = ""
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -153,7 +156,7 @@ func (h *ServerHandler) UploadKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate unique filename
-	filename := fmt.Sprintf("%s_%s", uuid.New().String()[:8], header.Filename)
+	filename := fmt.Sprintf("%s_%s", uuid.New().String()[:8], filepath.Base(header.Filename))
 	keyPath := filepath.Join(keysDir, filename)
 
 	// Write key file with restricted permissions
@@ -206,10 +209,41 @@ func (h *ServerHandler) UpdateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	server.Password = "" // Sanitize
+	server.Password = ""
+	server.SSHKeyContent = ""
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"data":    server,
 	})
+}
+
+// Inventory is a permission-scoped fleet snapshot. The DTO deliberately omits
+// passwords, private keys, project environment variables, and database secrets.
+func (h *ServerHandler) Inventory(w http.ResponseWriter, r *http.Request) {
+	counts, err := h.store.ResourceCounts()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Unable to read server inventory", nil)
+		return
+	}
+	type item struct {
+		ID       string                     `json:"id"`
+		Name     string                     `json:"name"`
+		Host     string                     `json:"host"`
+		Port     int                        `json:"port"`
+		User     string                     `json:"user"`
+		AuthType string                     `json:"auth_type"`
+		Tags     []string                   `json:"tags"`
+		IsDbOnly bool                       `json:"is_db_only"`
+		Counts   store.ServerResourceCounts `json:"counts"`
+	}
+	items := []item{}
+	for _, server := range h.store.ListServers() {
+		if !middleware.CanAccessServer(r, server.ID) {
+			continue
+		}
+		items = append(items, item{server.ID, server.Name, server.Host, server.Port, server.User, server.AuthType, server.Tags, server.IsDbOnly, counts[server.ID]})
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	respondJSON(w, http.StatusOK, models.APIResponse{Success: true, Data: items})
 }

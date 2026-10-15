@@ -14,6 +14,7 @@ type ServiceManager struct {
 	store      *store.ServerStore
 	sshClients map[string]*remote.SSHClient
 	mu         sync.RWMutex
+	executor   CommandExecutor
 }
 
 // NewServiceManager creates a new ServiceManager

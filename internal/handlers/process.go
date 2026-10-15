@@ -129,14 +129,8 @@ func (h *ProcessHandler) RestartService(w http.ResponseWriter, r *http.Request) 
 	serverID := chi.URLParam(r, "serverID")
 	serviceName := chi.URLParam(r, "name")
 
-	service, err := h.manager.GetProcessProvider(serverID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to get process service", err)
-		return
-	}
-
-	if err := service.RestartService(r.Context(), serviceName); err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to restart service", err)
+	if err := h.manager.RestartManagedService(r.Context(), serverID, serviceName); err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to restart and verify service", err)
 		return
 	}
 
@@ -151,13 +145,7 @@ func (h *ProcessHandler) GetServiceStatus(w http.ResponseWriter, r *http.Request
 	serverID := chi.URLParam(r, "serverID")
 	serviceName := chi.URLParam(r, "name")
 
-	service, err := h.manager.GetProcessProvider(serverID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to get process service", err)
-		return
-	}
-
-	status, err := service.GetServiceStatus(r.Context(), serviceName)
+	status, err := h.manager.ManagedServiceStatus(r.Context(), serverID, serviceName)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to get service status", err)
 		return
