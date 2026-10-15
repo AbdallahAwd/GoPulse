@@ -1,117 +1,29 @@
 {{define "content"}}
-<div class="container mx-auto px-4 py-8">
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
-        <div>
-            <h2 class="text-3xl font-extrabold text-white tracking-tight bg-gradient-to-r from-white via-gray-250 to-gray-400 bg-clip-text text-transparent">Infrastructure Dashboard</h2>
-            <p class="text-gray-400 text-sm mt-1">Monitor, manage, and deploy to your remote servers in real time.</p>
-        </div>
-        <div class="flex items-center space-x-3 w-full md:w-auto">
-            <button onclick="openSettingsModal()"
-                class="bg-gray-800/60 hover:bg-gray-700 text-gray-300 hover:text-white border border-gray-700 hover:border-gray-600 font-bold py-2.5 px-3.5 rounded-xl shadow-lg transition duration-300 group"
-                title="Settings">
-                <i class="fas fa-cog group-hover:rotate-45 transition-transform duration-300 text-lg"></i>
-            </button>
-            <button onclick="openAddServerModal()"
-                class="flex-1 md:flex-none justify-center bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-2.5 px-5 rounded-xl shadow-lg transition duration-300 flex items-center">
-                <i class="fas fa-plus mr-2 text-sm"></i>Connect Server
-            </button>
-        </div>
+<main class="console-page fleet-page" id="fleet-page" data-can-write="{{.CanManageServers}}">
+    <div class="console-page-heading">
+        <div><p class="console-eyebrow">INFRASTRUCTURE</p><h1>Your servers<span class="console-title-dot">.</span></h1><p class="console-description">Your infrastructure, under your control. Choose a server to get started.</p></div>
+        <div class="console-heading-actions"><button class="console-button secondary" id="fleet-refresh"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button>{{if .CanManageServers}}<button onclick="openAddServerModal()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Connect server</button>{{end}}</div>
     </div>
-
-    <!-- Stats Overview -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div class="bg-gray-800/30 border border-gray-800/80 rounded-2xl p-5 backdrop-blur-md flex items-center justify-between shadow-xl">
-            <div>
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Total Servers</p>
-                <h3 class="text-3xl font-extrabold text-white mt-1" id="stat-servers">0</h3>
-            </div>
-            <div class="bg-blue-500/10 p-3.5 rounded-xl border border-blue-500/20">
-                <i class="fas fa-server text-blue-400 text-lg"></i>
-            </div>
-        </div>
-        <div class="bg-gray-800/30 border border-gray-800/80 rounded-2xl p-5 backdrop-blur-md flex items-center justify-between shadow-xl">
-            <div>
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Projects</p>
-                <h3 class="text-3xl font-extrabold text-white mt-1" id="stat-projects">0</h3>
-            </div>
-            <div class="bg-purple-500/10 p-3.5 rounded-xl border border-purple-500/20">
-                <i class="fas fa-project-diagram text-purple-400 text-lg"></i>
-            </div>
-        </div>
-        <div class="bg-gray-800/30 border border-gray-800/80 rounded-2xl p-5 backdrop-blur-md flex items-center justify-between shadow-xl">
-            <div>
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Databases</p>
-                <h3 class="text-3xl font-extrabold text-white mt-1" id="stat-databases">0</h3>
-            </div>
-            <div class="bg-yellow-500/10 p-3.5 rounded-xl border border-yellow-500/20">
-                <i class="fas fa-database text-yellow-400 text-lg"></i>
-            </div>
-        </div>
-        <div class="bg-gray-800/30 border border-gray-800/80 rounded-2xl p-5 backdrop-blur-md flex items-center justify-between shadow-xl">
-            <div>
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Domains Routed</p>
-                <h3 class="text-3xl font-extrabold text-white mt-1" id="stat-domains">0</h3>
-            </div>
-            <div class="bg-cyan-500/10 p-3.5 rounded-xl border border-cyan-500/20">
-                <i class="fas fa-globe text-cyan-400 text-lg"></i>
-            </div>
-        </div>
+    <div class="fleet-summary" aria-live="polite">
+        <div><span><i class="fas fa-server" aria-hidden="true"></i> Managed servers</span><strong id="stat-servers">—</strong><small>Your registered hosts</small></div>
+        <div><span><i class="fas fa-cubes" aria-hidden="true"></i> Applications</span><strong id="stat-projects">—</strong><small>Across your servers</small></div>
+        <div><span><i class="fas fa-database" aria-hidden="true"></i> Databases</span><strong id="stat-databases">—</strong><small>Instances &amp; services</small></div>
+        <div><span><i class="fas fa-network-wired" aria-hidden="true"></i> Load balancers</span><strong id="stat-balancers">—</strong><small>Traffic entry points</small></div>
     </div>
-
-    <!-- Server List Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="server-list">
-        <!-- Shimmering Skeleton Cards for Initial Load -->
-        <div class="animate-pulse bg-gray-800/10 border border-gray-800/80 rounded-2xl p-6 h-40">
-            <div class="flex justify-between items-start">
-                <div class="flex items-center space-x-3 w-full">
-                    <div class="bg-gray-800 h-12 w-12 rounded-xl"></div>
-                    <div class="flex-1 space-y-2 py-1">
-                        <div class="h-4 bg-gray-800 rounded w-1/3"></div>
-                        <div class="h-3 bg-gray-800 rounded w-1/2"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="border-t border-gray-800/40 pt-4 mt-6 flex justify-between">
-                <div class="h-3 bg-gray-800 rounded w-1/4"></div>
-                <div class="h-3 bg-gray-800 rounded w-1/4"></div>
-            </div>
-        </div>
-        <div class="animate-pulse bg-gray-800/10 border border-gray-800/80 rounded-2xl p-6 h-40">
-            <div class="flex justify-between items-start">
-                <div class="flex items-center space-x-3 w-full">
-                    <div class="bg-gray-800 h-12 w-12 rounded-xl"></div>
-                    <div class="flex-1 space-y-2 py-1">
-                        <div class="h-4 bg-gray-800 rounded w-1/3"></div>
-                        <div class="h-3 bg-gray-800 rounded w-1/2"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="border-t border-gray-800/40 pt-4 mt-6 flex justify-between">
-                <div class="h-3 bg-gray-800 rounded w-1/4"></div>
-                <div class="h-3 bg-gray-800 rounded w-1/4"></div>
-            </div>
-        </div>
-        <div class="animate-pulse bg-gray-800/10 border border-gray-800/80 rounded-2xl p-6 h-40">
-            <div class="flex justify-between items-start">
-                <div class="flex items-center space-x-3 w-full">
-                    <div class="bg-gray-800 h-12 w-12 rounded-xl"></div>
-                    <div class="flex-1 space-y-2 py-1">
-                        <div class="h-4 bg-gray-800 rounded w-1/3"></div>
-                        <div class="h-3 bg-gray-800 rounded w-1/2"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="border-t border-gray-800/40 pt-4 mt-6 flex justify-between">
-                <div class="h-3 bg-gray-800 rounded w-1/4"></div>
-                <div class="h-3 bg-gray-800 rounded w-1/4"></div>
-            </div>
-        </div>
+    <div class="fleet-section-tabs" aria-label="Server layout"><button id="fleet-all-view" aria-pressed="true">All servers <span id="fleet-tab-count">—</span></button><button id="fleet-role-view" aria-pressed="false"><i class="fas fa-diagram-project" aria-hidden="true"></i>By workload</button></div>
+    <div class="fleet-toolbar">
+        <label class="fleet-search"><i class="fas fa-magnifying-glass" aria-hidden="true"></i><span class="sr-only">Search servers</span><input id="fleet-search" type="search" placeholder="Search servers by name, host, or tag" autocomplete="off"></label>
+        <label class="sr-only" for="fleet-role-filter">Filter by workload</label><select id="fleet-role-filter" class="console-select"><option value="">All workloads</option><option value="apps">Applications</option><option value="data">Databases</option><option value="edge">Load balancers</option><option value="general">General purpose</option></select>
+        <div class="fleet-layout-toggle" aria-label="Server display"><button id="fleet-grid-view" aria-label="Grid view" aria-pressed="true"><i class="fas fa-border-all" aria-hidden="true"></i></button><button id="fleet-list-view" aria-label="List view" aria-pressed="false"><i class="fas fa-list" aria-hidden="true"></i></button></div>
     </div>
-</div>
+    <div id="fleet-error" class="workspace-alert" role="alert" hidden></div>
+    <div id="server-list" class="fleet-grid" aria-live="polite" aria-busy="true"><div class="fleet-skeleton"></div><div class="fleet-skeleton"></div><div class="fleet-skeleton"></div></div>
+    <div class="fleet-footer"><span id="fleet-result-count">Loading your servers…</span><span><i class="fas fa-circle-info" aria-hidden="true"></i>Counts reflect saved resources, not live server health.</span></div>
+    <section class="fleet-distributed-note"><span class="fleet-distributed-icon"><i class="fas fa-network-wired" aria-hidden="true"></i></span><div><h2>One console. A distributed stack.</h2><p>Run applications on one server, databases on another, and route traffic through a dedicated load balancer.</p></div><button id="fleet-explore-roles">Explore workloads <i class="fas fa-arrow-right" aria-hidden="true"></i></button></section>
+</main>
 
 <!-- Settings Modal (Export/Import) -->
-<div id="settings-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50">
+<div id="settings-modal" class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50">
     <div class="bg-gray-800 rounded-xl shadow-2xl w-full max-w-lg border border-gray-700 max-h-[90vh] overflow-y-auto">
         <!-- Header -->
         <div class="flex items-center justify-between p-5 border-b border-gray-700 sticky top-0 bg-gray-800 rounded-t-xl z-10">
@@ -136,7 +48,7 @@
                 </p>
 
                 <!-- Record Counts Preview -->
-                <div id="export-preview" class="grid grid-cols-5 gap-2 mb-4">
+                <div id="export-preview" class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
                     <div class="bg-gray-700/50 rounded-lg p-2 text-center">
                         <div class="text-lg font-bold text-blue-400" id="count-servers">—</div>
                         <div class="text-xs text-gray-400">Servers</div>
@@ -157,7 +69,10 @@
                         <div class="text-lg font-bold text-pink-400" id="count-users">—</div>
                         <div class="text-xs text-gray-400">Users</div>
                     </div>
+                    <div class="bg-gray-700/50 rounded-lg p-2 text-center"><div class="text-lg font-bold text-gray-200" id="count-cron-jobs">—</div><div class="text-xs text-gray-400">Cron jobs</div></div>
                 </div>
+
+                <p class="text-xs text-gray-400 mb-4">Cron job definitions are included. Restored jobs start paused.</p>
 
                 <!-- Warning -->
                 <div class="bg-yellow-900/20 border border-yellow-500/30 rounded-lg p-3 mb-4 text-sm text-yellow-200">
@@ -232,11 +147,11 @@
 </div>
 
 <!-- Add Server Modal -->
-<div id="add-server-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50">
+<dialog id="add-server-modal" class="console-server-dialog" aria-labelledby="add-server-title">
     <div class="bg-gray-800 rounded-xl shadow-2xl p-8 w-full max-w-md border border-gray-700">
         <div class="flex justify-between items-center mb-6">
-            <h3 class="text-2xl font-bold text-white">Connect New VPS</h3>
-            <button onclick="closeAddServerModal()" class="text-gray-400 hover:text-white">
+            <h3 id="add-server-title" class="text-xl font-semibold text-white">Connect a server</h3>
+            <button onclick="closeAddServerModal()" aria-label="Close server setup" class="text-gray-400 hover:text-white">
                 <i class="fas fa-times text-xl"></i>
             </button>
         </div>
@@ -247,7 +162,7 @@
                 </label>
                 <input
                     class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
-                    id="name" type="text" placeholder="e.g. Production Web" required>
+                    id="name" autofocus type="text" placeholder="e.g. Production Web" required>
             </div>
             <div class="mb-4">
                 <label class="block text-gray-300 text-sm font-bold mb-2" for="host">
@@ -321,36 +236,18 @@
             </div>
         </form>
     </div>
-</div>
+</dialog>
 
 <script>
     // Load components on load
     document.addEventListener('DOMContentLoaded', () => {
-        loadServers();
-        loadDashboardStats();
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('settings') === 'backup' && {{.CanTransferConfiguration}}) openSettingsModal();
+        if (params.get('action') === 'connect' && {{.CanManageServers}}) openAddServerModal();
     });
 
     // Toast feedback utility
-    function showLocalToast(message, type = 'success') {
-        const toast = document.getElementById('toast');
-        if (!toast) {
-            alert(message);
-            return;
-        }
-        const icon = document.getElementById('toast-icon');
-        const msg = document.getElementById('toast-message');
-        msg.textContent = message;
-        if (type === 'success') {
-            icon.className = 'fas fa-check-circle text-green-500';
-        } else {
-            icon.className = 'fas fa-info-circle text-blue-500';
-        }
-        toast.classList.remove('translate-y-32', 'hidden');
-        setTimeout(() => {
-            toast.classList.add('translate-y-32');
-            setTimeout(() => toast.classList.add('hidden'), 300);
-        }, 2000);
-    }
+    function showLocalToast(message, type = 'success') { App.UI.toast(type, message); }
 
     // Copy IP Utility
     function copyHost(event, host) {
@@ -396,41 +293,6 @@
         document.body.removeChild(textArea);
     }
 
-    // Dynamic stats loading
-    async function loadDashboardStats() {
-        try {
-            const res = await fetch('/api/export-import/export/preview');
-            const result = await res.json();
-            if (result.success) {
-                document.getElementById('stat-servers').textContent = result.data.servers;
-                document.getElementById('stat-projects').textContent = result.data.projects;
-                document.getElementById('stat-databases').textContent = result.data.databases;
-                document.getElementById('stat-domains').textContent = result.data.domains;
-            }
-        } catch (e) {
-            console.error('Failed to load dashboard stats:', e);
-        }
-    }
-
-    // Render tag badge helper
-    function renderTags(tags) {
-        if (!tags || tags.length === 0) return '';
-        return `<div class="flex flex-wrap gap-1.5 mt-2.5">` + tags.map(tag => {
-            let cls = 'bg-gray-700/30 text-gray-300 border-gray-700/50';
-            const t = tag.toLowerCase().trim();
-            if (t === 'prod' || t === 'production') {
-                cls = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-            } else if (t === 'staging' || t === 'stage') {
-                cls = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-            } else if (t === 'web' || t === 'api' || t === 'frontend') {
-                cls = 'bg-sky-500/10 text-sky-400 border-sky-500/20';
-            } else if (t === 'db' || t === 'database' || t === 'redis') {
-                cls = 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20';
-            }
-            return `<span class="px-2 py-0.5 text-[10px] font-semibold rounded-md border ${cls}">${tag}</span>`;
-        }).join('') + '</div>';
-    }
-
     // ═══════════════════════════════════════════
     //  SETTINGS MODAL (Export/Import)
     // ═══════════════════════════════════════════
@@ -460,6 +322,7 @@
                 document.getElementById('count-databases').textContent = result.data.databases;
                 document.getElementById('count-domains').textContent = result.data.domains;
                 document.getElementById('count-users').textContent = result.data.users;
+                document.getElementById('count-cron-jobs').textContent = result.data.cron_jobs || 0;
             }
         } catch (e) {
             console.error('Failed to load export preview:', e);
@@ -476,7 +339,7 @@
             const res = await fetch('/api/export-import/export');
             if (!res.ok) {
                 const errData = await res.json();
-                alert('Export failed: ' + (errData.error || 'Unknown error'));
+                App.UI.toast('error', 'Export failed: ' + (errData.error || 'Unknown error'));
                 return;
             }
 
@@ -498,7 +361,7 @@
             showLocalToast("Backup downloaded successfully!", "success");
         } catch (e) {
             console.error('Export error:', e);
-            alert('Export failed: ' + e.message);
+            App.UI.toast('error', 'Export failed: ' + e.message);
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
@@ -522,14 +385,14 @@
     async function handleImport() {
         const fileInput = document.getElementById('import-file');
         if (!fileInput.files.length) {
-            alert('Please select a backup file first.');
+            App.UI.toast('error', 'Please select a backup file first.');
             return;
         }
 
         const mode = document.querySelector('input[name="import-mode"]:checked').value;
 
         if (mode === 'overwrite') {
-            if (!confirm('Overwrite mode will update all existing records with imported data. Are you sure?')) {
+            if (!await App.UI.confirm('Overwrite mode will update all existing records with imported data. Are you sure?')) {
                 return;
             }
         }
@@ -551,7 +414,7 @@
             const result = await res.json();
 
             if (!result.success) {
-                alert('Import failed: ' + (result.error || 'Unknown error'));
+                App.UI.toast('error', 'Import failed: ' + (result.error || 'Unknown error'));
                 return;
             }
 
@@ -562,11 +425,10 @@
 
             // Refresh data
             loadServers();
-            loadDashboardStats();
-            loadExportPreview();
+                loadExportPreview();
         } catch (e) {
             console.error('Import error:', e);
-            alert('Import failed: ' + e.message);
+            App.UI.toast('error', 'Import failed: ' + e.message);
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
@@ -584,6 +446,7 @@
             { label: 'Databases', created: report.databases_created, skipped: report.databases_skipped, updated: report.databases_updated, icon: 'fa-database', color: 'yellow' },
             { label: 'Domains', created: report.domains_created, skipped: report.domains_skipped, updated: report.domains_updated, icon: 'fa-globe', color: 'cyan' },
             { label: 'Users', created: report.users_created, skipped: report.users_skipped, updated: report.users_updated, icon: 'fa-users', color: 'pink' },
+            { label: 'Cron jobs', created: report.cron_jobs_created || 0, skipped: report.cron_jobs_skipped || 0, updated: report.cron_jobs_updated || 0, icon: 'fa-clock', color: 'gray' },
         ];
 
         let html = '<div class="space-y-2">';
@@ -608,7 +471,7 @@
             html += `<div class="mt-3 p-2 bg-red-900/30 border border-red-500/30 rounded text-xs text-red-300">
                 <strong class="text-red-400"><i class="fas fa-exclamation-triangle mr-1"></i>${report.errors.length} error(s):</strong>
                 <ul class="mt-1 ml-4 list-disc space-y-0.5">
-                    ${report.errors.map(e => `<li>${e}</li>`).join('')}
+                    ${report.errors.map(e => `<li>${App.Cron.escape(e)}</li>`).join('')}
                 </ul>
             </div>`;
         }
@@ -642,11 +505,11 @@
     // ═══════════════════════════════════════════
 
     function openAddServerModal() {
-        document.getElementById('add-server-modal').classList.remove('hidden');
+        document.getElementById('add-server-modal').showModal();
     }
 
     function closeAddServerModal() {
-        document.getElementById('add-server-modal').classList.add('hidden');
+        document.getElementById('add-server-modal').close();
     }
 
     function toggleAuthField(method) {
@@ -672,74 +535,13 @@
         }
     }
 
-    async function loadServers() {
-        const list = document.getElementById('server-list');
-        try {
-            const response = await fetch('/api/servers');
-            const result = await response.json();
-
-            if (result.success && result.data && result.data.length > 0) {
-                list.innerHTML = result.data.map(server => `
-                    <div class="bg-gray-850/40 backdrop-blur-md border border-gray-800 hover:border-blue-500/40 hover:bg-gray-800/60 rounded-2xl shadow-xl p-6 transition-all duration-300 hover:shadow-[0_0_30px_rgba(59,130,246,0.08)] group relative cursor-pointer" onclick="window.location.href='/servers/${server.id}/dashboard'">
-                        <!-- Glow border accent -->
-                        <div class="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-blue-500/0 via-blue-500/30 to-purple-500/0 rounded-t-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-
-                        <div class="flex justify-between items-start mb-5">
-                            <div class="flex items-center space-x-3.5">
-                                <div class="bg-blue-500/10 p-3.5 rounded-xl border border-blue-500/15 group-hover:scale-105 group-hover:border-blue-500/35 transition duration-300">
-                                    <i class="fas fa-server text-blue-400 text-xl"></i>
-                                </div>
-                                <div>
-                                    <h3 class="text-base font-bold text-white group-hover:text-blue-400 transition-colors duration-300 flex items-center">
-                                        ${server.name}
-                                        ${server.is_db_only ? `<span class="ml-2 px-1.5 py-0.5 text-[9px] font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded">DB ONLY</span>` : ''}
-                                    </h3>
-                                    <div class="flex items-center space-x-1.5 mt-0.5 text-xs text-gray-400 hover:text-gray-200 transition duration-200" onclick="copyHost(event, '${server.host}')" title="Click to copy host IP">
-                                        <span class="font-mono text-[11px]">${server.host}:${server.port}</span>
-                                        <i class="far fa-copy text-[10px] opacity-60 hover:opacity-100"></i>
-                                    </div>
-                                </div>
-                            </div>
-                            <button onclick="event.stopPropagation(); deleteServer('${server.id}')" class="text-gray-500 hover:text-red-400 transition-colors p-2 hover:bg-red-500/10 rounded-lg">
-                                <i class="fas fa-trash text-sm"></i>
-                            </button>
-                        </div>
-
-                        ${renderTags(server.tags)}
-
-                        <div class="flex justify-between items-center text-xs text-gray-400 border-t border-gray-800/80 pt-4 mt-5">
-                            <div class="flex items-center space-x-2.5">
-                                <span class="flex items-center text-[11px]"><i class="fas fa-user mr-1.5 text-gray-500"></i> ${server.user}</span>
-                                <span class="flex items-center text-[10px] text-gray-400 bg-gray-900/40 px-1.5 py-0.5 rounded border border-gray-800/60"><i class="fas ${server.auth_type === 'key' ? 'fa-key text-yellow-500' : 'fa-lock text-blue-400'} mr-1 text-[9px]"></i>${server.auth_type === 'key' ? 'Key' : 'Pass'}</span>
-                            </div>
-                            <div class="flex items-center text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 text-[11px]">
-                                <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 mr-1.5 animate-pulse"></span>
-                                Online
-                            </div>
-                        </div>
-                    </div>
-                `).join('');
-            } else {
-                list.innerHTML = `
-                    <div class="col-span-full text-center py-16 text-gray-500 bg-gray-850/20 rounded-2xl border border-gray-800 border-dashed backdrop-blur-md">
-                        <i class="fas fa-server text-6xl mb-4 text-gray-600 opacity-40"></i>
-                        <p class="text-lg font-bold text-gray-300 mb-2">No servers connected</p>
-                        <p class="text-gray-400 text-sm max-w-sm mx-auto mb-6">Connect your first remote VPS instance to start monitoring databases, hosting applications, and routing domains.</p>
-                        <button onclick="openAddServerModal()" class="bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/25 px-5 py-2.5 rounded-xl font-semibold transition-all">Connect your first server</button>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error('Error loading servers:', error);
-            list.innerHTML = `<div class="col-span-full text-center text-red-500">Failed to load servers</div>`;
-        }
-    }
+    function loadServers() { return App.Fleet.load(); }
 
     async function handleAddServer(e) {
         e.preventDefault();
         const btn = e.submitter;
         const originalText = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Connecting...';
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Adding server...';
         btn.disabled = true;
 
         const authMethod = document.querySelector('input[name="auth-method"]:checked').value;
@@ -751,7 +553,7 @@
             if (authMethod === 'key') {
                 const keyFile = document.getElementById('key-file').files[0];
                 if (!keyFile) {
-                    alert('Please select a private key file.');
+                    App.UI.toast('error', 'Please select a private key file.');
                     btn.innerHTML = originalText;
                     btn.disabled = false;
                     return;
@@ -768,7 +570,7 @@
                 const uploadResult = await uploadRes.json();
 
                 if (!uploadResult.success) {
-                    alert('Failed to upload key: ' + (uploadResult.error || 'Unknown error'));
+                    App.UI.toast('error', 'Failed to upload key: ' + (uploadResult.error || 'Unknown error'));
                     btn.innerHTML = originalText;
                     btn.disabled = false;
                     return;
@@ -776,7 +578,7 @@
                 keyPath = uploadResult.data.key_path;
             }
 
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Connecting...';
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Adding server...';
 
             const data = {
                 name: document.getElementById('name').value,
@@ -798,16 +600,15 @@
             if (result.success) {
                 closeAddServerModal();
                 loadServers();
-                loadDashboardStats();
-                document.getElementById('add-server-form').reset();
+                        document.getElementById('add-server-form').reset();
                 document.getElementById('key-file-name').textContent = 'No file selected';
-                showLocalToast("Connected new server successfully!", "success");
+                showLocalToast("Server added. Open its workspace to verify SSH access.", "success");
             } else {
-                alert('Failed to connect: ' + result.error);
+                App.UI.toast('error', 'Failed to connect: ' + result.error);
             }
         } catch (error) {
             console.error('Error adding server:', error);
-            alert('An error occurred while connecting to the server.');
+            App.UI.toast('error', 'An error occurred while connecting to the server.');
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
@@ -815,7 +616,7 @@
     }
 
     async function deleteServer(id) {
-        if (!confirm('Are you sure you want to remove this server? All associated configurations will be detached.')) return;
+        if (!await App.UI.confirm('Are you sure you want to remove this server? All associated configurations will be detached.')) return;
 
         try {
             const res = await fetch(`/api/servers/${id}`, { method: 'DELETE' });
@@ -823,9 +624,8 @@
             if (result.success) {
                 showLocalToast("Server disconnected successfully.", "success");
                 loadServers();
-                loadDashboardStats();
-            } else {
-                alert("Failed to delete server: " + result.error);
+                    } else {
+                App.UI.toast('error', "Failed to delete server: " + result.error);
             }
         } catch (error) {
             console.error('Error deleting server:', error);

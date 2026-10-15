@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
+	"github.com/amaa/gopulse/internal/middleware"
 	"github.com/amaa/gopulse/internal/models"
 	"github.com/amaa/gopulse/internal/services"
 	"github.com/go-chi/chi/v5"
@@ -36,10 +38,10 @@ func (h *DatabaseHandler) ListDatabases(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Update status dynamically for all databases
+	// Inventory reads must stay local and work even when a remote host is down.
+	// Live verification is an explicit per-database action.
 	for i := range dbs {
-		status, _ := h.service.UpdateStatus(r.Context(), dbs[i].ID)
-		dbs[i].Status = status
+		dbs[i].Password = ""
 	}
 
 	respondJSON(w, http.StatusOK, models.APIResponse{
@@ -55,7 +57,7 @@ func (h *DatabaseHandler) ProvisionDatabase(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Name         string `json:"name"`
 		Type         string `json:"type"`          // "mysql", "postgres", "mongodb"
-		DatabaseName string `json:"database_name"`  // Initial default DB name
+		DatabaseName string `json:"database_name"` // Initial default DB name
 		Username     string `json:"username"`
 		Password     string `json:"password"`
 		HostPort     int    `json:"host_port"`
@@ -101,6 +103,7 @@ func (h *DatabaseHandler) ProvisionDatabase(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	db.Password = ""
 	respondJSON(w, http.StatusCreated, models.APIResponse{
 		Success: true,
 		Message: "Database container provisioning successfully started",
@@ -118,9 +121,15 @@ func (h *DatabaseHandler) GetDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update status dynamically
-	status, _ := h.service.UpdateStatus(r.Context(), db.ID)
-	db.Status = status
+	if r.URL.Query().Get("refresh") == "true" {
+		status, err := h.service.UpdateStatus(r.Context(), db.ID)
+		if err != nil {
+			respondError(w, http.StatusBadGateway, "Unable to verify database health", sanitizeDatabaseError(err, db.Password))
+			return
+		}
+		db.Status = status
+	}
+	db.Password = ""
 
 	respondJSON(w, http.StatusOK, models.APIResponse{
 		Success: true,
@@ -176,6 +185,10 @@ func (h *DatabaseHandler) RestartDatabase(w http.ResponseWriter, r *http.Request
 // DeleteDatabase handles DELETE /api/servers/{serverID}/databases/{dbID}
 func (h *DatabaseHandler) DeleteDatabase(w http.ResponseWriter, r *http.Request) {
 	dbID := chi.URLParam(r, "dbID")
+	if r.URL.Query().Get("confirm") != dbID {
+		respondError(w, http.StatusBadRequest, "Confirm removal by supplying confirm=<database ID>", nil)
+		return
+	}
 	deleteVolumeStr := r.URL.Query().Get("delete_volume")
 	deleteVolume, _ := strconv.ParseBool(deleteVolumeStr)
 
@@ -358,7 +371,6 @@ func (h *DatabaseHandler) ImportBackup(w http.ResponseWriter, r *http.Request) {
 		Message: "Database backup imported and successfully restored",
 	})
 }
-
 
 // DownloadBackup handles GET /api/servers/{serverID}/databases/{dbID}/backups/download
 func (h *DatabaseHandler) DownloadBackup(w http.ResponseWriter, r *http.Request) {
@@ -801,4 +813,25 @@ func (h *DatabaseHandler) DeleteDatabaseUser(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func sanitizeDatabaseError(err error, password string) error {
+	if password == "" {
+		return err
+	}
+	return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), password, "[redacted]"))
+}
 
+// Credentials are requested explicitly and guarded by database management
+// permission plus the parent server/ownership middleware.
+func (h *DatabaseHandler) Credentials(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasPermission(r, "database:write") {
+		respondError(w, http.StatusForbidden, "Database management permission required to read credentials", nil)
+		return
+	}
+	db, err := h.service.GetDatabase(chi.URLParam(r, "dbID"))
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Database not found", nil)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	respondJSON(w, http.StatusOK, models.APIResponse{Success: true, Data: map[string]string{"password": db.Password}})
+}

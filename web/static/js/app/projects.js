@@ -50,208 +50,88 @@ App.Projects = {
     renderList: function(projects, focusState) {
         const container = document.getElementById('projects-list');
         if (!container) return;
-
         const source = Array.isArray(projects) ? projects : [];
         this.list = source;
-
-        if (source.length === 0) {
-            container.innerHTML = `
-                <div class="border border-dashed border-gray-700 rounded-lg py-16 px-6 text-center bg-gray-900/30">
-                    <div class="bg-gray-800 rounded-full h-20 w-20 flex items-center justify-center mx-auto mb-4 border border-gray-700">
-                        <i class="fas fa-project-diagram text-3xl text-gray-500"></i>
-                    </div>
-                    <h3 class="text-xl font-semibold text-white mb-2">No Projects Yet</h3>
-                    <button onclick="App.Projects.showCreateModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">
-                        <i class="fas fa-plus mr-2"></i>New Project
-                    </button>
-                </div>
-            `;
+        if (!source.length) {
+            container.innerHTML = `<div class="app-empty-state"><i class="fas fa-cubes" aria-hidden="true"></i><h3>No applications yet</h3><p>Create an application from GitHub or upload your source code.</p><button onclick="App.Projects.showCreateModal()" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>New application</button></div>`;
             return;
         }
-
         const filtered = this.getFilteredProjects(source);
-        const grid = filtered.length > 0
-            ? `
-                <div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-5">
-                    ${filtered.map(project => this.renderProjectCard(project)).join('')}
-                    ${this.renderAddProjectCard()}
-                </div>
-            `
-            : this.renderNoProjectMatches();
-
         container.innerHTML = `
-            <div class="space-y-5">
-                ${this.renderProjectSummary(source)}
-                ${this.renderProjectControls(source, filtered.length)}
-                ${grid}
-            </div>
+            ${this.renderProjectSummary(source)}
+            ${this.renderProjectControls(source, filtered.length)}
+            ${filtered.length ? `<div class="app-inventory-grid">${filtered.map(project => this.renderProjectCard(project)).join('')}</div>` : this.renderNoProjectMatches()}
         `;
-
         this.restoreProjectControlFocus(focusState);
     },
 
     renderProjectSummary: function(projects) {
-        const total = projects.length;
-        const running = projects.filter(project => this.normalizeStatus(project) === 'running').length;
-        const ready = projects.filter(project => this.hasBuild(project)).length;
-        const automated = projects.filter(project => project.webhook_enabled || project.restart_on_boot).length;
-
-        return `
-            <div class="grid grid-cols-2 xl:grid-cols-4 gap-4">
-                ${this.renderProjectMetric('Inventory', total, 'fa-layer-group', 'text-blue-300')}
-                ${this.renderProjectMetric('Running', running, 'fa-circle-play', 'text-emerald-300')}
-                ${this.renderProjectMetric('Build Ready', ready, 'fa-hammer', 'text-amber-300')}
-                ${this.renderProjectMetric('Automated', automated, 'fa-bolt', 'text-cyan-300')}
-            </div>
-        `;
+        return `<div class="app-inventory-summary" aria-label="Application summary">
+            ${this.renderProjectMetric('applications', projects.length)}
+            ${this.renderProjectMetric('running', projects.filter(p => this.normalizeStatus(p) === 'running').length)}
+            ${this.renderProjectMetric('built', projects.filter(p => this.hasBuild(p)).length)}
+            ${this.renderProjectMetric('automated', projects.filter(p => p.webhook_enabled || p.restart_on_boot).length)}
+        </div>`;
     },
 
-    renderProjectMetric: function(label, value, icon, colorClass) {
-        return `
-            <div class="bg-gray-900/60 border border-gray-800 rounded-lg px-4 py-3">
-                <div class="flex items-center justify-between">
-                    <span class="text-xs uppercase tracking-wider text-gray-500 font-semibold">${label}</span>
-                    <i class="fas ${icon} ${colorClass}"></i>
-                </div>
-                <div class="text-2xl font-bold text-white mt-2">${value}</div>
-            </div>
-        `;
+    renderProjectMetric: function(label, value) {
+        return `<span><strong>${value}</strong> ${label}</span>`;
     },
 
     renderProjectControls: function(projects, filteredCount) {
-        const types = Array.from(new Set(projects.map(project => (project.type || '').toLowerCase()).filter(Boolean))).sort();
-        const typeOptions = [
-            '<option value="all">All types</option>',
-            ...types.map(type => `<option value="${this.escapeAttr(type)}" ${this.filters.type === type ? 'selected' : ''}>${this.escapeHtml(this.projectTypeLabel(type))}</option>`)
-        ].join('');
-
-        return `
-            <div class="bg-gray-900/60 border border-gray-800 rounded-lg p-4">
-                <div class="flex flex-col xl:flex-row xl:items-center gap-3">
-                    <div class="relative flex-1">
-                        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm"></i>
-                        <input
-                            id="project-search-input"
-                            type="search"
-                            value="${this.escapeAttr(this.filters.query)}"
-                            oninput="App.Projects.setFilter('query', this.value)"
-                            placeholder="Search projects, paths, ports"
-                            class="w-full bg-gray-950/70 border border-gray-800 rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-                            autocomplete="off"
-                            spellcheck="false">
-                    </div>
-                    <div class="flex flex-col sm:flex-row gap-3">
-                        <select id="project-status-filter" onchange="App.Projects.setFilter('status', this.value)" class="bg-gray-950/70 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500">
-                            <option value="all" ${this.filters.status === 'all' ? 'selected' : ''}>All states</option>
-                            <option value="running" ${this.filters.status === 'running' ? 'selected' : ''}>Running</option>
-                            <option value="stopped" ${this.filters.status === 'stopped' ? 'selected' : ''}>Stopped</option>
-                            <option value="building" ${this.filters.status === 'building' ? 'selected' : ''}>Building</option>
-                            <option value="error" ${this.filters.status === 'error' ? 'selected' : ''}>Error</option>
-                        </select>
-                        <select id="project-type-filter" onchange="App.Projects.setFilter('type', this.value)" class="bg-gray-950/70 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500">
-                            ${typeOptions}
-                        </select>
-                        <button onclick="App.Projects.resetFilters()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white rounded-lg px-3 py-2.5 text-sm transition-colors" title="Reset filters">
-                            <i class="fas fa-filter-circle-xmark"></i>
-                        </button>
-                        <button onclick="App.Projects.load()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white rounded-lg px-3 py-2.5 text-sm transition-colors" title="Refresh">
-                            <i class="fas fa-rotate"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="mt-3 text-xs text-gray-500">${filteredCount} of ${projects.length} projects visible</div>
-            </div>
-        `;
+        const types = Array.from(new Set(projects.map(p => (p.type || '').toLowerCase()).filter(Boolean))).sort();
+        return `<div class="app-inventory-toolbar">
+            <label class="app-search"><i class="fas fa-search" aria-hidden="true"></i><span class="sr-only">Search applications</span><input id="project-search-input" type="search" value="${this.escapeAttr(this.filters.query)}" oninput="App.Projects.setFilter('query', this.value)" placeholder="Search applications, paths, ports" autocomplete="off" spellcheck="false"></label>
+            <select id="project-status-filter" aria-label="Filter by status" onchange="App.Projects.setFilter('status', this.value)">
+                ${[['all','All states'],['running','Running'],['stopped','Stopped'],['building','Building'],['error','Error']].map(([value,label])=>`<option value="${value}" ${this.filters.status === value ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+            <select id="project-type-filter" aria-label="Filter by technology" onchange="App.Projects.setFilter('type', this.value)"><option value="all">All technologies</option>${types.map(type=>`<option value="${this.escapeAttr(type)}" ${this.filters.type === type ? 'selected' : ''}>${this.escapeHtml(this.projectTypeLabel(type))}</option>`).join('')}</select>
+            <button onclick="App.Projects.resetFilters()" class="app-toolbar-button" title="Reset filters" aria-label="Reset application filters"><i class="fas fa-filter-circle-xmark" aria-hidden="true"></i></button>
+            <button onclick="App.Projects.load()" class="app-toolbar-button" title="Refresh" aria-label="Refresh applications"><i class="fas fa-rotate" aria-hidden="true"></i></button>
+        </div><div class="app-inventory-caption">${filteredCount} of ${projects.length} applications</div>`;
     },
 
     renderProjectCard: function(project) {
         const id = this.escapeAttr(project.id);
         const name = this.escapeHtml(project.name || 'Unnamed project');
-        const type = (project.type || 'unknown').toLowerCase();
-        const typeMeta = this.getProjectTypeMeta(type);
-        const statusMeta = this.getProjectStatusMeta(project);
-        const isBuilt = this.hasBuild(project);
-        const buildTime = isBuilt ? this.formatDate(project.last_build) : 'Never';
-        const lastDeploy = this.hasDate(project.last_deploy) ? this.formatDate(project.last_deploy) : 'Never';
-        const path = project.path || 'Path unavailable';
-        const sourceType = project.source_type || (project.source_url ? 'git' : 'upload');
-        const portLabel = project.host_port && project.host_port !== project.port
-            ? `${project.port} -> ${project.host_port}`
-            : `${project.port || 'N/A'}`;
-        const envCount = project.env_vars ? Object.keys(project.env_vars).length : 0;
-        const deploySignals = [
-            project.restart_on_boot ? '<span class="inline-flex items-center text-xs text-emerald-300"><i class="fas fa-power-off mr-1.5"></i>Boot</span>' : '',
-            project.webhook_enabled ? '<span class="inline-flex items-center text-xs text-blue-300"><i class="fab fa-github mr-1.5"></i>Webhook</span>' : ''
-        ].filter(Boolean).join('');
+        const type = this.getProjectTypeMeta(project.type || 'unknown');
+        const status = this.getProjectStatusMeta(project);
+        const built = this.hasBuild(project);
+        const port = project.host_port && project.host_port !== project.port ? `${project.port} → ${project.host_port}` : `${project.port || 'N/A'}`;
+        const envCount = Object.keys(project.env_vars || {}).length;
+        const source = project.source_type || (project.source_url ? 'git' : 'upload');
+        return `<article class="app-project-card" data-project-id="${id}">
+            <div class="app-card-heading">
+                <div class="app-card-identity"><span class="app-runtime-icon"><i class="${type.icon}" aria-hidden="true"></i></span><div><h3><button onclick="App.Projects.showProjectOps('${id}')" title="Manage ${this.escapeAttr(project.name || 'application')}">${name}</button></h3><p>${this.escapeHtml(type.label)}<span>·</span>Port ${this.escapeHtml(port)}</p></div></div>
+                <span class="app-status" data-status="${this.escapeAttr(this.normalizeStatus(project))}"><span aria-hidden="true"></span>${this.escapeHtml(status.label)}</span>
+            </div>
+            <button onclick="App.Projects.copyProjectPath('${id}')" class="app-project-path" title="Copy path: ${this.escapeAttr(project.path || 'Path unavailable')}"><i class="far fa-folder" aria-hidden="true"></i><span>${this.escapeHtml(project.path || 'Path unavailable')}</span><i class="far fa-copy app-path-copy" aria-hidden="true"></i></button>
+            <dl class="app-card-details">
+                ${this.renderApplicationDetail('Runtime', this.projectTypeLabel(project.build_type || 'process'))}
+                ${this.renderApplicationDetail('Source', this.projectTypeLabel(source))}
+                ${this.renderApplicationDetail('Last build', built ? this.formatDate(project.last_build) : 'Never', true)}
+                ${this.renderApplicationDetail('Last deploy', this.hasDate(project.last_deploy) ? this.formatDate(project.last_deploy) : 'Never', true)}
+            </dl>
+            <div class="app-automation">${project.restart_on_boot ? '<span><i class="fas fa-power-off" aria-hidden="true"></i>Restart on boot</span>' : ''}${project.webhook_enabled ? '<span><i class="fab fa-github" aria-hidden="true"></i>Webhook enabled</span>' : ''}${!project.restart_on_boot && !project.webhook_enabled ? '<span class="app-automation-empty">Automation off</span>' : ''}</div>
+            <div class="app-card-lifecycle">
+                ${built ? `<button onclick="App.Projects.action('${id}', 'start', this)" class="app-action-button"><i class="fas fa-play" aria-hidden="true"></i>Start</button><button onclick="App.Projects.action('${id}', 'stop', this)" class="app-action-button"><i class="fas fa-stop" aria-hidden="true"></i>Stop</button>` : ''}
+                <button onclick="App.Projects.action('${id}', 'build', this)" class="app-action-button app-build-button"><i class="fas fa-hammer" aria-hidden="true"></i>${built ? 'Build' : 'Build application'}</button>
+            </div>
+            <div class="app-card-footer">
+                <button onclick="App.Projects.showProjectOps('${id}')" class="app-card-link">Manage<i class="fas fa-arrow-up-right-from-square" aria-hidden="true"></i></button>
+                <button onclick="App.Projects.showEnvModal('${id}')" class="app-card-link" title="${envCount} environment variables">Environment<span class="app-env-count">${envCount}</span></button>
+                <button onclick="App.Projects.openFiles('${id}')" class="app-card-link">Files</button>
+                <details class="app-card-menu"><summary aria-label="More actions for ${this.escapeAttr(project.name || 'application')}" title="More actions"><i class="fas fa-ellipsis" aria-hidden="true"></i></summary><div class="app-card-popover">
+                    <button onclick="App.Projects.showWebhookModal('${id}')"><i class="fas ${project.webhook_enabled ? 'fa-toggle-on' : 'fa-toggle-off'}" aria-hidden="true"></i>Webhook</button>
+                    <button onclick="App.Projects.editProject('${id}')"><i class="far fa-pen-to-square" aria-hidden="true"></i>Edit application</button>
+                    <button onclick="App.Projects.action('${id}', 'delete', this)" class="app-menu-danger"><i class="far fa-trash-alt" aria-hidden="true"></i>Delete application</button>
+                </div></details>
+            </div>
+        </article>`;
+    },
 
-        return `
-            <article class="bg-gray-900/70 border border-gray-800 rounded-lg p-5 min-h-[430px] flex flex-col hover:border-blue-500/60 transition-colors">
-                <div class="flex items-start justify-between gap-4">
-                    <div class="flex items-start gap-3 min-w-0">
-                        <div class="h-11 w-11 rounded-lg bg-gray-950/80 border border-gray-800 flex items-center justify-center flex-shrink-0">
-                            <i class="${typeMeta.icon} ${typeMeta.color} text-xl"></i>
-                        </div>
-                        <div class="min-w-0">
-                            <h3 class="font-semibold text-white truncate">${name}</h3>
-                            <div class="mt-1 flex flex-wrap items-center gap-2">
-                                <span class="text-xs text-gray-400">${this.escapeHtml(typeMeta.label)}</span>
-                                <span class="h-1 w-1 rounded-full bg-gray-700"></span>
-                                <span class="text-xs text-gray-400">Port ${this.escapeHtml(portLabel)}</span>
-                            </div>
-                        </div>
-                    </div>
-                    <span class="inline-flex items-center px-2.5 py-1 rounded-full border ${statusMeta.border} ${statusMeta.bg} ${statusMeta.text} text-xs font-semibold flex-shrink-0">
-                        <span class="h-1.5 w-1.5 rounded-full ${statusMeta.dot} mr-2"></span>${statusMeta.label}
-                    </span>
-                </div>
-
-                <div class="mt-4 flex items-center gap-2 text-xs text-gray-500 min-w-0">
-                    <i class="fas fa-folder-tree text-gray-600"></i>
-                    <button onclick="App.Projects.copyProjectPath('${id}')" class="font-mono truncate hover:text-white transition-colors text-left" title="${this.escapeAttr(path)}">${this.escapeHtml(path)}</button>
-                </div>
-
-                <dl class="mt-5 space-y-3 text-sm">
-                    ${this.renderProjectDetail('Runtime', this.projectTypeLabel(project.build_type || 'process'))}
-                    ${this.renderProjectDetail('Source', this.projectTypeLabel(sourceType))}
-                    ${this.renderProjectDetail('Last Build', buildTime, true)}
-                    ${this.renderProjectDetail('Last Deploy', lastDeploy, true)}
-                    ${this.renderProjectDetail('Env Vars', `${envCount}`)}
-                </dl>
-
-                <div class="mt-4 min-h-[24px] flex flex-wrap gap-3">
-                    ${deploySignals || '<span class="text-xs text-gray-600">No automation enabled</span>'}
-                </div>
-
-                <div class="mt-auto pt-5">
-                    <div class="grid grid-cols-3 gap-2 mb-2">
-                        ${isBuilt ? `
-                            <button onclick="App.Projects.action('${id}', 'start', this)" class="bg-emerald-950/30 text-emerald-300 hover:bg-emerald-900/50 py-2 rounded text-sm font-medium transition-colors">
-                                <i class="fas fa-play mr-1"></i>Start
-                            </button>
-                            <button onclick="App.Projects.action('${id}', 'stop', this)" class="bg-red-950/30 text-red-300 hover:bg-red-900/50 py-2 rounded text-sm font-medium transition-colors">
-                                <i class="fas fa-stop mr-1"></i>Stop
-                            </button>
-                            <button onclick="App.Projects.action('${id}', 'build', this)" class="bg-blue-950/40 text-blue-300 hover:bg-blue-900/50 py-2 rounded text-sm font-medium transition-colors">
-                                <i class="fas fa-hammer mr-1"></i>Build
-                            </button>
-                        ` : `
-                            <button onclick="App.Projects.action('${id}', 'build', this)" class="col-span-3 bg-blue-950/40 text-blue-300 hover:bg-blue-900/50 py-2 rounded text-sm font-medium transition-colors">
-                                <i class="fas fa-hammer mr-1"></i>Build Project
-                            </button>
-                        `}
-                    </div>
-
-                    <div class="grid grid-cols-6 gap-2">
-                        ${this.renderIconButton(`App.Projects.showProjectOps('${id}')`, 'fa-sliders', 'Operations')}
-                        ${this.renderIconButton(`App.Projects.showEnvModal('${id}')`, 'fa-key', 'Environment')}
-                        ${this.renderIconButton(`App.Projects.openFiles('${id}')`, 'fa-folder-open', 'Files', 'hover:text-yellow-300')}
-                        ${this.renderIconButton(`App.Projects.showWebhookModal('${id}')`, project.webhook_enabled ? 'fa-toggle-on' : 'fa-toggle-off', 'Webhook', project.webhook_enabled ? 'text-blue-300 hover:text-blue-200' : '')}
-                        ${this.renderIconButton(`App.Projects.editProject('${id}')`, 'fa-pen-to-square', 'Edit')}
-                        ${this.renderIconButton(`App.Projects.action('${id}', 'delete', this)`, 'fa-trash', 'Delete', 'text-red-400 hover:text-red-300')}
-                    </div>
-                </div>
-            </article>
-        `;
+    renderApplicationDetail: function(label, value, mono = false) {
+        return `<div><dt>${label}</dt><dd class="${mono ? 'app-mono' : ''}" title="${this.escapeAttr(value)}">${this.escapeHtml(value)}</dd></div>`;
     },
 
     renderProjectDetail: function(label, value, mono = false) {
@@ -264,34 +144,15 @@ App.Projects = {
     },
 
     renderIconButton: function(onclick, icon, title, extraClass = '') {
-        return `
-            <button onclick="${onclick}" class="h-9 bg-gray-800/80 hover:bg-gray-700 border border-gray-700 text-gray-400 hover:text-white rounded text-sm transition-colors ${extraClass}" title="${title}" aria-label="${title}">
-                <i class="fas ${icon}"></i>
-            </button>
-        `;
+        return `<button onclick="${onclick}" class="app-toolbar-button ${extraClass}" title="${title}" aria-label="${title}"><i class="fas ${icon}" aria-hidden="true"></i></button>`;
     },
 
     renderAddProjectCard: function() {
-        return `
-            <button onclick="App.Projects.showCreateModal()" class="border border-dashed border-gray-700 rounded-lg min-h-[430px] p-6 flex flex-col items-center justify-center hover:border-blue-500/60 hover:bg-gray-900/40 transition-colors group">
-                <div class="bg-gray-900 border border-gray-800 h-14 w-14 rounded-full flex items-center justify-center mb-3 group-hover:border-blue-500/40">
-                    <i class="fas fa-plus text-lg text-gray-500 group-hover:text-blue-300"></i>
-                </div>
-                <span class="text-gray-300 font-semibold">New Project</span>
-            </button>
-        `;
+        return `<button onclick="App.Projects.showCreateModal()" class="console-button secondary"><i class="fas fa-plus" aria-hidden="true"></i>New application</button>`;
     },
 
     renderNoProjectMatches: function() {
-        return `
-            <div class="border border-dashed border-gray-700 rounded-lg py-14 px-6 text-center bg-gray-900/30">
-                <i class="fas fa-filter text-3xl text-gray-600 mb-3"></i>
-                <h3 class="text-lg font-semibold text-white mb-3">No Matching Projects</h3>
-                <button onclick="App.Projects.resetFilters()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm transition-colors">
-                    Reset Filters
-                </button>
-            </div>
-        `;
+        return `<div class="app-empty-state"><i class="fas fa-search" aria-hidden="true"></i><h3>No matching applications</h3><p>Try another search or reset the filters.</p><button onclick="App.Projects.resetFilters()" class="console-button secondary">Reset filters</button></div>`;
     },
 
     setFilter: function(key, value) {
@@ -443,17 +304,30 @@ App.Projects = {
             return;
         }
 
-        navigator.clipboard.writeText(project.path)
-            .then(() => App.UI.toast('success', 'Project path copied'))
-            .catch(() => App.UI.toast('error', 'Failed to copy path'));
+        const fallback = () => {
+            const input = document.createElement('textarea');
+            input.value = project.path;
+            input.style.position = 'fixed';
+            input.style.opacity = '0';
+            document.body.appendChild(input);
+            input.select();
+            try {
+                if (!document.execCommand('copy')) throw new Error('Clipboard unavailable');
+                App.UI.toast('success', 'Project path copied');
+            } catch (_) { App.UI.toast('error', 'Failed to copy path'); }
+            finally { input.remove(); }
+        };
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(project.path)
+            .then(() => App.UI.toast('success', 'Project path copied')).catch(fallback);
+        else fallback();
     },
 
     ensureOperationsModal: function() {
         if (document.getElementById('project-ops-modal')) return;
 
         document.body.insertAdjacentHTML('beforeend', `
-            <div id="project-ops-modal" class="fixed inset-0 z-50 hidden opacity-0 transition-opacity duration-300 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-                <div id="project-ops-dialog" class="bg-gray-900 border border-gray-800 rounded-xl w-[min(96vw,1180px)] h-[min(88vh,760px)] overflow-hidden transform scale-95 transition-transform duration-300 shadow-2xl">
+            <div id="project-ops-modal" class="ui-dialog-overlay fixed inset-0 z-50 hidden opacity-0 transition-opacity duration-300 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                <div id="project-ops-dialog" class="app-ops-dialog transform scale-95 transition-transform duration-300">
                     <div id="project-ops-content" class="h-full"></div>
                 </div>
             </div>
@@ -506,59 +380,24 @@ App.Projects = {
     renderOperationsModal: function(project) {
         const content = document.getElementById('project-ops-content');
         if (!content) return;
-
-        const id = this.escapeAttr(project.id);
+        const focusedTab = document.activeElement?.closest?.('.ops-tab-btn')?.dataset?.opsTab;
         const name = this.escapeHtml(project.name || 'Unnamed project');
-        const typeMeta = this.getProjectTypeMeta(project.type);
-        const statusMeta = this.getProjectStatusMeta(project);
-        const tabs = [
-            ['overview', 'fa-gauge-high', 'Overview'],
-            ['releases', 'fa-code-branch', 'Releases'],
-            ['logs', 'fa-terminal', 'Logs'],
-            ['health', 'fa-heart-pulse', 'Health'],
-            ['automation', 'fa-wand-magic-sparkles', 'Automation'],
-            ['integrations', 'fa-plug', 'Integrations']
-        ];
-
-        content.innerHTML = `
-            <div class="h-full flex flex-col min-h-0">
-            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800 bg-gray-950/50 flex-shrink-0">
-                <div class="flex items-center gap-3 min-w-0">
-                    <div class="h-11 w-11 rounded-lg bg-gray-950 border border-gray-800 flex items-center justify-center">
-                        <i class="${typeMeta.icon} ${typeMeta.color} text-xl"></i>
-                    </div>
-                    <div class="min-w-0">
-                        <div class="flex items-center gap-3">
-                            <h3 class="text-lg font-bold text-white truncate">${name}</h3>
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-full border ${statusMeta.border} ${statusMeta.bg} ${statusMeta.text} text-xs font-semibold">
-                                <span class="h-1.5 w-1.5 rounded-full ${statusMeta.dot} mr-2"></span>${statusMeta.label}
-                            </span>
-                        </div>
-                        <p class="text-xs text-gray-500 mt-0.5">${this.escapeHtml(this.projectTypeLabel(project.type))} · Port ${this.escapeHtml(project.port || 'N/A')}</p>
-                    </div>
-                </div>
-                <button onclick="App.Projects.closeProjectOps()" class="text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg h-9 w-9 transition-colors" aria-label="Close">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-[220px,1fr] flex-1 min-h-0 overflow-hidden">
-                <aside class="border-b lg:border-b-0 lg:border-r border-gray-800 bg-gray-950/30 p-3 overflow-x-auto lg:overflow-x-visible">
-                    <div class="flex lg:flex-col gap-1 min-w-max lg:min-w-0">
-                        ${tabs.map(([tab, icon, label]) => `
-                            <button onclick="App.Projects.switchOpsTab('${tab}')" class="ops-tab-btn flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${this.activeOpsTab === tab ? 'bg-blue-600/15 text-blue-300 border border-blue-500/20' : 'text-gray-400 hover:text-white hover:bg-gray-900 border border-transparent'}">
-                                <i class="fas ${icon} w-4 text-center"></i>
-                                <span>${label}</span>
-                            </button>
-                        `).join('')}
-                    </div>
-                </aside>
-                <section id="project-ops-panel" class="p-6 overflow-y-auto custom-scrollbar min-h-0">
-                    ${this.renderOpsPanel(project)}
-                </section>
-            </div>
-            </div>
-        `;
+        const type = this.getProjectTypeMeta(project.type);
+        const secondary = [['health','Health'],['automation','Automation'],['integrations','Integrations']];
+        const activeSecondary = secondary.find(([key]) => key === this.activeOpsTab);
+        const tabButton = (key,label) => `<button type="button" onclick="App.Projects.switchOpsTab('${key}')" class="ops-tab-btn app-ops-tab" data-ops-tab="${key}" aria-pressed="${this.activeOpsTab === key}">${label}</button>`;
+        content.innerHTML = `<div class="app-ops-shell">
+            <header class="app-ops-header">
+                <div class="app-card-identity"><span class="app-runtime-icon"><i class="${type.icon}" aria-hidden="true"></i></span><div><h3 id="project-ops-title">${name}</h3><p>${this.escapeHtml(type.label)}<span>·</span>Port ${this.escapeHtml(project.port || 'N/A')}</p></div></div>
+                <div class="app-ops-header-controls"><span class="app-status" data-status="${this.escapeAttr(this.normalizeStatus(project))}"><span aria-hidden="true"></span>${this.escapeHtml(this.getProjectStatusMeta(project).label)}</span><button type="button" onclick="App.Projects.closeProjectOps()" class="app-toolbar-button" aria-label="Close application management"><i class="fas fa-times" aria-hidden="true"></i></button></div>
+            </header>
+            <nav class="app-ops-navigation" aria-label="Application sections">
+                <div class="app-ops-primary-tabs">${[['overview','Overview'],['releases','Releases'],['logs','Logs']].map(([key,label])=>tabButton(key,label)).join('')}</div>
+                <details class="app-ops-menu" id="project-ops-manage-menu" data-active="${!!activeSecondary}"><summary><span>${activeSecondary ? activeSecondary[1] : 'Manage'}</span><i class="fas fa-chevron-down" aria-hidden="true"></i></summary><div class="app-ops-secondary-tabs">${secondary.map(([key,label])=>tabButton(key,label)).join('')}</div></details>
+            </nav>
+            <section id="project-ops-panel" class="app-ops-panel" aria-label="${this.escapeAttr(this.titleCase(this.activeOpsTab || 'overview'))}">${this.renderOpsPanel(project)}</section>
+        </div>`;
+        if (focusedTab) content.querySelector(`button[data-ops-tab="${focusedTab}"]`)?.focus();
     },
 
     loadOpsTab: async function(id, tab, force = false) {
@@ -653,41 +492,15 @@ App.Projects = {
     },
 
     renderOpsLoading: function(label) {
-        return `
-            <div class="h-full min-h-[420px] flex items-center justify-center text-center">
-                <div>
-                    <i class="fas fa-circle-notch fa-spin text-3xl text-blue-400 mb-3"></i>
-                    <div class="text-sm font-semibold text-white">Loading ${label}</div>
-                </div>
-            </div>
-        `;
+        return `<div class="app-ops-empty" role="status"><i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i><h4>Loading ${this.escapeHtml(label)}…</h4></div>`;
     },
 
     renderOpsError: function(message, tab) {
-        return `
-            <div class="border border-red-500/30 bg-red-950/20 rounded-lg p-5">
-                <div class="flex items-start justify-between gap-4">
-                    <div>
-                        <h4 class="text-sm font-semibold text-red-300">Load Failed</h4>
-                        <p class="text-sm text-gray-400 mt-1">${this.escapeHtml(message)}</p>
-                    </div>
-                    <button onclick="App.Projects.refreshOpsTab()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm transition-colors">
-                        <i class="fas fa-rotate mr-2"></i>Retry
-                    </button>
-                </div>
-            </div>
-        `;
+        return `<div class="app-ops-error" role="alert"><div><h4>Unable to load this section</h4><p>${this.escapeHtml(message)}</p></div><button onclick="App.Projects.refreshOpsTab()" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Retry</button></div>`;
     },
 
     renderOpsEmpty: function(icon, title) {
-        return `
-            <div class="h-full min-h-[360px] flex items-center justify-center text-center border border-dashed border-gray-800 rounded-lg">
-                <div>
-                    <i class="fas ${icon} text-3xl text-gray-600 mb-3"></i>
-                    <div class="text-sm font-semibold text-white">${title}</div>
-                </div>
-            </div>
-        `;
+        return `<div class="app-ops-empty"><i class="fas ${icon}" aria-hidden="true"></i><h4>${this.escapeHtml(title)}</h4></div>`;
     },
 
     statusTextClass: function(status) {
@@ -713,53 +526,33 @@ App.Projects = {
     renderOverviewPanel: function(project) {
         const id = this.escapeAttr(project.id);
         const isBuilt = this.hasBuild(project);
-        return `
-            <div class="space-y-6">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <button onclick="App.Projects.action('${id}', 'build', this)" class="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-4 py-3 text-sm font-semibold transition-colors">
-                        <i class="fas fa-hammer mr-2"></i>Build
-                    </button>
-                    <button onclick="App.Projects.action('${id}', 'start', this)" class="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg px-4 py-3 text-sm font-semibold transition-colors ${isBuilt ? '' : 'opacity-50'}">
-                        <i class="fas fa-play mr-2"></i>Start
-                    </button>
-                    <button onclick="App.Projects.action('${id}', 'stop', this)" class="bg-red-600 hover:bg-red-500 text-white rounded-lg px-4 py-3 text-sm font-semibold transition-colors ${isBuilt ? '' : 'opacity-50'}">
-                        <i class="fas fa-stop mr-2"></i>Stop
-                    </button>
-                </div>
+        return `<div class="app-ops-screen">
+            <div class="app-ops-heading"><div><h4>Overview</h4><p>Runtime, source code, and commands for this application.</p></div><div class="app-ops-actions">
+                <button onclick="App.Projects.action('${id}', 'start', this)" class="console-button secondary ${isBuilt ? '' : 'opacity-50'}"><i class="fas fa-play" aria-hidden="true"></i>Start</button>
+                <button onclick="App.Projects.action('${id}', 'stop', this)" class="console-button secondary ${isBuilt ? '' : 'opacity-50'}"><i class="fas fa-stop" aria-hidden="true"></i>Stop</button>
+                <button onclick="App.Projects.action('${id}', 'build', this)" class="console-button secondary app-ops-build"><i class="fas fa-hammer" aria-hidden="true"></i>Build</button>
+            </div></div>
+            <section class="app-ops-card" aria-labelledby="app-ops-runtime-heading"><div class="app-ops-card-heading"><h4 id="app-ops-runtime-heading">Runtime</h4></div><dl class="app-ops-details">
+                ${this.renderOpsDetail('Status', this.getProjectStatusMeta(project).label)}
+                ${this.renderOpsDetail('Technology', this.projectTypeLabel(project.type))}
+                ${this.renderOpsDetail('Build type', this.projectTypeLabel(project.build_type || 'process'))}
+                ${this.renderOpsDetail('Internal port', String(project.port || 'N/A'), true)}
+                ${this.renderOpsDetail('Host port', String(project.host_port || project.port || 'N/A'), true)}
+                ${this.renderOpsDetail('Process ID', String(project.process_id || 'N/A'), true)}
+            </dl></section>
+            <section class="app-ops-card" aria-labelledby="app-ops-source-heading"><div class="app-ops-card-heading"><h4 id="app-ops-source-heading">Source</h4></div><dl class="app-ops-details app-ops-source-details">
+                ${this.renderOpsDetail('Source type', this.projectTypeLabel(project.source_type || (project.source_url ? 'git' : 'upload')))}
+                ${this.renderOpsDetail('Last build', this.formatDate(project.last_build), true)}
+                ${this.renderOpsDetail('Last deploy', this.formatDate(project.last_deploy), true)}
+                ${this.renderOpsDetail('Repository', project.source_url || 'N/A', true, 'app-ops-wide-detail')}
+                ${this.renderOpsDetail('Path', project.path || 'N/A', true, 'app-ops-wide-detail')}
+            </dl></section>
+            <section class="app-ops-card" aria-labelledby="app-ops-commands-heading"><div class="app-ops-card-heading"><h4 id="app-ops-commands-heading">Commands</h4></div><div class="app-ops-commands">${this.renderCommandBlock('Build', project.build_command || 'N/A')}${this.renderCommandBlock('Start', project.start_command || 'N/A')}</div></section>
+        </div>`;
+    },
 
-                <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                    <section class="border border-gray-800 rounded-lg p-5">
-                        <h4 class="text-sm font-semibold text-white mb-4">Runtime</h4>
-                        <dl class="space-y-3 text-sm">
-                            ${this.renderProjectDetail('Status', this.getProjectStatusMeta(project).label)}
-                            ${this.renderProjectDetail('Type', this.projectTypeLabel(project.type))}
-                            ${this.renderProjectDetail('Build Type', this.projectTypeLabel(project.build_type || 'process'))}
-                            ${this.renderProjectDetail('Internal Port', String(project.port || 'N/A'))}
-                            ${this.renderProjectDetail('Host Port', String(project.host_port || project.port || 'N/A'))}
-                            ${this.renderProjectDetail('Process ID', String(project.process_id || 'N/A'))}
-                        </dl>
-                    </section>
-                    <section class="border border-gray-800 rounded-lg p-5">
-                        <h4 class="text-sm font-semibold text-white mb-4">Source</h4>
-                        <dl class="space-y-3 text-sm">
-                            ${this.renderProjectDetail('Source Type', this.projectTypeLabel(project.source_type || (project.source_url ? 'git' : 'upload')))}
-                            ${this.renderProjectDetail('Repository', project.source_url || 'N/A', true)}
-                            ${this.renderProjectDetail('Path', project.path || 'N/A', true)}
-                            ${this.renderProjectDetail('Last Build', this.formatDate(project.last_build), true)}
-                            ${this.renderProjectDetail('Last Deploy', this.formatDate(project.last_deploy), true)}
-                        </dl>
-                    </section>
-                </div>
-
-                <section class="border border-gray-800 rounded-lg p-5">
-                    <h4 class="text-sm font-semibold text-white mb-4">Commands</h4>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                        ${this.renderCommandBlock('Build', project.build_command || 'N/A')}
-                        ${this.renderCommandBlock('Start', project.start_command || 'N/A')}
-                    </div>
-                </section>
-            </div>
-        `;
+    renderOpsDetail: function(label, value, mono = false, extraClass = '') {
+        return `<div class="${extraClass}"><dt>${this.escapeHtml(label)}</dt><dd class="${mono ? 'app-mono' : ''}">${this.escapeHtml(value)}</dd></div>`;
     },
 
     renderReleasesPanel: function(project) {
@@ -779,76 +572,41 @@ App.Projects = {
             delete this.deploymentPollTimers[project.id];
         }
 
-        return `
-            <div class="space-y-5">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <h4 class="text-sm font-semibold text-white">Release Timeline</h4>
-                    <div class="flex flex-wrap gap-2">
-                        <button onclick="App.Projects.refreshOpsTab()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm transition-colors">
-                            <i class="fas fa-rotate mr-2"></i>Refresh
-                        </button>
-                        <button onclick="App.Projects.action('${id}', 'build', this)" class="bg-blue-600 hover:bg-blue-500 text-white rounded-lg px-4 py-2 text-sm font-semibold transition-colors">
-                            <i class="fas fa-hammer mr-2"></i>Build
-                        </button>
-                        <button onclick="App.Projects.redeployProject('${id}', this)" class="${canRedeploy ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-gray-800 text-gray-500 cursor-not-allowed'} rounded-lg px-4 py-2 text-sm font-semibold transition-colors" ${canRedeploy ? '' : 'disabled'}>
-                            <i class="fas fa-code-branch mr-2"></i>Redeploy
-                        </button>
-                    </div>
-                </div>
-
-                <section class="border border-gray-800 rounded-lg p-5">
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                        ${this.renderProjectDetail('Repository', git.is_repository ? 'Detected' : 'Not detected')}
-                        ${this.renderProjectDetail('Branch', git.branch || 'N/A', true)}
-                        ${this.renderProjectDetail('Commit', git.commit || 'N/A', true)}
-                        ${this.renderProjectDetail('Remote', git.remote || project.source_url || 'N/A', true)}
-                    </div>
-                </section>
-
-                ${releases.length === 0 ? this.renderOpsEmpty('fa-code-branch', 'No release activity yet') : `
-                    <div class="border border-gray-800 rounded-lg divide-y divide-gray-800">
-                    ${releases.map(item => `
-                        <div class="p-4 flex items-center justify-between gap-4">
-                            <div>
-                                <div class="flex items-center gap-2">
-                                    <span class="text-sm font-semibold text-white">${this.escapeHtml(item.title || item.type)}</span>
-                                    <span class="inline-flex items-center border ${this.statusBadgeClass(item.status)} rounded-full px-2 py-0.5 text-[11px] font-semibold">${this.escapeHtml(item.status || 'event')}</span>
-                                </div>
-                                <div class="text-xs text-gray-500 mt-1">${this.escapeHtml(item.detail || '')}</div>
-                            </div>
-                            <div class="font-mono text-xs text-gray-400 text-right">${this.formatOpsTime(item.timestamp)}</div>
-                        </div>
-                    `).join('')}
-                    </div>
-                `}
-            </div>
-        `;
+        return `<div class="app-ops-screen">
+            <div class="app-ops-heading"><div><h4>Releases</h4><p>Build and deployment history, newest first.</p></div><div class="app-ops-actions">
+                <button onclick="App.Projects.refreshOpsTab()" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button>
+                <button onclick="App.Projects.action('${id}', 'build', this)" class="console-button secondary"><i class="fas fa-hammer" aria-hidden="true"></i>Build</button>
+                <button onclick="App.Projects.redeployProject('${id}', this)" class="console-button" ${canRedeploy ? '' : 'disabled'}><i class="fas fa-code-branch" aria-hidden="true"></i>Redeploy</button>
+            </div></div>
+            <section class="app-ops-card" aria-labelledby="app-ops-repository-heading"><div class="app-ops-card-heading"><h4 id="app-ops-repository-heading">Repository</h4><span>${git.is_repository ? 'Detected' : 'Not detected'}</span></div><dl class="app-ops-details app-ops-git-details">
+                ${this.renderOpsDetail('Branch', git.branch || 'N/A', true)}
+                ${this.renderOpsDetail('Commit', git.commit || 'N/A', true)}
+                ${this.renderOpsDetail('Remote', git.remote || project.source_url || 'N/A', true, 'app-ops-wide-detail')}
+            </dl></section>
+            <section class="app-ops-card app-ops-release-card" aria-labelledby="app-ops-history-heading"><div class="app-ops-card-heading"><h4 id="app-ops-history-heading">Activity</h4><span>${releases.length} ${releases.length === 1 ? 'event' : 'events'}</span></div>
+                ${releases.length === 0 ? this.renderOpsEmpty('fa-code-branch','No release activity yet') : `<ol class="app-release-timeline">${releases.map(item=>`<li>
+                    <span class="app-release-marker" data-status="${this.escapeAttr(item.status || 'event')}" aria-hidden="true"></span>
+                    <div class="app-release-content"><div><h5>${this.escapeHtml(item.title || item.type)}</h5><span class="app-release-status ${this.statusBadgeClass(item.status)}">${this.escapeHtml(item.status || 'event')}</span></div><p>${this.escapeHtml(item.detail || '')}</p></div>
+                    <time class="app-release-time">${this.escapeHtml(this.formatOpsTime(item.timestamp))}</time>
+                </li>`).join('')}</ol>`}
+            </section>
+        </div>`;
     },
 
     renderLogsPanel: function(project) {
         const data = this.getOpsData(project, 'logs');
         if (this.isOpsLoading(project, 'logs') && !data) return this.renderOpsLoading('logs');
         if (data?.error) return this.renderOpsError(data.error, 'logs');
-
         const raw = data?.raw || '';
         const fetchedAt = data?.fetched_at ? this.formatOpsTime(data.fetched_at) : 'Not loaded';
         const source = data?.source || 'runtime';
-
-        return `
-            <div class="space-y-5">
-                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div>
-                        <h4 class="text-sm font-semibold text-white">Logs</h4>
-                        <p class="text-xs text-gray-500 mt-1">${this.escapeHtml(source.toUpperCase())} · ${this.escapeHtml(fetchedAt)}</p>
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick="App.Projects.refreshOpsTab()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm transition-colors"><i class="fas fa-rotate mr-2"></i>Refresh</button>
-                        <button onclick="App.Projects.copyCurrentLogs()" class="bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 hover:text-white px-4 py-2 rounded-lg text-sm transition-colors"><i class="fas fa-copy mr-2"></i>Copy</button>
-                    </div>
-                </div>
-                <pre class="bg-black border border-gray-800 rounded-lg p-4 h-[500px] overflow-auto text-xs text-gray-400 font-mono leading-relaxed whitespace-pre-wrap">${this.escapeHtml(raw || 'No logs returned.')}</pre>
-            </div>
-        `;
+        return `<div class="app-ops-screen">
+            <div class="app-ops-heading"><div><h4>Logs</h4><p>Recent output from this application's runtime.</p></div><div class="app-ops-actions">
+                <button onclick="App.Projects.refreshOpsTab()" class="console-button secondary"><i class="fas fa-rotate" aria-hidden="true"></i>Refresh</button>
+                <button onclick="App.Projects.copyCurrentLogs()" class="console-button secondary"><i class="far fa-copy" aria-hidden="true"></i>Copy logs</button>
+            </div></div>
+            <section class="app-ops-log-viewer" aria-labelledby="app-ops-log-heading"><div class="app-ops-log-toolbar"><h5 id="app-ops-log-heading">${this.escapeHtml(source)} output</h5><span>Fetched ${this.escapeHtml(fetchedAt)}</span></div><pre id="project-ops-log-output" tabindex="0" aria-label="Application log output">${this.escapeHtml(raw || 'No logs returned.')}</pre></section>
+        </div>`;
     },
 
     renderHealthPanel: function(project) {
@@ -1083,17 +841,24 @@ App.Projects = {
     },
 
     copyText: function(text, successMessage = 'Copied') {
-        const textarea = document.createElement('textarea');
-        textarea.innerHTML = text || '';
-        const value = textarea.value;
-        if (!value) {
-            App.UI.toast('error', 'Nothing to copy');
-            return;
-        }
-
-        navigator.clipboard.writeText(value)
-            .then(() => App.UI.toast('success', successMessage))
-            .catch(() => App.UI.toast('error', 'Failed to copy'));
+        const value = String(text || '');
+        if (!value) { App.UI.toast('error', 'Nothing to copy'); return; }
+        const fallback = () => {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            (document.querySelector('dialog[open], #project-ops-modal:not(.hidden)') || document.body).appendChild(textarea);
+            textarea.select();
+            try {
+                if (!document.execCommand('copy')) throw new Error('Clipboard unavailable');
+                App.UI.toast('success', successMessage);
+            } catch (_) { App.UI.toast('error', 'Failed to copy'); }
+            finally { textarea.remove(); }
+        };
+        if (navigator.clipboard?.writeText) navigator.clipboard.writeText(value)
+            .then(() => App.UI.toast('success', successMessage)).catch(fallback);
+        else fallback();
     },
 
     getIntegrationIcon: function(key) {
@@ -1185,7 +950,7 @@ App.Projects = {
         try {
             let endpoint = `/servers/${serverID}/projects/${id}`;
              if (action === 'delete') {
-                if(!confirm('Are you sure you want to delete this project?')) {
+                if(!await App.UI.confirm('Are you sure you want to delete this project?')) {
                     // Restore immediately if cancelled
                     if (btn) {
                          buttons.forEach((b, index) => {
@@ -1229,6 +994,13 @@ App.Projects = {
     showCreateModal: function() {
         // Show modal logic
         const modal = document.getElementById('create-project-modal');
+        const feedback = document.getElementById('app-source-selection');
+        const repo = document.getElementById('project-repo-url')?.value;
+        const file = document.getElementById('project-file')?.files?.[0];
+        if (feedback) {
+            feedback.textContent = repo ? `Repository selected: ${App.Projects.selectedRepo?.name || repo}` : file ? `Archive selected: ${file.name}` : '';
+            feedback.classList.toggle('hidden', !repo && !file);
+        }
         if (modal) {
             modal.classList.remove('hidden');
             setTimeout(() => {
@@ -1253,12 +1025,14 @@ App.Projects = {
 
     selectTech: function(tech) {
         document.querySelectorAll('.tech-card').forEach(c => {
+            c.setAttribute('aria-pressed', 'false');
             c.classList.remove('border-blue-500', 'bg-blue-900/20');
             c.classList.add('border-gray-700', 'bg-gray-800');
         });
         
         const selected = document.getElementById(`tech-${tech}`);
         if (selected) {
+            selected.setAttribute('aria-pressed', 'true');
             selected.classList.remove('border-gray-700', 'bg-gray-800');
             selected.classList.add('border-blue-500', 'bg-blue-900/20');
         }
@@ -1287,12 +1061,18 @@ App.Projects = {
 
     handleFileSelect: function(input) {
         const label = document.getElementById('project-file-label');
+        const feedback = document.getElementById('app-source-selection');
+        const repo = document.getElementById('project-repo-url')?.value;
         if (input.files && input.files[0]) {
             label.textContent = input.files[0].name;
             label.classList.add('text-blue-400');
         } else {
-            label.textContent = 'Upload Zip';
+            label.textContent = 'Upload archive';
             label.classList.remove('text-blue-400');
+        }
+        if (feedback && !repo) {
+            feedback.textContent = input.files?.[0] ? `Archive selected: ${input.files[0].name}` : '';
+            feedback.classList.toggle('hidden', !input.files?.[0]);
         }
     },
 
@@ -1558,13 +1338,11 @@ App.Projects = {
                 repoInput.value = cloneUrl;
             }
             
-            // Show feedback that repo is selected
             const fileLabel = document.getElementById('project-file-label');
-            if (fileLabel) {
-                 fileLabel.innerHTML = `<i class="fab fa-github mr-2"></i> ${name}`;
-                 fileLabel.classList.add('text-blue-400');
-            }
-            
+            if (fileLabel) { fileLabel.textContent = 'Upload archive'; fileLabel.classList.remove('text-blue-400'); }
+            const sourceFeedback = document.getElementById('app-source-selection');
+            if (sourceFeedback) { sourceFeedback.textContent = `Repository selected: ${name}`; sourceFeedback.classList.remove('hidden'); }
+
             // Maybe disable file input?
             const fileInput = document.getElementById('project-file');
             if (fileInput) fileInput.value = ''; // Clear file
@@ -1700,6 +1478,8 @@ App.Projects = {
                      
                      await App.API.upload(`/servers/${serverID}/projects/upload?project_id=${project.id}`, formData, (p) => {
                          if(progressBar) progressBar.style.width = `${p}%`;
+                         const percent = document.getElementById('project-upload-percent');
+                         if (percent) percent.textContent = `${Math.round(p)}%`;
                      });
                      App.UI.toast('success', 'Project files uploaded successfully');
                 }
@@ -2005,3 +1785,13 @@ App.Projects = {
         }
     }
 };
+
+// Card menus close on selection, outside clicks, or Escape.
+document.addEventListener('click', event => {
+    document.querySelectorAll('.app-card-menu[open], .app-ops-menu[open]').forEach(menu => {
+        if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
+    });
+});
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') document.querySelectorAll('.app-card-menu[open], .app-ops-menu[open]').forEach(menu => { menu.open = false; menu.querySelector('summary')?.focus(); });
+});

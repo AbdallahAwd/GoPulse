@@ -34,8 +34,11 @@ func main() {
 	log.Printf("Starting GoPulse VPS Dashboard on %s:%d", cfg.Server.Host, cfg.Server.Port)
 
 	// Initialize Server Store
-	dataDir := filepath.Join(os.Getenv("HOME"), ".gopulse")
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	dataDir := os.Getenv("GOPULSE_DATA_DIR")
+	if dataDir == "" {
+		dataDir = filepath.Join(os.Getenv("HOME"), ".gopulse")
+	}
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		log.Fatalf("Failed to create data directory: %v", err)
 	}
 	serverStore, err := store.NewServerStore(filepath.Join(dataDir, "servers.json"))
@@ -49,8 +52,14 @@ func main() {
 		log.Fatalf("Failed to initialize user store: %v", err)
 	}
 
+	agentStore, err := store.NewAgentStore(filepath.Join(dataDir, "agents.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize agent credentials: %v", err)
+	}
+
 	// Initialize Auth Middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.Auth.JWTSecret, userStore)
+	authMiddleware.SetAgentStore(agentStore)
 
 	// Initialize Service Manager
 	serviceManager := services.NewServiceManager(serverStore)
@@ -73,6 +82,18 @@ func main() {
 	statsHandler := handlers.NewStatsHandler(collector)
 	systemHandler := handlers.NewSystemHandler(serviceManager)
 	terminalHandler := handlers.NewTerminalHandler(serviceManager)
+
+	// Initialize Cron Jobs (persisted schedules, bounded execution, isolated SSH).
+	cronStore, err := store.NewCronStore(filepath.Join(dataDir, "cron.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize cron store: %v", err)
+	}
+	cronService, err := services.NewCronService(cronStore, &services.ServerCronExecutor{Servers: serverStore})
+	if err != nil {
+		log.Fatalf("Failed to initialize cron scheduler: %v", err)
+	}
+	defer cronService.Close()
+	cronHandler := &handlers.CronHandler{Service: cronService, Servers: serverStore}
 
 	// Initialize Project Components
 	projectStore, err := store.NewProjectStore(filepath.Join(dataDir, "projects.json"))
@@ -108,6 +129,28 @@ func main() {
 	databaseService := services.NewDatabaseService(databaseStore, serviceManager)
 	databaseHandler := handlers.NewDatabaseHandler(databaseService, serviceManager)
 
+	operationStore, err := store.NewOperationStore(filepath.Join(dataDir, "operations.json"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	operations, err := services.NewOperations(operationStore)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer operations.Close()
+	operationHandler := &handlers.OperationHandler{Operations: operations}
+	qdrantHandler := &handlers.QdrantHandler{Service: databaseService, Operations: operations}
+	dashboardSettingsStore, err := store.NewDashboardSettingsStore(filepath.Join(dataDir, "settings.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize dashboard settings: %v", err)
+	}
+	dashboardDomainService, err := services.NewDashboardDomainService(dashboardSettingsStore, operations, cfg.Server.Host, cfg.Server.Port)
+	if err != nil {
+		log.Fatalf("Failed to initialize dashboard domain service: %v", err)
+	}
+	dashboardSettingsHandler := &handlers.DashboardSettingsHandler{Service: dashboardDomainService}
+	authMiddleware.SetSecureCookieHost(func(host string) bool { return dashboardDomainService.PublicURL() == "https://"+host })
+
 	// Initialize Load Balancer Components
 	loadBalancerStore, err := store.NewLoadBalancerStore(filepath.Join(dataDir, "load_balancers.json"))
 	if err != nil {
@@ -115,6 +158,7 @@ func main() {
 	}
 	loadBalancerService := services.NewLoadBalancerService(loadBalancerStore, serverStore, projectStore, serviceManager)
 	loadBalancerHandler := handlers.NewLoadBalancerHandler(loadBalancerService)
+	loadBalancerHandler.SetOperations(operations)
 
 	// Initialize Firewall Components
 	firewallStore, err := store.NewFirewallStore(filepath.Join(dataDir, "firewalls.json"))
@@ -126,12 +170,15 @@ func main() {
 
 	// Initialize Export/Import Components
 	exportStore := store.NewExportStore(serverStore, projectStore, databaseStore, domainStore, userStore, loadBalancerStore)
+	exportStore.CronJobs = cronStore
+	exportStore.ImportCronJob = cronService.ImportJob
 	exportHandler := handlers.NewExportHandler(exportStore)
 
 	// Start Collector
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go collector.Start(ctx)
+	go cronService.Start(ctx)
 
 	// Start Backup Scheduler
 	backupScheduler := services.NewBackupScheduler(databaseService, databaseStore)
@@ -149,13 +196,18 @@ func main() {
 		projectService.AutoStartProjects(ctx)
 	}()
 
+	mcpHandler := &handlers.MCPHandler{Servers: serverStore, Databases: databaseService, LoadBalancers: loadBalancerService, Manager: serviceManager, Collector: collector, Operations: operations, Auth: authMiddleware}
+
 	// Setup Router
 	r := chi.NewRouter()
 
 	// Middleware
 	r.Use(middleware.LoggingMiddleware)
 	r.Use(middleware.RecoveryMiddleware)
+	r.Use(middleware.OriginGuard)
+	r.Use(middleware.NewRateLimiter(600, time.Minute).APIOnlyHandler)
 	r.Use(authMiddleware.Handler)
+	r.Use(middleware.PermissionGuard)
 	r.Use(chiMiddleware.Timeout(60 * time.Second))
 
 	// Static Files (Embedded)
@@ -170,14 +222,35 @@ func main() {
 	r.Get("/register", dashboardHandler.Register)
 	r.Get("/logout", authMiddleware.LogoutHandler)
 	r.Get("/", dashboardHandler.Index)
+	r.Get("/servers", dashboardHandler.Servers)
+	r.Get("/applications", dashboardHandler.Workspace)
+	r.Get("/databases", dashboardHandler.Workspace)
+	r.Get("/networking", dashboardHandler.Workspace)
+	r.Get("/activity", dashboardHandler.Workspace)
+	r.Get("/settings", dashboardHandler.Workspace)
+	r.Get("/agents", dashboardHandler.Workspace)
+	r.Get(services.DashboardIdentityPath, dashboardSettingsHandler.Identity)
 	r.With(authMiddleware.RequireServerAccess).Get("/servers/{serverID}/dashboard", dashboardHandler.ServerDashboard)
 	r.With(authMiddleware.RequirePermission("user:manage")).Get("/users", dashboardHandler.Users)
 
 	// API Routes
 	r.Route("/api", func(r chi.Router) {
+		// HTML and embedded assets never consume the API budget. A page reload
+		// must be able to recover even when a client has exhausted its API quota.
+		r.Use(middleware.NewRateLimiter(240, time.Minute).APIHandler)
+		authLimiter := middleware.NewRateLimiter(10, time.Minute)
+
+		r.Get("/operations", operationHandler.List)
+		r.Get("/operations/{operationID}", operationHandler.Get)
+		r.Post("/operations/{operationID}/approve", operationHandler.Approve)
+		r.Post("/operations/{operationID}/reject", operationHandler.Reject)
+		r.Handle("/mcp", mcpHandler)
+		r.Route("/agents", (&handlers.AgentHandler{Store: agentStore, Servers: serverStore, MCP: mcpHandler, PublicURL: dashboardDomainService.PublicURL}).Routes)
+		r.Route("/settings/dashboard", dashboardSettingsHandler.Routes)
+		r.Post("/agent-token", authMiddleware.AgentTokenHandler)
 		// Auth Endpoints
-		r.Post("/auth/login", authMiddleware.LoginHandler)
-		r.Post("/auth/register", authMiddleware.RegisterHandler)
+		r.With(authLimiter.Handler).Post("/auth/login", authMiddleware.LoginHandler)
+		r.With(authLimiter.Handler).Post("/auth/register", authMiddleware.RegisterHandler)
 		r.Get("/auth/has-users", authMiddleware.CheckUsersHandler)
 
 		// User Management API
@@ -191,6 +264,7 @@ func main() {
 		// Server Management
 		r.Route("/servers", func(r chi.Router) {
 			r.Get("/", serverHandler.ListServers)
+			r.Get("/inventory", serverHandler.Inventory)
 			r.Post("/", serverHandler.AddServer)
 			r.Post("/upload-key", serverHandler.UploadKey)
 
@@ -200,8 +274,11 @@ func main() {
 				r.Delete("/", serverHandler.RemoveServer)
 				r.Get("/", serverHandler.GetServer)
 				r.Put("/", serverHandler.UpdateServer)
-				r.Get("/terminal", terminalHandler.HandleTerminal)
-				r.Get("/stats/history", statsHandler.GetStatsHistory)
+				r.With(authMiddleware.RequirePermission("terminal:write")).Get("/terminal", terminalHandler.HandleTerminal)
+				r.With(authMiddleware.RequireServerAccess).Get("/stats/history", statsHandler.GetStatsHistory)
+
+				// Cron jobs
+				r.Route("/cron", cronHandler.Routes)
 
 				// Processes
 				r.Route("/processes", func(r chi.Router) {
@@ -272,6 +349,7 @@ func main() {
 					r.Post("/upload", projectHandler.UploadProject)
 
 					r.Route("/{id}", func(r chi.Router) {
+						r.Use(projectHandler.RequireOwnership)
 						r.Get("/", projectHandler.GetProject)
 						r.Put("/", projectHandler.UpdateProject) // Added Update route
 						r.Post("/setup", projectHandler.SetupProject)
@@ -319,51 +397,66 @@ func main() {
 
 				// Load Balancers
 				r.Route("/load-balancers", func(r chi.Router) {
-					r.Get("/", loadBalancerHandler.ListLoadBalancers)
-					r.Post("/", loadBalancerHandler.AddLoadBalancer)
-					r.Get("/{id}", loadBalancerHandler.GetLoadBalancer)
-					r.Get("/{id}/logs", loadBalancerHandler.GetLogs)
-					r.Delete("/{id}", loadBalancerHandler.RemoveLoadBalancer)
-					r.Post("/{id}/backends", loadBalancerHandler.AddBackend)
-					r.Delete("/{id}/backends/{backendID}", loadBalancerHandler.RemoveBackend)
+					owned := r.With(loadBalancerHandler.RequireOwnership)
+					owned.Get("/", loadBalancerHandler.ListLoadBalancers)
+					owned.Post("/", loadBalancerHandler.AddLoadBalancer)
+					owned.Get("/{id}", loadBalancerHandler.GetLoadBalancer)
+					owned.Get("/{id}/logs", loadBalancerHandler.GetLogs)
+					owned.Put("/{id}", loadBalancerHandler.UpdateLoadBalancer)
+					owned.Post("/{id}/deploy", loadBalancerHandler.Retry)
+					owned.Delete("/{id}", loadBalancerHandler.RemoveLoadBalancer)
+					owned.Post("/{id}/backends", loadBalancerHandler.AddBackend)
+					owned.Delete("/{id}/backends/{backendID}", loadBalancerHandler.RemoveBackend)
 				})
 
 				// Databases
 				r.Route("/databases", func(r chi.Router) {
-					r.Get("/", databaseHandler.ListDatabases)
-					r.Post("/", databaseHandler.ProvisionDatabase)
-					r.Get("/{dbID}", databaseHandler.GetDatabase)
-					r.Post("/{dbID}/start", databaseHandler.StartDatabase)
-					r.Post("/{dbID}/stop", databaseHandler.StopDatabase)
-					r.Post("/{dbID}/restart", databaseHandler.RestartDatabase)
-					r.Delete("/{dbID}", databaseHandler.DeleteDatabase)
-					r.Post("/{dbID}/query", databaseHandler.ExecuteQuery)
-					r.Post("/{dbID}/backup", databaseHandler.CreateBackup)
-					r.Get("/{dbID}/backups", databaseHandler.ListBackups)
-					r.Post("/{dbID}/backups/restore", databaseHandler.RestoreBackup)
-					r.Post("/{dbID}/backups/import", databaseHandler.ImportBackup)
-					r.Get("/{dbID}/backups/download", databaseHandler.DownloadBackup)
-					r.Get("/{dbID}/auto-backup", databaseHandler.GetAutoBackupConfig)
-					r.Put("/{dbID}/auto-backup", databaseHandler.SetAutoBackupConfig)
-					r.Get("/{dbID}/telemetry", databaseHandler.GetDatabaseTelemetry)
+					owned := r.With(databaseHandler.RequireOwnership)
+					owned.Post("/qdrant/install", qdrantHandler.Install)
+					owned.Get("/{dbID}/qdrant/collections", qdrantHandler.Collections)
+					owned.Post("/{dbID}/qdrant/collections", qdrantHandler.CreateCollection)
+					owned.Get("/{dbID}/qdrant/collections/{collection}", qdrantHandler.Collection)
+					owned.Delete("/{dbID}/qdrant/collections/{collection}", qdrantHandler.DeleteCollection)
+					owned.Get("/{dbID}/qdrant/diagnostics", qdrantHandler.Diagnostics)
+					owned.Get("/{dbID}/qdrant/config", qdrantHandler.Configuration)
+					owned.Get("/{dbID}/qdrant/collections/{collection}/snapshots", qdrantHandler.Snapshots)
+					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots", qdrantHandler.Snapshots)
+					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots/restore", qdrantHandler.RestoreSnapshot)
+					owned.Get("/", databaseHandler.ListDatabases)
+					owned.Post("/", databaseHandler.ProvisionDatabase)
+					owned.Get("/{dbID}", databaseHandler.GetDatabase)
+					owned.With(authMiddleware.RequirePermission("database:write")).Get("/{dbID}/credentials", databaseHandler.Credentials)
+					owned.Post("/{dbID}/start", databaseHandler.StartDatabase)
+					owned.Post("/{dbID}/stop", databaseHandler.StopDatabase)
+					owned.Post("/{dbID}/restart", databaseHandler.RestartDatabase)
+					owned.Delete("/{dbID}", databaseHandler.DeleteDatabase)
+					owned.Post("/{dbID}/query", databaseHandler.ExecuteQuery)
+					owned.Post("/{dbID}/backup", databaseHandler.CreateBackup)
+					owned.Get("/{dbID}/backups", databaseHandler.ListBackups)
+					owned.Post("/{dbID}/backups/restore", databaseHandler.RestoreBackup)
+					owned.Post("/{dbID}/backups/import", databaseHandler.ImportBackup)
+					owned.Get("/{dbID}/backups/download", databaseHandler.DownloadBackup)
+					owned.Get("/{dbID}/auto-backup", databaseHandler.GetAutoBackupConfig)
+					owned.Put("/{dbID}/auto-backup", databaseHandler.SetAutoBackupConfig)
+					owned.Get("/{dbID}/telemetry", databaseHandler.GetDatabaseTelemetry)
 
 					// User management endpoints
-					r.Get("/{dbID}/users", databaseHandler.ListDatabaseUsers)
-					r.Post("/{dbID}/users", databaseHandler.CreateDatabaseUser)
-					r.Delete("/{dbID}/users/{username}", databaseHandler.DeleteDatabaseUser)
+					owned.Get("/{dbID}/users", databaseHandler.ListDatabaseUsers)
+					owned.Post("/{dbID}/users", databaseHandler.CreateDatabaseUser)
+					owned.Delete("/{dbID}/users/{username}", databaseHandler.DeleteDatabaseUser)
 
 					// Explorer endpoints
-					r.Get("/{dbID}/schemas", databaseHandler.ListSchemas)
-					r.Post("/{dbID}/schemas", databaseHandler.CreateSchema)
-					r.Delete("/{dbID}/schemas/{schema}", databaseHandler.DeleteSchema)
-					r.Get("/{dbID}/schemas/{schema}/tables", databaseHandler.ListTables)
-					r.Post("/{dbID}/schemas/{schema}/tables", databaseHandler.CreateTable)
-					r.Delete("/{dbID}/schemas/{schema}/tables/{table}", databaseHandler.DeleteTable)
-					r.Get("/{dbID}/schemas/{schema}/tables/{table}/columns", databaseHandler.DescribeTable)
-					r.Get("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.BrowseTableData)
-					r.Post("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.InsertRow)
-					r.Put("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.UpdateRow)
-					r.Delete("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.DeleteRow)
+					owned.Get("/{dbID}/schemas", databaseHandler.ListSchemas)
+					owned.Post("/{dbID}/schemas", databaseHandler.CreateSchema)
+					owned.Delete("/{dbID}/schemas/{schema}", databaseHandler.DeleteSchema)
+					owned.Get("/{dbID}/schemas/{schema}/tables", databaseHandler.ListTables)
+					owned.Post("/{dbID}/schemas/{schema}/tables", databaseHandler.CreateTable)
+					owned.Delete("/{dbID}/schemas/{schema}/tables/{table}", databaseHandler.DeleteTable)
+					owned.Get("/{dbID}/schemas/{schema}/tables/{table}/columns", databaseHandler.DescribeTable)
+					owned.Get("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.BrowseTableData)
+					owned.Post("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.InsertRow)
+					owned.Put("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.UpdateRow)
+					owned.Delete("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.DeleteRow)
 				})
 
 				// Firewall
@@ -406,6 +499,7 @@ func main() {
 
 		// System Operations
 		r.Route("/system", func(r chi.Router) {
+			r.Use(authMiddleware.RequirePermission("*")) // These actions control the dashboard host itself.
 			r.Post("/restart", systemHandler.Restart)
 			r.Post("/shutdown", systemHandler.Shutdown)
 		})
@@ -414,10 +508,10 @@ func main() {
 		r.Post("/webhooks/github/{projectID}", webhookHandler.HandleGitHubWebhook)
 
 		// Global Stats Snapshot
-		r.Get("/stats", statsHandler.GetStats)
+		r.With(authMiddleware.RequireServerAccess).Get("/stats", statsHandler.GetStats)
 
 		// Global Stats History
-		r.Get("/stats/history", statsHandler.GetStatsHistory)
+		r.With(authMiddleware.RequireServerAccess).Get("/stats/history", statsHandler.GetStatsHistory)
 
 		// Export/Import (admin only)
 		r.Route("/export-import", func(r chi.Router) {
@@ -429,14 +523,18 @@ func main() {
 
 	})
 
+	mcpHandler.API = r
+
 	// GitHub OAuth callback at top level (matches config.yaml callback_url)
 	r.Get("/auth/github/login", githubHandler.Login)
 	r.Get("/auth/github/callback", githubHandler.Callback)
 
 	// Start Server
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
-		Handler: r,
+		Addr:              fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
+		Handler:           r,
+		ReadHeaderTimeout: cfg.Server.ReadTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
 	go func() {

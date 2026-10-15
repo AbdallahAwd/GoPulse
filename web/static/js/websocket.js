@@ -1,6 +1,7 @@
 // WebSocket connection management
 let ws = null;
 let reconnectInterval = null;
+let pingInterval = null;
 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 const wsUrl = `${wsProtocol}//${window.location.host}/api/stats/ws`;
 
@@ -19,7 +20,8 @@ function connectWebSocket() {
             }
 
             // Send ping every 30 seconds
-            setInterval(() => {
+            if (pingInterval) clearInterval(pingInterval);
+            pingInterval = setInterval(() => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ type: 'ping' }));
                 }
@@ -41,6 +43,7 @@ function connectWebSocket() {
         };
 
         ws.onclose = function() {
+            if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
             console.log('WebSocket closed');
             updateWSStatus('disconnected');
             
@@ -61,6 +64,7 @@ function connectWebSocket() {
 function updateWSStatus(status) {
     const indicator = document.getElementById('ws-indicator');
     const statusText = document.querySelector('#ws-status span:last-child');
+    if (!indicator || !statusText) return;
 
     switch(status) {
         case 'connected':
@@ -100,4 +104,4 @@ function handleWebSocketMessage(message) {
 }
 
 // Initialize WebSocket connection when page loads
-connectWebSocket();
+if (document.getElementById('ws-status')) connectWebSocket();

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/amaa/gopulse/internal/models"
@@ -78,6 +79,7 @@ func mysqlAdminCommand(containerName string, db models.Database, args string, st
 
 // DatabaseService handles containerized database operations on remote servers via SSH
 type DatabaseService struct {
+	locks   sync.Map
 	store   *store.DatabaseStore
 	manager *ServiceManager
 }
@@ -109,6 +111,14 @@ func (s *DatabaseService) GetDatabase(id string) (models.Database, error) {
 
 // ProvisionDatabase creates and runs a containerized database on the remote server
 func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string, name string, dbType string, dbName string, username string, password string, hostPort int) (*models.Database, error) {
+	if name == "" || (dbType != "sqlite" && (hostPort < 1 || hostPort > 65535)) {
+		return nil, fmt.Errorf("invalid database name or port")
+	}
+	switch dbType {
+	case "mysql", "postgres", "mongodb", "redis", "sqlite", "pocketbase", "appwrite":
+	default:
+		return nil, fmt.Errorf("unsupported database engine")
+	}
 	client, err := s.manager.GetSSHClient(serverID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get SSH client: %w", err)
@@ -117,7 +127,7 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	if dbType != "sqlite" {
 		// 1. Check if the host port is already listening
 		portCheckCmd := fmt.Sprintf("netstat -tuln | grep -q ':%d ' && echo 'busy' || echo 'free'", hostPort)
-		portCheckOut, _ := client.RunCommand(portCheckCmd)
+		portCheckOut, _ := client.RunCommandContext(ctx, portCheckCmd)
 		if strings.TrimSpace(portCheckOut) == "busy" {
 			return nil, fmt.Errorf("port %d is already in use on the host", hostPort)
 		}
@@ -129,7 +139,7 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", dbID)
 
 	// Create directories on host with sudo and assign ownership to the SSH user
-	_, err = client.RunCommand(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", volumePath))
+	_, err = client.RunCommandContext(ctx, fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", volumePath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create persistent database directory: %w", err)
 	}
@@ -156,17 +166,17 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	case "postgres":
 		runCmd = fmt.Sprintf(
 			"docker run -d --name %s -p %d:5432 -v %s:/var/lib/postgresql/data -e POSTGRES_PASSWORD=%s -e POSTGRES_USER=%s -e POSTGRES_DB=%s --restart unless-stopped postgres:15",
-			containerName, hostPort, volumePath, password, username, dbName,
+			shellQuote(containerName), hostPort, shellQuote(volumePath), shellQuote(password), shellQuote(username), shellQuote(dbName),
 		)
 	case "mongodb":
 		runCmd = fmt.Sprintf(
 			"docker run -d --name %s -p %d:27017 -v %s:/data/db -e MONGO_INITDB_ROOT_USERNAME=%s -e MONGO_INITDB_ROOT_PASSWORD=%s --restart unless-stopped mongo:6.0",
-			containerName, hostPort, volumePath, username, password,
+			shellQuote(containerName), hostPort, shellQuote(volumePath), shellQuote(username), shellQuote(password),
 		)
 	case "redis":
 		runCmd = fmt.Sprintf(
 			"docker run -d --name %s -p %d:6379 -v %s:/data --restart unless-stopped redis:7.0-alpine redis-server --requirepass %s --appendonly yes",
-			containerName, hostPort, volumePath, password,
+			shellQuote(containerName), hostPort, shellQuote(volumePath), shellQuote(password),
 		)
 	case "sqlite":
 		runCmd = fmt.Sprintf("sqlite3 %s/sqlite.db 'VACUUM;' 2>/dev/null || touch %s/sqlite.db", volumePath, volumePath)
@@ -306,7 +316,7 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 			`echo '%s' | base64 -d > %s/docker-compose.yml`,
 			composeB64, volumePath,
 		)
-		_, err = client.RunCommand(writeComposeCmd)
+		_, err = client.RunCommandContext(ctx, writeComposeCmd)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write docker-compose.yml on host: %w", err)
 		}
@@ -318,19 +328,19 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 
 	var containerID string
 	if dbType == "sqlite" {
-		_, err = client.RunCommand(runCmd)
+		_, err = client.RunCommandContext(ctx, runCmd)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize sqlite database file: %w", err)
 		}
 		containerID = "sqlite-local"
 	} else if dbType == "appwrite" {
-		composeOut, runErr := client.RunCommand(runCmd)
+		composeOut, runErr := client.RunCommandContext(ctx, runCmd)
 		if runErr != nil {
 			return nil, fmt.Errorf("failed to start appwrite stack: %s", strings.TrimSpace(composeOut))
 		}
 		containerID = "appwrite-compose"
 	} else {
-		containerIDOut, err := client.RunCommand(runCmd)
+		containerIDOut, err := client.RunCommandContext(ctx, runCmd)
 		if err != nil {
 			return nil, fmt.Errorf("failed to execute docker run command: %w", err)
 		}
@@ -344,12 +354,12 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 			time.Sleep(1500 * time.Millisecond)
 
 			// Try new version "superuser upsert" first (PocketBase 0.22+)
-			adminCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase superuser upsert %s %s --dir=/pb_data", containerName, username, password)
-			_, err = client.RunCommand(adminCmd)
+			adminCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase superuser upsert %s %s --dir=/pb_data", shellQuote(containerName), shellQuote(username), shellQuote(password))
+			_, err = client.RunCommandContext(ctx, adminCmd)
 			if err != nil {
 				// Fallback to older version "admin create" (PocketBase <0.22)
-				fallbackCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase admin create %s %s --dir=/pb_data", containerName, username, password)
-				_, errFallback := client.RunCommand(fallbackCmd)
+				fallbackCmd := fmt.Sprintf("docker exec %s /usr/local/bin/pocketbase admin create %s %s --dir=/pb_data", shellQuote(containerName), shellQuote(username), shellQuote(password))
+				_, errFallback := client.RunCommandContext(ctx, fallbackCmd)
 				if errFallback != nil {
 					// Print warning but do not fail provisioning since the service is already running
 					fmt.Printf("Warning: failed to bootstrap pocketbase superuser: %v (fallback error: %v)\n", err, errFallback)
@@ -376,7 +386,7 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	err = s.store.AddDatabase(db)
 	if err != nil {
 		// Attempt cleanup
-		client.RunCommand(fmt.Sprintf("docker rm -f %s", containerName))
+		client.RunCommandContext(ctx, fmt.Sprintf("docker rm -f %s", containerName))
 		return nil, fmt.Errorf("failed to persist database metadata: %w", err)
 	}
 
@@ -389,73 +399,81 @@ func (s *DatabaseService) ProvisionDatabase(ctx context.Context, serverID string
 	return &db, nil
 }
 
-// UpdateStatus queries Docker and database health CLI endpoints to resolve state
-func (s *DatabaseService) UpdateStatus(ctx context.Context, id string) (models.DatabaseStatus, error) {
+// UpdateStatus verifies remote runtime health without treating a failed SSH or
+// Docker command as evidence that the database stopped. Reads are bounded.
+func (s *DatabaseService) UpdateStatus(parent context.Context, id string) (models.DatabaseStatus, error) {
 	db, err := s.store.GetDatabase(id)
 	if err != nil {
 		return models.DatabaseStatusError, err
 	}
-
-	client, err := s.manager.GetSSHClient(db.ServerID)
-	if err != nil {
-		return models.DatabaseStatusError, err
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	defer cancel()
+	persist := func(status models.DatabaseStatus) (models.DatabaseStatus, error) {
+		db.Status = status
+		return status, s.store.UpdateDatabase(db)
 	}
-
-	if db.Type == "sqlite" {
-		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-		checkCmd := fmt.Sprintf("[ -f %s/sqlite.db ] && echo 'exists' || echo 'missing'", volumePath)
-		out, err := client.RunCommand(checkCmd)
-		if err == nil && strings.TrimSpace(out) == "exists" {
-			db.Status = models.DatabaseStatusRunning
-		} else {
-			db.Status = models.DatabaseStatusError
-		}
-		s.store.UpdateDatabase(db)
-		return db.Status, nil
+	if !safeResourceID.MatchString(id) {
+		return db.Status, fmt.Errorf("invalid database identity")
 	}
-
-	containerName := fmt.Sprintf("gopulse-%s", db.ID)
-	inspectCmd := fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s 2>/dev/null", containerName)
+	containerName := "gopulse-" + id
 	if db.Type == "appwrite" {
-		// Check the appwrite server container
-		inspectCmd = fmt.Sprintf("docker inspect -f '{{.State.Running}}' %s-appwrite 2>/dev/null", containerName)
+		containerName += "-appwrite"
 	}
-	runningOut, err := client.RunCommand(inspectCmd)
-	if err != nil || strings.TrimSpace(runningOut) != "true" {
-		db.Status = models.DatabaseStatusStopped
-		s.store.UpdateDatabase(db)
-		return models.DatabaseStatusStopped, nil
+	if db.Type == "sqlite" {
+		path := shellQuote("/var/lib/gopulse/databases/" + id + "/sqlite.db")
+		out, err := s.manager.Run(ctx, db.ServerID, "if [ -f "+path+" ]; then echo exists; else echo missing; fi")
+		if err != nil {
+			return db.Status, err
+		}
+		switch strings.TrimSpace(out) {
+		case "exists":
+			return persist(models.DatabaseStatusRunning)
+		case "missing":
+			return persist(models.DatabaseStatusError)
+		default:
+			return db.Status, fmt.Errorf("unexpected SQLite health response")
+		}
 	}
-
-	// Container is running! Let's check health using client ping tools
-	var healthCmd string
+	out, err := s.manager.Run(ctx, db.ServerID, "docker inspect -f '{{.State.Running}}' "+shellQuote(containerName))
+	if err != nil {
+		return db.Status, err
+	}
+	switch strings.TrimSpace(out) {
+	case "false":
+		return persist(models.DatabaseStatusStopped)
+	case "true":
+	default:
+		return db.Status, fmt.Errorf("unexpected container health response")
+	}
+	if db.Type == "qdrant" {
+		if _, err := s.QdrantCollections(ctx, id); err != nil {
+			return db.Status, err
+		}
+		return persist(models.DatabaseStatusRunning)
+	}
+	var healthCommand string
 	switch db.Type {
 	case "mysql":
-		healthCmd = fmt.Sprintf("%s | grep -q 'alive' && echo 'healthy' || echo 'starting'", mysqlAdminCommand(containerName, db, "ping", "2>/dev/null"))
+		healthCommand = mysqlExecCommand(containerName, db, "", "--batch --skip-column-names", "SELECT 1;", "")
 	case "postgres":
-		healthCmd = fmt.Sprintf("docker exec %s pg_isready -U %s -d %s >/dev/null 2>&1 && echo 'healthy' || echo 'starting'", containerName, db.Username, db.DatabaseName)
+		healthCommand = "docker exec -e PGPASSWORD=" + shellQuote(db.Password) + " " + shellQuote(containerName) + " psql -U " + shellQuote(db.Username) + " -d " + shellQuote(db.DatabaseName) + " -tAqc 'SELECT 1'"
 	case "mongodb":
-		healthCmd = fmt.Sprintf("docker exec %s mongosh --quiet --eval \"db.adminCommand('ping')\" 2>/dev/null | grep -q 'ok' && echo 'healthy' || echo 'starting'", containerName)
+		healthCommand = "docker exec " + shellQuote(containerName) + " mongosh --quiet --username " + shellQuote(db.Username) + " --password " + shellQuote(db.Password) + " --authenticationDatabase admin --eval 'db.adminCommand({ping:1})'"
 	case "redis":
-		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
-		healthCmd = fmt.Sprintf("docker exec -e REDISCLI_AUTH=%s %s redis-cli ping 2>/dev/null | grep -q 'PONG' && echo 'healthy' || echo 'starting'", escapedPassword, containerName)
+		healthCommand = "docker exec -e REDISCLI_AUTH=" + shellQuote(db.Password) + " " + shellQuote(containerName) + " redis-cli ping 2>/dev/null | grep -qx PONG"
 	case "pocketbase":
-		healthCmd = fmt.Sprintf("docker exec %s nc -z 127.0.0.1 8090 && echo 'healthy' || echo 'starting'", containerName)
+		healthCommand = "docker exec " + shellQuote(containerName) + " nc -z 127.0.0.1 8090"
 	case "appwrite":
-		// Check the appwrite API server
-		healthCmd = fmt.Sprintf("docker exec %s-appwrite nc -z 127.0.0.1 80 && echo 'healthy' || echo 'starting'", containerName)
+		healthCommand = "docker exec " + shellQuote(containerName) + " nc -z 127.0.0.1 80"
+	default:
+		return db.Status, fmt.Errorf("unsupported database health check")
 	}
-
-	healthOut, _ := client.RunCommand(healthCmd)
-	statusStr := strings.TrimSpace(healthOut)
-	if statusStr == "healthy" {
-		db.Status = models.DatabaseStatusRunning
-	} else {
-		db.Status = models.DatabaseStatusStarting
+	// Credentials are not echoed to the browser. A command failure is reported as
+	// a verification failure rather than a fabricated persisted lifecycle state.
+	if _, err := s.manager.Run(ctx, db.ServerID, healthCommand+" >/dev/null 2>&1"); err != nil {
+		return db.Status, fmt.Errorf("database connection check failed: %s", redactSecret(err.Error(), db.Password))
 	}
-
-	s.store.UpdateDatabase(db)
-	return db.Status, nil
+	return persist(models.DatabaseStatusRunning)
 }
 
 // StartDatabase boots up a database container
@@ -469,6 +487,10 @@ func (s *DatabaseService) StartDatabase(ctx context.Context, id string) error {
 		return nil
 	}
 
+	if db.Type == "qdrant" {
+		return s.QdrantLifecycle(ctx, id, "start")
+	}
+
 	client, err := s.manager.GetSSHClient(db.ServerID)
 	if err != nil {
 		return err
@@ -476,7 +498,7 @@ func (s *DatabaseService) StartDatabase(ctx context.Context, id string) error {
 
 	if db.Type == "appwrite" {
 		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-		_, err = client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml start", volumePath))
+		_, err = client.RunCommandContext(ctx, fmt.Sprintf("docker compose -f %s/docker-compose.yml start", volumePath))
 		if err != nil {
 			return err
 		}
@@ -490,7 +512,7 @@ func (s *DatabaseService) StartDatabase(ctx context.Context, id string) error {
 	}
 
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
-	_, err = client.RunCommand(fmt.Sprintf("docker start %s", containerName))
+	_, err = client.RunCommandContext(ctx, fmt.Sprintf("docker start %s", containerName))
 	if err != nil {
 		return err
 	}
@@ -517,6 +539,10 @@ func (s *DatabaseService) StopDatabase(ctx context.Context, id string) error {
 		return nil
 	}
 
+	if db.Type == "qdrant" {
+		return s.QdrantLifecycle(ctx, id, "stop")
+	}
+
 	client, err := s.manager.GetSSHClient(db.ServerID)
 	if err != nil {
 		return err
@@ -524,7 +550,7 @@ func (s *DatabaseService) StopDatabase(ctx context.Context, id string) error {
 
 	if db.Type == "appwrite" {
 		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-		_, err = client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml stop", volumePath))
+		_, err = client.RunCommandContext(ctx, fmt.Sprintf("docker compose -f %s/docker-compose.yml stop", volumePath))
 		if err != nil {
 			return err
 		}
@@ -534,7 +560,7 @@ func (s *DatabaseService) StopDatabase(ctx context.Context, id string) error {
 	}
 
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
-	_, err = client.RunCommand(fmt.Sprintf("docker stop %s", containerName))
+	_, err = client.RunCommandContext(ctx, fmt.Sprintf("docker stop %s", containerName))
 	if err != nil {
 		return err
 	}
@@ -555,6 +581,10 @@ func (s *DatabaseService) RestartDatabase(ctx context.Context, id string) error 
 		return nil
 	}
 
+	if db.Type == "qdrant" {
+		return s.QdrantLifecycle(ctx, id, "restart")
+	}
+
 	client, err := s.manager.GetSSHClient(db.ServerID)
 	if err != nil {
 		return err
@@ -562,7 +592,7 @@ func (s *DatabaseService) RestartDatabase(ctx context.Context, id string) error 
 
 	if db.Type == "appwrite" {
 		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-		_, err = client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml restart", volumePath))
+		_, err = client.RunCommandContext(ctx, fmt.Sprintf("docker compose -f %s/docker-compose.yml restart", volumePath))
 		if err != nil {
 			return err
 		}
@@ -576,7 +606,7 @@ func (s *DatabaseService) RestartDatabase(ctx context.Context, id string) error 
 	}
 
 	containerName := fmt.Sprintf("gopulse-%s", db.ID)
-	_, err = client.RunCommand(fmt.Sprintf("docker restart %s", containerName))
+	_, err = client.RunCommandContext(ctx, fmt.Sprintf("docker restart %s", containerName))
 	if err != nil {
 		return err
 	}
@@ -598,45 +628,32 @@ func (s *DatabaseService) DeleteDatabase(ctx context.Context, id string, deleteV
 	if err != nil {
 		return err
 	}
-
+	if !safeResourceID.MatchString(db.ID) {
+		return fmt.Errorf("invalid database ID")
+	}
+	if db.Type == "qdrant" {
+		return s.DeleteQdrant(ctx, id, deleteVolume)
+	}
 	client, err := s.manager.GetSSHClient(db.ServerID)
 	if err != nil {
 		return err
 	}
-
+	dir := "/var/lib/gopulse/databases/" + db.ID
+	cmd := "docker rm -f " + shellQuote("gopulse-"+db.ID)
 	if db.Type == "sqlite" {
-		if deleteVolume {
-			volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-			backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
-			client.RunCommand(fmt.Sprintf("sudo rm -rf %s %s", volumePath, backupPath))
-		}
-		return s.store.RemoveDatabase(id)
+		cmd = "test -d " + shellQuote(dir)
 	}
-
 	if db.Type == "appwrite" {
-		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-		if deleteVolume {
-			// Tear down containers + named volumes, then purge files
-			client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml down -v --remove-orphans", volumePath))
-			backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
-			client.RunCommand(fmt.Sprintf("sudo rm -rf %s %s", volumePath, backupPath))
-		} else {
-			// Just stop & remove containers, keep data volumes
-			client.RunCommand(fmt.Sprintf("docker compose -f %s/docker-compose.yml down --remove-orphans", volumePath))
-		}
-		return s.store.RemoveDatabase(id)
+		cmd = "docker compose -f " + shellQuote(dir+"/docker-compose.yml") + " down --remove-orphans"
 	}
-
-	containerName := fmt.Sprintf("gopulse-%s", db.ID)
-	client.RunCommand(fmt.Sprintf("docker stop %s", containerName))
-	client.RunCommand(fmt.Sprintf("docker rm %s", containerName))
-
+	if _, err := client.RunCommandContext(ctx, cmd); err != nil {
+		return fmt.Errorf("remote removal failed; metadata retained: %w", err)
+	}
 	if deleteVolume {
-		volumePath := fmt.Sprintf("/var/lib/gopulse/databases/%s", db.ID)
-		backupPath := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
-		client.RunCommand(fmt.Sprintf("sudo rm -rf %s %s", volumePath, backupPath))
+		if _, err := client.RunCommandContext(ctx, "sudo -n rm -rf -- "+shellQuote(dir)+" "+shellQuote("/var/lib/gopulse/backups/"+db.ID)); err != nil {
+			return fmt.Errorf("data removal failed; metadata retained: %w", err)
+		}
 	}
-
 	return s.store.RemoveDatabase(id)
 }
 
@@ -733,7 +750,7 @@ func (s *DatabaseService) ExecuteQuery(ctx context.Context, id string, schema st
 		return nil, fmt.Errorf("unsupported database engine: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(execCmd)
+	output, err := client.RunCommandContext(ctx, execCmd)
 	if err != nil {
 		return nil, fmt.Errorf("execution error: %s", output)
 	}
@@ -838,7 +855,7 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.
 	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
 
 	// Create backup folder on host with sudo and assign ownership to the SSH user
-	_, err = client.RunCommand(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", backupDir))
+	_, err = client.RunCommandContext(ctx, fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", backupDir))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create host backup folder: %w", err)
 	}
@@ -896,14 +913,14 @@ func (s *DatabaseService) CreateBackup(ctx context.Context, id string) (*models.
 		)
 	}
 
-	output, err := client.RunCommand(dumpCmd)
+	output, err := client.RunCommandContext(ctx, dumpCmd)
 	if err != nil {
 		return nil, fmt.Errorf("database dump failed: %s (err: %w)", output, err)
 	}
 
 	// Retrieve file size from remote host
 	sizeCmd := fmt.Sprintf("stat -c%%s %s/%s", backupDir, backupName)
-	sizeOut, err := client.RunCommand(sizeCmd)
+	sizeOut, err := client.RunCommandContext(ctx, sizeCmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve remote backup size: %w", err)
 	}
@@ -932,11 +949,11 @@ func (s *DatabaseService) ListBackups(ctx context.Context, id string) ([]models.
 	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
 
 	// Ensure folder exists, created with sudo and assigned ownership
-	client.RunCommand(fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", backupDir))
+	client.RunCommandContext(ctx, fmt.Sprintf("sudo mkdir -p %[1]s && sudo chown -R $(whoami):$(whoami) %[1]s", backupDir))
 
 	// Search file listing using tabular output format (Filename, Size, Timestamp)
 	findCmd := fmt.Sprintf("find %s -type f -name 'backup-*' -printf '%%f\\t%%s\\t%%T@\\n' 2>/dev/null", backupDir)
-	output, err := client.RunCommand(findCmd)
+	output, err := client.RunCommandContext(ctx, findCmd)
 	if err != nil {
 		return nil, err
 	}
@@ -991,7 +1008,7 @@ func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename
 
 	// Confirm that the file exists on host
 	checkCmd := fmt.Sprintf("[ -f %s ] && echo 'exists' || echo 'missing'", shellQuote(backupPath))
-	checkOut, _ := client.RunCommand(checkCmd)
+	checkOut, _ := client.RunCommandContext(ctx, checkCmd)
 	if strings.TrimSpace(checkOut) != "exists" {
 		return fmt.Errorf("backup file %s does not exist on remote host", filename)
 	}
@@ -1088,7 +1105,7 @@ func (s *DatabaseService) RestoreBackup(ctx context.Context, id string, filename
 		}
 	}
 
-	output, err := client.RunCommand(restoreCmd)
+	output, err := client.RunCommandContext(ctx, restoreCmd)
 	if err != nil {
 		return fmt.Errorf("database restore failed: %s (err: %w)", output, err)
 	}
@@ -1127,7 +1144,7 @@ func (s *DatabaseService) PurgeOldBackups(ctx context.Context, id string, retent
 
 	backupDir := fmt.Sprintf("/var/lib/gopulse/backups/%s", db.ID)
 	purgeCmd := fmt.Sprintf("find %s -type f -name 'backup-*' -mtime +%d -delete", backupDir, retentionDays)
-	_, err = client.RunCommand(purgeCmd)
+	_, err = client.RunCommandContext(ctx, purgeCmd)
 	if err != nil {
 		return fmt.Errorf("failed to purge old backups: %w", err)
 	}
@@ -1183,7 +1200,7 @@ func (s *DatabaseService) ListSchemas(ctx context.Context, id string) ([]string,
 		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list schemas: %w", err)
 	}
@@ -1245,7 +1262,7 @@ func (s *DatabaseService) ListTables(ctx context.Context, id string, schema stri
 		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tables: %w", err)
 	}
@@ -1323,7 +1340,7 @@ func (s *DatabaseService) DescribeTable(ctx context.Context, id string, schema s
 		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe table: %w", err)
 	}
@@ -1402,7 +1419,7 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 		// 1. Get total list of keys
 		escapedPassword := "'" + strings.ReplaceAll(db.Password, "'", "'\\''") + "'"
 		keysListCmd := fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s redis-cli -n %s KEYS "*" 2>/dev/null`, escapedPassword, containerName, dbNum)
-		keysListOut, err := client.RunCommand(keysListCmd)
+		keysListOut, err := client.RunCommandContext(ctx, keysListCmd)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch keys: %w", err)
 		}
@@ -1452,7 +1469,7 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 			}
 
 			dataCmd := fmt.Sprintf(`docker exec -e REDISCLI_AUTH=%s %s sh -c '%s'`, escapedPassword, containerName, strings.Join(keyCmds, "; "))
-			dataOut, err := client.RunCommand(dataCmd)
+			dataOut, err := client.RunCommandContext(ctx, dataCmd)
 			if err == nil {
 				for _, line := range strings.Split(strings.TrimSpace(dataOut), "\n") {
 					line = strings.TrimSpace(line)
@@ -1509,7 +1526,7 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 		)
 	}
 
-	countOut, _ := client.RunCommand(countCmd)
+	countOut, _ := client.RunCommandContext(ctx, countCmd)
 	total, _ := strconv.ParseInt(strings.TrimSpace(countOut), 10, 64)
 
 	// Then, fetch paginated rows
@@ -1541,7 +1558,7 @@ func (s *DatabaseService) BrowseTableData(ctx context.Context, id string, schema
 		return nil, fmt.Errorf("unsupported engine: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(dataCmd)
+	output, err := client.RunCommandContext(ctx, dataCmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to browse table data: %w", err)
 	}
@@ -1669,7 +1686,7 @@ func (s *DatabaseService) CreateSchema(ctx context.Context, id string, name stri
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create schema: %s (err: %w)", output, err)
 	}
@@ -1713,7 +1730,7 @@ func (s *DatabaseService) DeleteSchema(ctx context.Context, id string, name stri
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to delete schema: %s (err: %w)", output, err)
 	}
@@ -1810,7 +1827,7 @@ func (s *DatabaseService) CreateTable(ctx context.Context, id string, schema str
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to create table: %s (err: %w)", output, err)
 	}
@@ -1855,7 +1872,7 @@ func (s *DatabaseService) DeleteTable(ctx context.Context, id string, schema str
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to delete table: %s (err: %w)", output, err)
 	}
@@ -1979,7 +1996,7 @@ func (s *DatabaseService) InsertRow(ctx context.Context, id string, schema strin
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("insert failed: %s (err: %w)", output, err)
 	}
@@ -2052,7 +2069,7 @@ func (s *DatabaseService) DeleteRow(ctx context.Context, id string, schema strin
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("delete failed: %s (err: %w)", output, err)
 	}
@@ -2187,7 +2204,7 @@ func (s *DatabaseService) UpdateRow(ctx context.Context, id string, schema strin
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return fmt.Errorf("update failed: %s (err: %w)", output, err)
 	}
@@ -2224,7 +2241,7 @@ func (s *DatabaseService) GetDatabaseTelemetry(ctx context.Context, id string) (
 
 	// 1. Get disk data directory size (in kilobytes, multiply by 1024)
 	sizeCmd := fmt.Sprintf("du -sk %s 2>/dev/null", volumePath)
-	sizeOut, err := client.RunCommand(sizeCmd)
+	sizeOut, err := client.RunCommandContext(ctx, sizeCmd)
 	if err == nil {
 		fields := strings.Fields(sizeOut)
 		if len(fields) > 0 {
@@ -2261,7 +2278,7 @@ func (s *DatabaseService) GetDatabaseTelemetry(ctx context.Context, id string) (
 	}
 
 	if connCmd != "" {
-		connOut, err := client.RunCommand(connCmd)
+		connOut, err := client.RunCommandContext(ctx, connCmd)
 		if err == nil {
 			trimmed := strings.TrimSpace(connOut)
 			if db.Type == "mysql" {
@@ -2322,7 +2339,7 @@ func (s *DatabaseService) ListDatabaseUsers(ctx context.Context, id string) ([]m
 		return nil, fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	output, err := client.RunCommand(cmd)
+	output, err := client.RunCommandContext(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list database users: %w", err)
 	}
@@ -2454,7 +2471,7 @@ func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, use
 
 		for _, sql := range cmds {
 			execCmd := mysqlExecCommand(containerName, db, "", "", sql, "2>&1")
-			out, err := client.RunCommand(execCmd)
+			out, err := client.RunCommandContext(ctx, execCmd)
 			if err != nil {
 				return fmt.Errorf("mysql error: %s (err: %w)", out, err)
 			}
@@ -2484,7 +2501,7 @@ func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, use
 
 		for _, sql := range cmds {
 			execCmd := fmt.Sprintf(`docker exec %s psql -U %s -d %s -c "%s" 2>&1`, containerName, db.Username, targetName, sql)
-			out, err := client.RunCommand(execCmd)
+			out, err := client.RunCommandContext(ctx, execCmd)
 			if err != nil {
 				return fmt.Errorf("postgres error: %s (err: %w)", out, err)
 			}
@@ -2528,7 +2545,7 @@ func (s *DatabaseService) CreateDatabaseUser(ctx context.Context, id string, use
 			`docker exec %s mongosh --quiet -u %s -p %s --authenticationDatabase admin admin --eval '%s' 2>&1`,
 			containerName, db.Username, db.Password, evalJs,
 		)
-		out, err := client.RunCommand(execCmd)
+		out, err := client.RunCommandContext(ctx, execCmd)
 		if err != nil {
 			return fmt.Errorf("mongodb error: %s (err: %w)", out, err)
 		}
@@ -2572,7 +2589,7 @@ func (s *DatabaseService) DeleteDatabaseUser(ctx context.Context, id string, use
 		return fmt.Errorf("unsupported database type: %s", db.Type)
 	}
 
-	out, err := client.RunCommand(execCmd)
+	out, err := client.RunCommandContext(ctx, execCmd)
 	if err != nil {
 		return fmt.Errorf("delete user error: %s (err: %w)", out, err)
 	}

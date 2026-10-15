@@ -1,14 +1,16 @@
 # GoPulse - VPS Management Dashboard
 
-A production-ready monolithic VPS management dashboard built entirely in Go. Single binary deployment with embedded frontend assets.
+A monolithic VPS management dashboard built in Go, with a single binary and embedded frontend assets. See the verification report for deployment prerequisites and tested limitations.
 
 ## Features
 
 - 📊 **Real-time System Monitoring**: CPU, RAM, Disk, Network stats with WebSocket updates
 - 🔄 **Process Management**: List, search, and kill processes; manage systemd services
 - 🐳 **Docker Integration**: Manage containers, view stats, stream logs
-- 🗄️ **Database Monitoring**: Health checks and service management for MongoDB & PostgreSQL
-- 🔐 **Secure Authentication**: JWT + Basic Auth with configurable credentials
+- 🗄️ **Database Management**: Existing relational/document engines plus private Qdrant deployment, collection management, diagnostics and snapshots
+- ⚖️ **Nginx Load Balancers**: Guided setup, validated deployment, rollback, backend health and safe editing
+- 🤖 **MCP Integration**: Structured tools, scoped tokens, durable operations, audit and dashboard approvals
+- 🔐 **Authentication and RBAC**: JWT sessions, current user permissions, scoped server access, and trusted SSH host keys
 - ⚡ **High Performance**: Concurrent monitoring with goroutines and in-memory caching
 - 📦 **Single Binary**: All assets embedded - no external dependencies
 - 💾 **Export/Import Migration**: Pack up all configurations (servers, projects, databases, domains, users) into a single JSON file and restore with automatic SSH key serialization
@@ -16,7 +18,7 @@ A production-ready monolithic VPS management dashboard built entirely in Go. Sin
 
 ## Tech Stack
 
-- **Backend**: Go 1.21+
+- **Backend**: Go 1.24+
 - **Router**: Chi
 - **Frontend**: HTML5 + Tailwind CSS + Vanilla JavaScript
 - **WebSockets**: Gorilla WebSocket
@@ -27,7 +29,7 @@ A production-ready monolithic VPS management dashboard built entirely in Go. Sin
 
 ### Prerequisites
 
-- Go 1.21 or higher
+- Go 1.24 or higher
 - Docker (optional, for container management)
 - MongoDB (optional, for database monitoring)
 - PostgreSQL (optional, for database monitoring)
@@ -50,14 +52,18 @@ make deps
 make build
 ```
 
-4. Run the application:
+4. Set a persistent random JWT secret and run the application:
 ```bash
+export GOPULSE_AUTH_JWT_SECRET="$(openssl rand -hex 32)"
+export GOPULSE_SERVER_HOST=127.0.0.1
 ./bin/gopulse
 ```
 
+Save the secret securely for subsequent starts. Configure trusted SSH fingerprints in `GOPULSE_SSH_KNOWN_HOSTS` before using remote management.
+
 The dashboard will be available at `http://localhost:8080`
 
-**Default credentials**: `admin` / `changeme`
+Create the first administrator through the registration screen on an empty store. There is no default login. Use HTTPS for remote access.
 
 ### Configuration
 
@@ -72,9 +78,7 @@ server:
   idle_timeout: "60s"
 
 auth:
-  jwt_secret: "your-super-secret-key-change-this"
-  admin_username: "admin"
-  admin_password: "changeme"
+  jwt_secret: "" # Set GOPULSE_AUTH_JWT_SECRET instead
   token_duration: "24h"
 
 monitoring:
@@ -101,10 +105,13 @@ You can also use environment variables (prefix with `GOPULSE_`):
 
 ```bash
 export GOPULSE_SERVER_PORT=8080
-export GOPULSE_AUTH_JWT_SECRET="your-secret-key"
-export GOPULSE_AUTH_ADMIN_USERNAME="admin"
-export GOPULSE_AUTH_ADMIN_PASSWORD="secure-password"
+export GOPULSE_AUTH_JWT_SECRET="$(openssl rand -hex 32)"
+export GOPULSE_SSH_KNOWN_HOSTS="/path/to/verified_known_hosts"
+# Optional isolated state directory:
+export GOPULSE_DATA_DIR="/path/to/dashboard-data"
 ```
+
+See [the infrastructure guide](docs/infrastructure-management.md) for Qdrant setup, load balancer prerequisites, MCP client connection, permissions, migration changes and test evidence. The [initial audit](docs/infrastructure-audit.md) records the defects found before implementation.
 
 ## Usage
 
@@ -156,14 +163,20 @@ See [`docs/cicd.md`](docs/cicd.md) for the recommended GitHub Actions workflow a
 
 ### Run in development mode
 
+Create a local secret once, then start the app with hot reload:
+
 ```bash
-make run
+(umask 077; set -C; printf 'GOPULSE_AUTH_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > .env)
+make dev
 ```
+
+Skip the first command if `.env` already exists. GoPulse loads `.env` from the working directory for `make dev`, `make run`, and direct binary starts. Exported environment variables take precedence. The file is ignored by Git; keep the secret stable across restarts to preserve sessions. Missing or weak secrets still prevent startup.
 
 ### Run tests
 
 ```bash
 make test
+node --test web/tests/infrastructure.test.cjs
 ```
 
 ### Build for production
@@ -181,6 +194,12 @@ make docker
 # Run container
 make docker-run
 ```
+
+## UI improvement plan
+
+The [core UI user journeys](docs/ui-user-journeys.md) define server onboarding, application deployment, deployment inspection, troubleshooting, and database backup/restore. They describe target interactions, current implementation gaps, and acceptance scenarios for the UI redesign.
+
+The console starts with **Servers** (`/` and `/servers`). Choose a host to open its resource workspace: Overview, Applications, Databases, Domains and TLS, Load balancers, and administrative tools. A server switcher keeps that context explicit. The fleet supports search, workload filters, grid/list layouts, and a workload grouping based on saved applications, databases, and load balancers. These groupings do not imply network connectivity or automatic orchestration. Activity and workspace settings remain secondary destinations. Existing global resource URLs redirect to the relevant server workload filter. Sections use `?view=projects`, `?view=databases`, and other explicit view names so refresh and browser history preserve the screen. Legacy section hashes are accepted. Mobile navigation uses a collapsible drawer and a server-section selector.
 
 ## Architecture
 
@@ -208,20 +227,13 @@ GoPulse/
 4. **Middleware Chain**: Composable middleware for cross-cutting concerns
 5. **Clean Architecture**: Separation of concerns (handlers → services → data)
 
-## Performance
+## Performance and security
 
-- **Memory**: ~50MB base + caching overhead
-- **CPU**: <1% idle, <5% during active monitoring
-- **WebSocket**: Supports 1000+ concurrent connections
-- **Stats Collection**: Non-blocking, 5-second intervals
+Metrics use the existing in-memory collector cache. Fleet capacity and latency have not been benchmarked; earlier numerical performance claims were not supported by this verification run.
 
-## Security
+Requests enforce current RBAC and server scope. SSH uses strict known_hosts verification. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. The shared IP limit is 100 requests/minute; MCP also limits each user to 60 requests/minute.
 
-- JWT-based authentication with configurable expiry
-- Rate limiting (100 requests/minute per IP)
-- CORS protection
-- Request logging for audit trails
-- Basic auth fallback for initial setup
+Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Committed OAuth credentials were removed; rotate the exposed GitHub secret and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
 
 ## Troubleshooting
 
@@ -255,3 +267,12 @@ Contributions are welcome! Please submit pull requests with:
 ## Support
 
 For issues and questions, please open an issue on GitHub.
+
+
+### Dashboard request and database checks
+
+Page HTML and embedded JS/CSS are served independently of API quotas. API traffic has a 600-request/minute IP ceiling before authentication and a 240-request/minute budget per signed-in user; login and registration share a separate 10-attempt/minute IP bucket. A rejected API request returns JSON with `Retry-After`. Proxy headers do not change the bucket identity.
+
+The server fleet uses one scoped `/api/servers/inventory` snapshot with local resource counts. Opening database inventory or details does not probe every remote engine. The connection-check button performs an authenticated live probe (`?refresh=true`) with a 15-second deadline; transport failures retain the last known state and report the actual verification error. Copying a complete database URI explicitly requests credentials through a `database:write`-protected, non-cacheable endpoint. Inventory responses continue to omit secrets.
+
+Air watches `.js` and `.css` alongside Go/templates because these assets are embedded in the server binary. Restart the development watcher after changing its configuration. Startup checks existing application runtimes before attempting automatic starts, so healthy PM2 processes are not recreated merely because the dashboard restarts.

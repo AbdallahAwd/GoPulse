@@ -2009,14 +2009,60 @@ func (s *ProjectService) SyncEnvFile(ctx context.Context, projectID string) erro
 	return nil
 }
 
+// shouldAutoStart checks the actual runtime before an automatic start. Restarting
+// the dashboard must not delete/recreate healthy PM2 processes on managed hosts.
+func (s *ProjectService) shouldAutoStart(parent context.Context, project models.Project) (bool, error) {
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
+	defer cancel()
+	if project.BuildType == "docker" {
+		target := project.ContainerID
+		if target == "" {
+			target = project.Name
+		}
+		out, err := s.manager.Run(ctx, project.ServerID, "docker inspect -f '{{.State.Running}}' "+projectShellQuote(target))
+		if err != nil {
+			return false, err
+		}
+		switch strings.TrimSpace(out) {
+		case "true":
+			return false, nil
+		case "false":
+			return true, nil
+		}
+		return false, fmt.Errorf("unable to determine container runtime state")
+	}
+	out, err := s.manager.Run(ctx, project.ServerID, s.getNodeCommandPrefix()+"pm2 pid "+projectShellQuote(project.Name)+" 2>/dev/null")
+	if err != nil {
+		return false, err
+	}
+	for _, value := range strings.Fields(out) {
+		pid, err := strconv.Atoi(value)
+		if err != nil || pid < 0 {
+			return false, fmt.Errorf("unable to determine process runtime state")
+		}
+		if pid > 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // AutoStartProjects checks for projects with RestartOnBoot enabled and starts them automatically in the background
 func (s *ProjectService) AutoStartProjects(ctx context.Context) {
 	projects := s.store.ListProjects()
 	for _, project := range projects {
 		if project.RestartOnBoot {
 			go func(proj models.Project) {
+				start, err := s.shouldAutoStart(ctx, proj)
+				if err != nil {
+					fmt.Printf("[GoPulse] Skipping automatic start for '%s': runtime verification unavailable\n", proj.Name)
+					return
+				}
+				if !start {
+					return
+				}
 				fmt.Printf("[GoPulse] Auto-starting project '%s' (ID: %s) on remote server...\n", proj.Name, proj.ID)
-				err := s.StartProject(ctx, proj.ID)
+				err = s.StartProject(ctx, proj.ID)
 				if err != nil {
 					fmt.Printf("[GoPulse] Failed to auto-start project '%s': %v\n", proj.Name, err)
 				} else {

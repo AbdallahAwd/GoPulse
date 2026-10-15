@@ -7,12 +7,67 @@ App.Databases = (function() {
     let currentDb = null;
     let activeManageTab = 'overview';
     let activeBaaSTab = 'overview';
-    let activeSubTab = 'clusters';
+    let inventory = [];
+    let inventoryLoaded = false;
+    let inventoryGeneration = 0;
+    let provisioning = false;
     let activeBaaSGuideTopic = 'init';
     let baasTelemetryInterval = null;
+    let telemetryLoading = false;
+    let manageGeneration = 0;
+    let credentialsLoaded = false;
+    let credentialsRequest = null;
+    let queryLoading = false;
+
+    function serverHost() {
+        return App.config.SERVER_HOST || App.System?.currentServer?.host || 'SERVER_IP';
+    }
+
+    function deactivate() {
+        ++manageGeneration;
+        ++inventoryGeneration;
+        if (baasTelemetryInterval) clearInterval(baasTelemetryInterval);
+        baasTelemetryInterval = null;
+        currentDb = null;
+        credentialsLoaded = false;
+        credentialsRequest = null;
+        explorerState = {schemas:[],expandedSchemas:{},activeSchema:null,activeTable:null,page:1,limit:50,total:0};
+        const uri = document.getElementById('db-conn-uri');
+        if (uri) uri.value = '';
+        for (const id of ['db-settings-pass','baas-settings-pass']) {
+            const field = document.getElementById(id); if (field) field.textContent = '••••••••';
+        }
+    }
+
+    async function ensureCredentials() {
+        if (!currentDb) return false;
+        if (credentialsLoaded) return true;
+        const target = currentDb;
+        if (!credentialsRequest) credentialsRequest = App.API.get(`/servers/${App.config.SERVER_ID}/databases/${target.id}/credentials`);
+        try {
+            const response = await credentialsRequest;
+            if (currentDb !== target) return false;
+            if (!response.success || typeof response.data?.password !== 'string') throw new Error('Credentials unavailable.');
+            currentDb.password = response.data.password;
+            credentialsLoaded = true;
+            return true;
+        } finally {
+            if (currentDb === target) credentialsRequest = null;
+        }
+    }
+
+    async function revealCredentials() {
+        try {
+            if (!await ensureCredentials()) return;
+            document.getElementById('db-settings-pass').textContent = currentDb.password;
+            const uri = document.getElementById('db-conn-uri');
+            if (uri) uri.value = App.DatabaseConnection.uri(currentDb, serverHost(), true);
+        } catch (error) { App.UI.toast('error', `Unable to reveal credentials: ${error.message}`); }
+    }
 
     // Engine Icons & Color Mapping
     const engines = {
+ qdrant: {name:"Qdrant",icon:"fas fa-cubes",logoClass:"bg-purple-900/30 text-purple-400",badgeClass:"text-purple-400",defaultPort:6333,defaultUser:"api-key"},
         mysql: {
             name: "MySQL 8.0",
             icon: "fas fa-database",
@@ -71,212 +126,121 @@ App.Databases = (function() {
         }
     };
 
-    // Helper to generate a database card element
     function createCardElement(db) {
-        const config = engines[db.type] || engines.mysql;
-        const statusColor = getStatusColor(db.status);
-        
-        const card = document.createElement('div');
-        card.className = "bg-gray-800/60 backdrop-blur-md rounded-xl p-6 border border-gray-700/60 shadow-lg hover:border-gray-600 transition-all flex flex-col justify-between space-y-4";
+        const engine = engines[db.type] || {name: db.type || 'Unknown engine', icon: 'fas fa-database'};
+        const card = document.createElement('article');
+        card.className = 'db-instance-card';
+        const location = db.type === 'sqlite' ? 'Local file' : `Port ${db.host_port}`;
+        const description = db.type === 'qdrant' ? 'Vector database' :
+            ['pocketbase', 'appwrite'].includes(db.type) ? 'Backend service' : (db.database_name || 'Database');
         card.innerHTML = `
-            <div class="flex justify-between items-start">
-                <div class="flex items-center space-x-3.5">
-                    <div class="p-3.5 rounded-xl ${config.logoClass} text-xl">
-                        <i class="${config.icon}"></i>
-                    </div>
-                    <div>
-                        <h3 class="text-lg font-bold text-white tracking-tight">${escapeHTML(db.name)}</h3>
-                        <div class="flex items-center space-x-2 mt-1">
-                            <span class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase ${config.badgeClass}">${db.type}</span>
-                            <span class="px-2 py-0.5 text-[10px] font-bold tracking-wider rounded-md uppercase ${statusColor} flex items-center">
-                                <span class="w-1.5 h-1.5 rounded-full mr-1.5 bg-current ${db.status === 'Running' ? 'animate-pulse' : ''}"></span>
-                                <span>${db.status}</span>
-                            </span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Quick Actions -->
-                <div class="flex items-center space-x-1.5">
-                    <button onclick="App.Databases.quickCheckHealth('${db.id}', this)" class="p-2 bg-gray-700/50 hover:bg-gray-700 text-gray-400 hover:text-white rounded-lg transition-all text-xs" title="Verify Connection Ping">
-                        <i class="fas fa-plug"></i>
-                    </button>
-                </div>
+            <div class="db-instance-top">
+                <span class="db-instance-icon"><i class="${engine.icon}" aria-hidden="true"></i></span>
+                <div class="db-instance-identity"><h3>${escapeHTML(db.name)}</h3><p>${escapeHTML(engine.name)}</p></div>
+                <span class="db-instance-status ${getStatusColor(db.status)}"><span class="db-status-dot"></span>${escapeHTML(db.status || 'Unknown')}</span>
             </div>
-
-            <div class="border-t border-gray-700/50 pt-4 flex flex-col space-y-2 text-sm text-gray-300 font-mono">
-                <div class="flex justify-between">
-                    <span class="text-gray-400">Host Port:</span>
-                    <span class="text-white font-semibold">${db.host_port}</span>
-                </div>
-                <div class="flex justify-between">
-                    <span class="text-gray-400">Database:</span>
-                    <span class="text-white font-semibold">${escapeHTML(db.database_name)}</span>
-                </div>
-                <div class="flex justify-between">
-                    <span class="text-gray-400">Username:</span>
-                    <span class="text-white font-semibold">${escapeHTML(db.username)}</span>
-                </div>
-            </div>
-
-            <div class="border-t border-gray-700/50 pt-4 flex justify-between items-center gap-3">
-                <div class="flex space-x-2">
-                    ${db.status === 'Running' 
-                        ? `<button onclick="App.Databases.togglePower('${db.id}', 'stop')" class="px-3.5 py-2 bg-red-950/30 hover:bg-red-950/60 border border-red-500/20 text-red-400 text-xs font-bold rounded-lg transition-all"><i class="fas fa-stop mr-1.5"></i>Stop</button>`
-                        : `<button onclick="App.Databases.togglePower('${db.id}', 'start')" class="px-3.5 py-2 bg-green-950/30 hover:bg-green-950/60 border border-green-500/20 text-green-400 text-xs font-bold rounded-lg transition-all"><i class="fas fa-play mr-1.5"></i>Start</button>`
-                    }
-                    <button onclick="App.Databases.togglePower('${db.id}', 'restart')" class="px-3 py-2 bg-gray-700/50 hover:bg-gray-700 text-gray-300 text-xs font-bold rounded-lg transition-all" title="Reboot Container"><i class="fas fa-sync-alt"></i></button>
-                </div>
-
-                <button onclick="App.Databases.showManageView('${db.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-all shadow-md flex items-center space-x-1.5">
-                    <span>Manage ${(db.type === 'pocketbase' || db.type === 'appwrite') ? 'BaaS' : 'Cluster'}</span>
-                    <i class="fas fa-chevron-right text-[10px]"></i>
-                </button>
-            </div>
-        `;
+            <div class="db-instance-metadata"><span><i class="fas fa-network-wired" aria-hidden="true"></i>${escapeHTML(location)}</span><span><i class="fas fa-database" aria-hidden="true"></i>${escapeHTML(description)}</span></div>
+            <div class="db-instance-footer"><button type="button" data-health class="db-health-button"><i class="fas fa-plug" aria-hidden="true"></i>Check connection</button><button type="button" data-manage class="db-manage-button">Manage<i class="fas fa-arrow-right" aria-hidden="true"></i></button></div>`;
+        const health = card.querySelector('[data-health]');
+        health.setAttribute('aria-label', `Check connection for ${db.name}`);
+        health.onclick = () => quickCheckHealth(db.id, health);
+        const manage = card.querySelector('[data-manage]');
+        manage.setAttribute('aria-label', `Manage ${db.name}`);
+        manage.onclick = () => showManageView(db.id);
         return card;
     }
 
-    function switchSubTab(tab) {
-        activeSubTab = tab;
-        const subtabClusters = document.getElementById('db-subtab-clusters');
-        const subtabBaas = document.getElementById('db-subtab-baas');
-        const clustersSection = document.getElementById('db-clusters-section');
-        const baasSection = document.getElementById('baas-section');
-        const provisionBtn = document.getElementById('db-provision-btn');
-        const provisionBtnText = document.getElementById('db-provision-btn-text');
-
-        if (tab === 'clusters') {
-            if (subtabClusters) {
-                subtabClusters.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
-                subtabClusters.classList.add('border-blue-500', 'text-blue-400');
-            }
-            if (subtabBaas) {
-                subtabBaas.classList.remove('border-blue-500', 'text-blue-400');
-                subtabBaas.classList.add('border-transparent', 'text-gray-400', 'hover:text-white');
-            }
-            if (clustersSection) clustersSection.classList.remove('hidden');
-            if (baasSection) baasSection.classList.add('hidden');
-
-            if (provisionBtnText) provisionBtnText.textContent = "Provision Database";
-            if (provisionBtn) provisionBtn.setAttribute('onclick', "App.Databases.openProvisionModal('clusters')");
-        } else {
-            if (subtabClusters) {
-                subtabClusters.classList.remove('border-blue-500', 'text-blue-400');
-                subtabClusters.classList.add('border-transparent', 'text-gray-400', 'hover:text-white');
-            }
-            if (subtabBaas) {
-                subtabBaas.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
-                subtabBaas.classList.add('border-blue-500', 'text-blue-400');
-            }
-            if (clustersSection) clustersSection.classList.add('hidden');
-            if (baasSection) baasSection.classList.remove('hidden');
-
-            if (provisionBtnText) provisionBtnText.textContent = "Provision BaaS Engine";
-            if (provisionBtn) provisionBtn.setAttribute('onclick', "App.Databases.openProvisionModal('baas')");
-        }
+    function filterItems(items, search = '', engine = 'all') {
+        const needle = search.trim().toLowerCase();
+        return items.filter(db => (engine === 'all' || db.type === engine) &&
+            [db.name, db.database_name, db.type, engines[db.type]?.name].some(value => String(value || '').toLowerCase().includes(needle)));
     }
 
-    // Load and render all databases for the active server
-    async function load() {
-        const grid = document.getElementById('databases-grid');
-        const baasGrid = document.getElementById('baas-grid');
-        const clustersEmpty = document.getElementById('db-clusters-empty');
-        const baasEmpty = document.getElementById('baas-empty');
-        const clustersSection = document.getElementById('db-clusters-section');
-        const baasSection = document.getElementById('baas-section');
-        const subtabsContainer = document.getElementById('db-subtabs-container');
-        
-        if (!grid) return;
-
-        // Reset visibility & Show Loading Spinners
-        grid.innerHTML = '<div class="col-span-2 text-center py-12"><i class="fas fa-spinner fa-spin text-3xl text-gray-500"></i></div>';
-        if (baasGrid) {
-            baasGrid.innerHTML = '<div class="col-span-2 text-center py-12"><i class="fas fa-spinner fa-spin text-3xl text-gray-500"></i></div>';
-        }
-        
-        if (subtabsContainer) subtabsContainer.classList.remove('hidden');
-        if (clustersEmpty) clustersEmpty.classList.add('hidden');
-        if (baasEmpty) baasEmpty.classList.add('hidden');
-        
-        // Ensure standard visibilities are applied based on sub-tab
-        switchSubTab(activeSubTab);
-
-        try {
-            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases`);
-            
-            let dbs = [];
-            if (res.success && res.data) {
-                dbs = res.data;
-            }
-            updateStatsRibbon(dbs);
-            
-            grid.innerHTML = '';
-            if (baasGrid) baasGrid.innerHTML = '';
-
-            const focusedDiags = document.getElementById('db-focused-diagnostics');
-            if (focusedDiags && !focusedDiags.classList.contains('hidden')) {
-                fetchFocusedDiagnostics(dbs);
-            }
-
-            const dbClusters = dbs.filter(db => db.type !== 'pocketbase' && db.type !== 'appwrite');
-            const baasInstances = dbs.filter(db => db.type === 'pocketbase' || db.type === 'appwrite');
-
-            // Render Standard Clusters
-            if (dbClusters.length === 0) {
-                if (clustersEmpty) clustersEmpty.classList.remove('hidden');
-            } else {
-                if (clustersEmpty) clustersEmpty.classList.add('hidden');
-                dbClusters.forEach(db => {
-                    grid.appendChild(createCardElement(db));
-                });
-            }
-
-            // Render BaaS Instances
-            if (baasInstances.length === 0) {
-                if (baasEmpty) baasEmpty.classList.remove('hidden');
-            } else {
-                if (baasEmpty) baasEmpty.classList.add('hidden');
-                baasInstances.forEach(db => {
-                    if (baasGrid) {
-                        baasGrid.appendChild(createCardElement(db));
-                    }
-                });
-            }
-
-        } catch (e) {
-            grid.innerHTML = '<div class="col-span-2 text-center text-red-400 py-12">Failed to load databases catalog.</div>';
-            if (baasGrid) {
-                baasGrid.innerHTML = '<div class="col-span-2 text-center text-red-400 py-12">Failed to load BaaS catalog.</div>';
-            }
-        }
+    function filterInventory() {
+        if (!inventoryLoaded) return;
+        const grid = App.UI.el('databases-grid');
+        const empty = App.UI.el('db-clusters-empty');
+        const query = App.UI.el('db-inventory-search')?.value || '';
+        const engine = App.UI.el('db-engine-filter')?.value || 'all';
+        const matches = filterItems(inventory, query, engine);
+        grid.replaceChildren(...matches.map(createCardElement));
+        if (empty) empty.classList[matches.length ? 'add' : 'remove']('hidden');
+        App.UI.el('db-empty-title').textContent = inventory.length ? 'No matching databases' : 'No databases yet';
+        App.UI.el('db-empty-description').textContent = inventory.length ? 'Try another name or engine to find your instance.' : 'Provision your first database and choose the engine that fits your application.';
+        App.UI.el('db-clear-filters').classList[inventory.length ? 'remove' : 'add']('hidden');
+        App.UI.el('db-inventory-count').textContent = `${matches.length} of ${inventory.length} ${inventory.length === 1 ? 'instance' : 'instances'}`;
     }
 
-    function updateStatsRibbon(dbs) {
-        let mysql = 0, postgres = 0, mongodb = 0, redis = 0, sqlite = 0, pocketbase = 0, appwrite = 0;
-        dbs.forEach(db => {
-            if (db.type === 'mysql') mysql++;
-            if (db.type === 'postgres') postgres++;
-            if (db.type === 'mongodb') mongodb++;
-            if (db.type === 'redis') redis++;
-            if (db.type === 'sqlite') sqlite++;
-            if (db.type === 'pocketbase') pocketbase++;
-            if (db.type === 'appwrite') appwrite++;
+    function clearInventoryFilters() {
+        App.UI.el('db-inventory-search').value = '';
+        App.UI.el('db-engine-filter').value = 'all';
+        filterInventory();
+    }
+
+    function openTool(tool) {
+        App.UI.el('db-tools-menu').open = false;
+        if (tool === 'ai') App.Infrastructure.agentToken();
+        if (tool === 'operations') App.Infrastructure.operations();
+    }
+
+    document.addEventListener('click', event => {
+        document.querySelectorAll('.db-tools-menu').forEach(menu => {
+            if (menu.open && !menu.contains(event.target)) menu.open = false;
         });
-        const elMysql = App.UI.el('db-stat-mysql');
-        const elPostgres = App.UI.el('db-stat-postgres');
-        const elMongodb = App.UI.el('db-stat-mongodb');
-        const elRedis = App.UI.el('db-stat-redis');
-        const elSqlite = App.UI.el('db-stat-sqlite');
-        const elPocketbase = App.UI.el('db-stat-pocketbase');
-        const elAppwrite = App.UI.el('db-stat-appwrite');
-        if (elMysql) elMysql.innerText = mysql;
-        if (elPostgres) elPostgres.innerText = postgres;
-        if (elMongodb) elMongodb.innerText = mongodb;
-        if (elRedis) elRedis.innerText = redis;
-        if (elSqlite) elSqlite.innerText = sqlite;
-        if (elPocketbase) elPocketbase.innerText = pocketbase;
-        if (elAppwrite) elAppwrite.innerText = appwrite;
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key !== 'Escape') return;
+        const menu = Array.from(document.querySelectorAll('.db-tools-menu')).filter(item => item.open).pop();
+        if (menu) { menu.open = false; menu.querySelector('summary').focus(); }
+    });
+
+    async function load() {
+        const grid = App.UI.el('databases-grid');
+        if (!grid) return;
+        const generation = ++inventoryGeneration;
+        inventoryLoaded = false;
+        if (!currentDb) {
+            App.UI.el('db-list-view')?.classList.remove('hidden');
+            App.UI.el('db-manage-view')?.classList.add('hidden');
+            App.UI.el('baas-manage-view')?.classList.add('hidden');
+        }
+        grid.innerHTML = '<div class="db-inventory-loading"><i class="fas fa-circle-notch fa-spin" aria-hidden="true"></i>Loading databases…</div>';
+        App.UI.el('db-clusters-empty')?.classList.add('hidden');
+        App.UI.el('db-inventory-count').textContent = 'Loading inventory…';
+        try {
+            const response = await App.API.get(`/servers/${App.config.SERVER_ID}/databases`);
+            if (generation !== inventoryGeneration) return;
+            if (!response.success || (response.data && !Array.isArray(response.data))) throw new Error('Invalid database inventory response.');
+            inventory = response.data || [];
+            inventoryLoaded = true;
+            for (const [id, value] of [['db-stat-total', inventory.length], ['db-stat-running', inventory.filter(db => db.status === 'Running').length], ['db-stat-engines', new Set(inventory.map(db => db.type)).size]]) {
+                App.UI.el(id).textContent = value;
+            }
+            App.UI.el('db-total-label').textContent = inventory.length === 1 ? 'instance' : 'instances';
+            App.UI.el('db-engines-label').textContent = new Set(inventory.map(db => db.type)).size === 1 ? 'engine in use' : 'engines in use';
+            const select = App.UI.el('db-engine-filter');
+            const selected = select.value;
+            const types = [...new Set(inventory.map(db => db.type))].sort();
+            select.replaceChildren();
+            for (const type of ['all', ...types]) {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type === 'all' ? 'All engines' : (engines[type]?.name || type);
+                select.appendChild(option);
+            }
+            select.value = types.includes(selected) ? selected : 'all';
+            filterInventory();
+            if (App.UI.el('db-diagnostics-panel')?.open) refreshDiagnostics();
+        } catch (error) {
+            if (generation !== inventoryGeneration) return;
+            grid.innerHTML = `<div class="db-inventory-error" role="alert">Unable to load database inventory: ${escapeHTML(error.message)}<button type="button" class="console-button secondary" onclick="App.Databases.load()">Retry</button></div>`;
+            App.UI.el('db-inventory-count').textContent = 'Inventory unavailable';
+            for (const id of ['db-stat-total', 'db-stat-running', 'db-stat-engines']) App.UI.el(id).textContent = '—';
+        }
+    }
+
+    function refreshDiagnostics() {
+        if (inventoryLoaded && (!App.Navigation || App.Navigation.current === 'databases')) fetchFocusedDiagnostics(inventory);
     }
 
     async function fetchFocusedDiagnostics(dbs) {
@@ -401,28 +365,13 @@ App.Databases = (function() {
         if (dbNameEl) dbNameEl.value = '';
 
         const typeSelect = App.UI.el('db-prov-type');
-        const titleEl = modal.querySelector('h3');
-
-        if (typeSelect) {
-            if (mode === 'baas') {
-                typeSelect.innerHTML = `
-                    <option value="pocketbase">PocketBase (BaaS Engine)</option>
-                    <option value="appwrite">Appwrite (Full BaaS Stack)</option>
-                `;
-                typeSelect.value = 'pocketbase';
-                if (titleEl) titleEl.textContent = 'Provision Backend-As-A-Service (BaaS)';
-            } else {
-                typeSelect.innerHTML = `
-                    <option value="mysql">MySQL 8.0</option>
-                    <option value="postgres">PostgreSQL 15</option>
-                    <option value="mongodb">MongoDB 6.0</option>
-                    <option value="redis">Redis 7.0 (Key-Value)</option>
-                    <option value="sqlite">SQLite 3 (Embedded)</option>
-                `;
-                typeSelect.value = 'mysql';
-                if (titleEl) titleEl.textContent = 'Provision Database Cluster';
-            }
-        }
+        if (typeSelect) typeSelect.value = mode === 'baas' ? 'pocketbase' : mode === 'qdrant' ? 'qdrant' : 'mysql';
+        App.UI.el('db-prov-error').textContent = '';
+        App.UI.el('db-prov-vector-bind').value = '127.0.0.1';
+        App.UI.el('db-prov-vector-version').value = 'v1.19.0';
+        App.UI.el('db-prov-vector-storage').value = '';
+        App.UI.el('db-prov-vector-key').value = '';
+        App.UI.el('db-prov-vector-config').open = false;
 
         modal.classList.remove('hidden');
         setTimeout(() => {
@@ -438,6 +387,8 @@ App.Databases = (function() {
     function closeProvisionModal() {
         const modal = document.getElementById('provision-db-modal');
         if (!modal) return;
+        App.UI.el('db-prov-vector-key').value = '';
+        App.UI.el('db-prov-pass').value = '';
 
         modal.classList.remove('opacity-100');
         const inner = modal.children[0];
@@ -458,14 +409,31 @@ App.Databases = (function() {
         if (!typeEl) return;
 
         const type = typeEl.value;
+        const nameEl = App.UI.el('db-prov-name');
+        if (nameEl) nameEl.placeholder = type === 'qdrant' ? 'e.g. Semantic search' : 'e.g. Production database';
         const config = engines[type] || engines.mysql;
+        const isVector = type === 'qdrant';
         const isSQLite = (type === 'sqlite');
         const isPocketBase = (type === 'pocketbase');
         const isAppwrite = (type === 'appwrite');
         const isBaaS = isPocketBase || isAppwrite;
         
-        // SQLite has ignored credentials, PocketBase/Appwrite use them for the bootstrap Admin
-        const hasIgnoredCredentials = isSQLite;
+        App.UI.el('db-prov-credentials').classList[isVector || isSQLite ? 'add' : 'remove']('hidden');
+        App.UI.el('db-prov-vector-config').classList[isVector ? 'remove' : 'add']('hidden');
+        App.UI.el('db-prov-error').textContent = '';
+        const help = {
+            mysql: 'Relational storage for applications, with an initial database and administrator account.',
+            postgres: 'Relational storage with PostgreSQL, with an initial database and administrator account.',
+            mongodb: 'Document storage for flexible application data.',
+            redis: 'In-memory key-value storage for caching and fast lookups.',
+            sqlite: 'A local database file on this server. No network port or credentials are needed.',
+            qdrant: 'Vector storage for similarity search and AI applications. Access is private by default; an API key is generated securely.',
+            pocketbase: 'A backend service with authentication, data storage, and an admin console.',
+            appwrite: 'A backend stack with authentication, databases, storage, and an admin console.'
+        };
+        App.UI.el('db-prov-engine-help').textContent = help[type] || '';
+        if (portEl) portEl.min = isVector ? '1024' : '1';
+        if (portEl) portEl.max = '65535';
 
         // Toggle field availability for SQLite
         if (portEl) {
@@ -483,9 +451,9 @@ App.Databases = (function() {
         }
 
         if (dbnameWrapper && portWrapper) {
-            if (isBaaS) {
+            if (isBaaS || isVector || isSQLite) {
                 dbnameWrapper.classList.add('hidden');
-                portWrapper.className = "col-span-2";
+                portWrapper.className = "sm:col-span-2";
             } else {
                 dbnameWrapper.classList.remove('hidden');
                 portWrapper.className = "col-span-1";
@@ -503,12 +471,12 @@ App.Databases = (function() {
                 userEl.style.opacity = '1';
                 userEl.placeholder = isBaaS ? 'e.g. admin@example.com' : '';
                 if (isBaaS) {
-                    if (userEl.value === 'root' || userEl.value === '' || userEl.value === config.defaultUser ||
+                    if (Object.values(engines).some(engine => engine.defaultUser === userEl.value) || userEl.value === '' ||
                         userEl.value === 'admin@gopulse.local') {
                         userEl.value = 'admin@example.com';
                     }
                 } else {
-                    if (!userEl.value || userEl.value === 'admin@example.com' || userEl.value === 'admin@gopulse.local') {
+                    if (!userEl.value || Object.values(engines).some(engine => engine.defaultUser === userEl.value) || userEl.value === 'admin@example.com' || userEl.value === 'admin@gopulse.local') {
                         userEl.value = config.defaultUser;
                     }
                 }
@@ -535,7 +503,7 @@ App.Databases = (function() {
             } else if (isBaaS) {
                 dbNameEl.value = type; // 'pocketbase' or 'appwrite'
             } else {
-                if (!dbNameEl.value || dbNameEl.value === 'sqlite' || dbNameEl.value === 'pocketbase' || dbNameEl.value === 'appwrite') {
+                if (!dbNameEl.value || ['sqlite', 'pocketbase', 'appwrite', 'db0', 'admin'].includes(dbNameEl.value)) {
                     dbNameEl.value = (type === 'mongodb') ? 'admin' : ((type === 'redis') ? 'db0' : 'gopulse');
                 }
             }
@@ -554,15 +522,57 @@ App.Databases = (function() {
     }
 
     async function submitProvision() {
-        const name     = (App.UI.el('db-prov-name')   || {}).value || '';
+        if (provisioning) return;
+        const name     = ((App.UI.el('db-prov-name') || {}).value || '').trim();
         const type     = (App.UI.el('db-prov-type')   || {}).value || '';
         const dbName   = (App.UI.el('db-prov-dbname') || {}).value || '';
         const username = (App.UI.el('db-prov-user')   || {}).value || '';
         const password = (App.UI.el('db-prov-pass')   || {}).value || '';
-        const port     = parseInt((App.UI.el('db-prov-port') || {}).value, 10) || 0;
+        const port     = Number((App.UI.el('db-prov-port') || {}).value || 0);
 
         if (!name || !type) {
-            App.UI.toast('error', 'Please fill in all required fields.');
+            App.UI.el('db-prov-error').textContent = 'Please fill in all required fields.';
+            return;
+        }
+
+        if (type === 'qdrant') {
+            const config = {
+                version: App.UI.el('db-prov-vector-version').value.trim(),
+                host_port: port,
+                bind_address: App.UI.el('db-prov-vector-bind').value.trim(),
+                storage_path: App.UI.el('db-prov-vector-storage').value.trim()
+            };
+            if (!Number.isInteger(port) || port < 1024 || port > 65535 || !/^v1\.\d{1,2}\.\d{1,2}$/.test(config.version) || !config.bind_address) {
+                App.UI.el('db-prov-error').textContent = 'Choose a port from 1024–65535, an explicit v1.x.y version, and a private bind address.';
+                return;
+            }
+            const button = App.UI.el('db-provision-submit');
+            const serverID = App.config.SERVER_ID;
+            const apiKey = App.UI.el('db-prov-vector-key').value;
+            provisioning = true;
+            button.disabled = true;
+            button.textContent = 'Provisioning…';
+            App.UI.el('db-prov-error').textContent = '';
+            try {
+                const operation = await App.Infrastructure.api(`/servers/${encodeURIComponent(serverID)}/databases/qdrant/install`, {
+                    method: 'POST', body: JSON.stringify({name, api_key: apiKey, config})
+                });
+                App.UI.el('db-prov-vector-key').value = '';
+                closeProvisionModal();
+                const progress = App.Infrastructure.dialog('Provisioning Qdrant', '<p>Preparing your vector database…</p>');
+                await App.Infrastructure.track(operation.operation_id, progress, () => { if (App.config.SERVER_ID === serverID) load(); });
+            } catch (error) {
+                App.UI.el('db-prov-error').textContent = error.message;
+            } finally {
+                provisioning = false;
+                button.disabled = false;
+                button.textContent = 'Provision database';
+            }
+            return;
+        }
+
+        if (type !== 'sqlite' && (!Number.isInteger(port) || port < 1 || port > 65535)) {
+            App.UI.el('db-prov-error').textContent = 'Choose a whole-number port from 1–65535.';
             return;
         }
 
@@ -574,26 +584,26 @@ App.Databases = (function() {
         
         if (isSQLite) {
             if (!name) {
-                App.UI.toast('error', 'Please enter a database name.');
+                App.UI.el('db-prov-error').textContent = 'Please enter a database name.';
                 return;
             }
         } else if (isBaaS) {
             if (!name || !username || !password || !port) {
-                App.UI.toast('error', 'Please fill in all required fields (including admin credentials).');
+                App.UI.el('db-prov-error').textContent = 'Please fill in all required fields (including admin credentials).';
                 return;
             }
             // BaaS engines require a valid email for the admin
             if (!username.includes('@')) {
-                App.UI.toast('error', `${engines[type].name} admin username must be a valid email address.`);
+                App.UI.el('db-prov-error').textContent = `${engines[type].name} admin username must be a valid email address.`;
                 return;
             }
             if (password.length < 8) {
-                App.UI.toast('error', 'Admin password must be at least 8 characters long.');
+                App.UI.el('db-prov-error').textContent = 'Admin password must be at least 8 characters long.';
                 return;
             }
         } else {
             if (!dbName || !username || !password || !port) {
-                App.UI.toast('error', 'Please fill in all required fields.');
+                App.UI.el('db-prov-error').textContent = 'Please fill in all required fields.';
                 return;
             }
         }
@@ -601,6 +611,8 @@ App.Databases = (function() {
         const button = document.querySelector('#provision-db-modal button[onclick*="submitProvision"]');
         if (!button) return;
         const originalText = button.innerHTML;
+        provisioning = true;
+        App.UI.el('db-prov-error').textContent = '';
         button.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Provisioning...';
         button.disabled = true;
 
@@ -614,11 +626,12 @@ App.Databases = (function() {
                 App.UI.toast('success', isBaaS ? 'BaaS instance deployed successfully!' : 'Database cluster deployed successfully!');
                 load();
             } else {
-                App.UI.toast('error', `Provisioning failed: ${res.error || res.message}`);
+                App.UI.el('db-prov-error').textContent = `Provisioning failed: ${res.error || res.message}`;
             }
         } catch (e) {
-            // Specific API/network error is already toasted by App.API.request
+            App.UI.el('db-prov-error').textContent = e.message;
         } finally {
+            provisioning = false;
             button.innerHTML = originalText;
             button.disabled = false;
         }
@@ -639,7 +652,7 @@ App.Databases = (function() {
                 App.UI.toast('error', `Failed: ${res.message}`);
             }
         } catch (e) {
-            App.UI.toast('error', 'Lifecycle connection failure.');
+            App.UI.toast('error', `Database action failed: ${e.message}`);
         }
     }
 
@@ -650,14 +663,14 @@ App.Databases = (function() {
         btnElement.disabled = true;
 
         try {
-            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${dbID}`);
+            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${dbID}?refresh=true`);
             if (res.success && res.data.status === 'Running') {
                 App.UI.toast('success', 'Database is HEALTHY and accepting connections.');
             } else {
                 App.UI.toast('error', `Database status: ${res.data ? res.data.status : 'Unknown'}`);
             }
         } catch (e) {
-            App.UI.toast('error', 'Diagnostic connection timed out.');
+            App.UI.toast('error', `Unable to verify database health: ${e.message}`);
         } finally {
             icon.className = "fas fa-plug";
             btnElement.disabled = false;
@@ -667,30 +680,29 @@ App.Databases = (function() {
 
     // ---- Panel View Switching ----
 
-    function showListView() {
-        if (baasTelemetryInterval) {
-            clearInterval(baasTelemetryInterval);
-            baasTelemetryInterval = null;
-        }
+    function showListView(refresh = true) {
+        deactivate();
         document.getElementById('db-manage-view').classList.add('hidden');
         document.getElementById('baas-manage-view').classList.add('hidden');
         document.getElementById('db-list-view').classList.remove('hidden');
-        currentDb = null;
-        load();
+        if (refresh) load();
     }
 
     async function showManageView(dbID) {
-        document.getElementById('db-list-view').classList.add('hidden');
-
+        deactivate();
+        const generation = manageGeneration;
         try {
             const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${dbID}`);
+            if (generation !== manageGeneration) return;
+            if (res.data?.type === 'qdrant') return App.Qdrant.manage(dbID);
             if (!res.success || !res.data) {
                 App.UI.toast('error', 'Failed to load database details.');
-                showListView();
+                showListView(false);
                 return;
             }
 
             currentDb = res.data;
+            document.getElementById('db-list-view').classList.add('hidden');
             const config = engines[currentDb.type] || engines.mysql;
             
             const isBaaS = (currentDb.type === 'pocketbase' || currentDb.type === 'appwrite');
@@ -717,15 +729,7 @@ App.Databases = (function() {
                     <span>${currentDb.status}</span>
                 `;
 
-                // Lifecycle Actions in Header
-                const actionsWrapper = document.getElementById('baas-manage-actions');
-                actionsWrapper.innerHTML = `
-                    ${currentDb.status === 'Running'
-                        ? `<button onclick="App.Databases.togglePower('${currentDb.id}', 'stop')" class="px-4 py-2 bg-red-950/30 hover:bg-red-950/60 border border-red-500/20 text-red-400 text-sm font-bold rounded-lg transition-colors flex items-center space-x-1.5"><i class="fas fa-stop"></i><span>Stop</span></button>`
-                        : `<button onclick="App.Databases.togglePower('${currentDb.id}', 'start')" class="px-4 py-2 bg-green-950/30 hover:bg-green-950/60 border border-green-500/20 text-green-400 text-sm font-bold rounded-lg transition-colors flex items-center space-x-1.5"><i class="fas fa-play"></i><span>Start</span></button>`
-                    }
-                    <button onclick="App.Databases.togglePower('${currentDb.id}', 'restart')" class="px-3.5 py-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600/30 text-gray-300 text-sm font-bold rounded-lg transition-colors" title="Reboot Engine"><i class="fas fa-sync-alt"></i></button>
-                `;
+                renderLifecycleActions('baas-manage-actions');
 
                 // Populate Settings credentials
                 document.getElementById('baas-settings-port').innerText = currentDb.host_port;
@@ -763,45 +767,24 @@ App.Databases = (function() {
                     <span>${currentDb.status}</span>
                 `;
 
-            // Lifecycle Actions in Header
-            const actionsWrapper = document.getElementById('db-manage-actions');
-            actionsWrapper.innerHTML = `
-                ${currentDb.status === 'Running'
-                    ? `<button onclick="App.Databases.togglePower('${currentDb.id}', 'stop')" class="px-4 py-2 bg-red-950/30 hover:bg-red-950/60 border border-red-500/20 text-red-400 text-sm font-bold rounded-lg transition-colors flex items-center space-x-1.5"><i class="fas fa-stop"></i><span>Stop</span></button>`
-                    : `<button onclick="App.Databases.togglePower('${currentDb.id}', 'start')" class="px-4 py-2 bg-green-950/30 hover:bg-green-950/60 border border-green-500/20 text-green-400 text-sm font-bold rounded-lg transition-colors flex items-center space-x-1.5"><i class="fas fa-play"></i><span>Start</span></button>`
-                }
-                <button onclick="App.Databases.togglePower('${currentDb.id}', 'restart')" class="px-3.5 py-2 bg-gray-700/50 hover:bg-gray-700 border border-gray-600/30 text-gray-300 text-sm font-bold rounded-lg transition-colors" title="Reboot Cluster"><i class="fas fa-sync-alt"></i></button>
-            `;
+            renderLifecycleActions('db-manage-actions');
 
             // Overview Tab - Connection Parameters
             document.getElementById('db-conn-port').innerText = currentDb.host_port;
             document.getElementById('db-conn-dbname').innerText = currentDb.database_name;
-            document.getElementById('db-conn-user').innerText = currentDb.username;
+            document.getElementById('db-conn-user').innerText = currentDb.type === 'sqlite' ? 'Not required' : currentDb.username;
+            const host = App.UI.el('db-conn-host');
+            if (host) host.textContent = serverHost();
+            if (currentDb.type === 'sqlite') App.UI.el('db-conn-port').innerText = 'Local file';
+            const uriLabel = App.UI.el('db-conn-uri-label');
+            if (uriLabel) uriLabel.textContent = currentDb.type === 'sqlite' ? 'Database file' : 'Connection string';
+            const hint = App.UI.el('db-connection-hint');
+            if (hint) hint.textContent = currentDb.type === 'sqlite' ? 'This database file lives on the selected server. Copy its path to use it locally on that server.' : 'Credentials stay masked here. Copy the connection string when you need it.';
 
-            // Connection URI string
-            const hostIP = (App.System && App.System.currentServer && App.System.currentServer.host) 
-                || document.getElementById('settings-server-host')?.value 
-                || window.location.hostname 
-                || "127.0.0.1";
-            let uri = "";
-            if (currentDb.type === 'mysql') {
-                uri = `mysql://${currentDb.username}:${currentDb.password}@${hostIP}:${currentDb.host_port}/${currentDb.database_name}`;
-            } else if (currentDb.type === 'postgres') {
-                uri = `postgresql://${currentDb.username}:${currentDb.password}@${hostIP}:${currentDb.host_port}/${currentDb.database_name}?sslmode=disable`;
-            } else if (currentDb.type === 'mongodb') {
-                uri = `mongodb://${currentDb.username}:${currentDb.password}@${hostIP}:${currentDb.host_port}/${currentDb.database_name}?authSource=admin`;
-            } else if (currentDb.type === 'redis') {
-                uri = `redis://:${currentDb.password}@${hostIP}:${currentDb.host_port}`;
-            } else if (currentDb.type === 'sqlite') {
-                const volumePath = `/var/lib/gopulse/databases/${currentDb.id}/sqlite.db`;
-                uri = volumePath;
-            } else if (currentDb.type === 'pocketbase') {
-                uri = `http://${hostIP}:${currentDb.host_port}`;
-            } else if (currentDb.type === 'appwrite') {
-                uri = `http://${hostIP}:${currentDb.host_port}`;
-            }
+            // Saved metadata omits secrets. Copy/reveal obtains credentials on demand.
+            const hostIP = serverHost();
             const uriEl = document.getElementById('db-conn-uri');
-            if (uriEl) uriEl.value = uri;
+            if (uriEl) uriEl.value = App.DatabaseConnection.uri(currentDb, hostIP);
 
             // Render PocketBase admin panel shortcut banner / Appwrite Console banner if baas type
             const pbBanner = document.getElementById('db-conn-pocketbase-banner');
@@ -854,10 +837,19 @@ App.Databases = (function() {
             document.getElementById('db-settings-port').innerText = currentDb.host_port;
             document.getElementById('db-settings-dbname').innerText = currentDb.database_name;
             document.getElementById('db-settings-user').innerText = currentDb.username;
-            document.getElementById('db-settings-pass').innerText = currentDb.password;
+            document.getElementById('db-settings-pass').innerText = '••••••••';
 
-            // Console Tab
+            // Console UI adapts to engine syntax; submission and schema context remain unchanged.
             document.getElementById('db-console-engine-label').innerText = currentDb.type.toUpperCase();
+            const commandEngine = ['mongodb', 'redis'].includes(currentDb.type);
+            const runLabel = App.UI.el('db-query-run-label');
+            if (runLabel) runLabel.textContent = commandEngine ? 'Run command' : 'Run query';
+            const consoleHelp = App.UI.el('db-console-help');
+            if (consoleHelp) consoleHelp.textContent = currentDb.type === 'mongodb' ? 'Run MongoDB shell commands against the selected database.' : currentDb.type === 'redis' ? 'Run Redis commands against the selected database index.' : 'Run SQL against the selected database.';
+            const contextLabel = App.UI.el('db-console-context-label');
+            if (contextLabel) contextLabel.textContent = currentDb.type === 'redis' ? 'Database index' : 'Database';
+            const querySummary = App.UI.el('db-query-result-summary');
+            if (querySummary) querySummary.textContent = '';
             const queryArea = document.getElementById('db-console-query');
             if (queryArea) {
                 queryArea.value = '';
@@ -878,14 +870,45 @@ App.Databases = (function() {
             switchManageTab(activeManageTab);
         }
         } catch (e) {
-            App.UI.toast('error', 'Failed to connect to cluster dashboard.');
-            showListView();
+            if (generation !== manageGeneration) return;
+            App.UI.toast('error', `Unable to open database details: ${e.message}`);
+            showListView(false);
         }
     }
 
+    function renderLifecycleActions(containerID) {
+        const wrapper = document.getElementById(containerID);
+        const target = escapeHTML(JSON.stringify(currentDb.id));
+        const action = currentDb.status === 'Running' ? 'stop' : 'start';
+        wrapper.innerHTML = `<span class="db-controls-label">Instance controls</span>
+            <button type="button" onclick="this.closest('details').open=false; App.Databases.confirmPower(${target}, '${action}')" class="${action === 'stop' ? 'db-menu-danger' : ''}"><i class="fas fa-${action === 'stop' ? 'stop' : 'play'}" aria-hidden="true"></i><span>${action === 'stop' ? 'Stop' : 'Start'} instance</span></button>
+            <button type="button" onclick="this.closest('details').open=false; App.Databases.confirmPower(${target}, 'restart')"><i class="fas fa-rotate" aria-hidden="true"></i><span>Restart instance</span></button>`;
+    }
+
+    async function confirmPower(dbID, action) {
+        if (!['start', 'stop', 'restart'].includes(action)) return;
+        if (action !== 'start') {
+            const name = currentDb?.id === dbID ? currentDb.name : 'this database';
+            const label = action === 'stop' ? 'Stop' : 'Restart';
+            if (!await App.UI.confirm(`${label} ${name}? Existing database connections will be interrupted.`, {title:`${label} instance`, confirmLabel:`${label} instance`})) return;
+        }
+        return togglePower(dbID, action);
+    }
+
+    function updateAdministrationNavigation(prefix, tab, labels) {
+        const menu = App.UI.el(`${prefix}-administration-menu`);
+        if (menu) menu.open = false;
+        const label = App.UI.el(`${prefix}-administration-label`);
+        if (label) label.textContent = labels[tab] || 'Manage';
+        if (menu) menu.dataset.active = labels[tab] ? 'true' : 'false';
+    }
+
     function switchManageTab(tab) {
+        if (!['overview', 'explorer', 'console', 'backups', 'users', 'settings'].includes(tab)) tab = 'overview';
         activeManageTab = tab;
+        updateAdministrationNavigation('db', tab, {backups:'Backups', users:'Users', settings:'Settings'});
         document.querySelectorAll('.db-tab-btn').forEach(btn => {
+            btn.setAttribute?.('aria-pressed', String(btn.dataset.dbTab === tab));
             if (btn.dataset.dbTab === tab) {
                 btn.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
                 btn.classList.add('border-blue-500', 'text-blue-400');
@@ -917,27 +940,33 @@ App.Databases = (function() {
         }
     }
 
-    function copyConnURI() {
+    async function copyConnURI(withCredentials = true) {
         const input = document.getElementById('db-conn-uri');
-        if (!input) return;
-        const text = input.value;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(() => {
-                App.UI.toast('success', 'Connection URI copied to clipboard.');
-            });
-        } else {
-            // Fallback for older browsers
-            input.select();
-            input.setSelectionRange(0, 99999);
-            document.execCommand('copy');
+        if (!input || !currentDb) return;
+        try {
+            if (withCredentials && App.DatabaseConnection.needsPassword(currentDb.type) && !await ensureCredentials()) return;
+            const text = App.DatabaseConnection.uri(currentDb, serverHost(), withCredentials && credentialsLoaded);
+            // Keep the visible field masked; the clipboard receives the requested URI.
+            if (navigator.clipboard?.writeText) {
+                try { await navigator.clipboard.writeText(text); }
+                catch { fallbackConnectionCopy(text); }
+            } else fallbackConnectionCopy(text);
             App.UI.toast('success', 'Connection URI copied to clipboard.');
-        }
+        } catch (error) { App.UI.toast('error', `Unable to copy connection URI: ${error.message}`); }
+    }
+
+    function fallbackConnectionCopy(text) {
+        const area = document.createElement('textarea');
+        area.value = text; area.style.position = 'fixed'; area.style.opacity = '0';
+        document.body.appendChild(area); area.select();
+        try { if (!document.execCommand('copy')) throw new Error('Clipboard unavailable.'); }
+        finally { area.remove(); }
     }
 
     // ---- Interactive Console ----
 
     async function runQuery() {
-        if (!currentDb) return;
+        if (!currentDb || queryLoading) return;
         const queryEl = document.getElementById('db-console-query');
         if (!queryEl) return;
         const query = queryEl.value;
@@ -946,6 +975,12 @@ App.Databases = (function() {
             return;
         }
 
+        const target = currentDb;
+        queryLoading = true;
+        const summary = App.UI.el('db-query-result-summary');
+        if (summary) summary.textContent = 'Running…';
+        const runButton = document.querySelector('button[onclick="App.Databases.runQuery()"]');
+        if (runButton) runButton.disabled = true;
         const selectEl = document.getElementById('db-console-schema-select');
         const schema = selectEl ? selectEl.value : '';
 
@@ -961,8 +996,10 @@ App.Databases = (function() {
                 schema
             });
 
+            if (currentDb !== target) return;
             if (res.success) {
                 const payload = res.data;
+                if (summary) summary.textContent = payload?.type === 'table' ? `Completed · ${(payload.rows || []).length} ${(payload.rows || []).length === 1 ? 'row' : 'rows'}` : 'Completed';
                 if (!payload) {
                     resultsContainer.innerHTML = '<div class="p-4 text-green-400 font-mono">Query completed successfully. Empty result set.</div>';
                     return;
@@ -997,10 +1034,17 @@ App.Databases = (function() {
                     resultsContainer.innerHTML = `<pre class="p-4 text-green-400 font-mono text-sm whitespace-pre-wrap">${escapeHTML(JSON.stringify(payload, null, 2))}</pre>`;
                 }
             } else {
+                if (summary) summary.textContent = 'Failed';
                 resultsContainer.innerHTML = `<div class="p-4 text-red-400 border border-red-500/20 bg-red-950/10 font-mono text-sm"><i class="fas fa-exclamation-triangle mr-2"></i>Execution Failed:<br><pre class="mt-2 whitespace-pre-wrap">${escapeHTML(res.error || res.message || 'Unknown error')}</pre></div>`;
             }
         } catch (e) {
-            resultsContainer.innerHTML = '<div class="p-4 text-red-400 font-mono">Query execution failed. Check your connection.</div>';
+            if (currentDb === target) {
+                if (summary) summary.textContent = 'Failed';
+                resultsContainer.innerHTML = `<div class="p-4 text-red-400 font-mono">Query request failed: ${escapeHTML(e.message)}</div>`;
+            }
+        } finally {
+            queryLoading = false;
+            if (runButton) runButton.disabled = false;
         }
     }
 
@@ -1030,11 +1074,13 @@ App.Databases = (function() {
                 
                 if (res.data.auto_backup) {
                     statusText.textContent = 'Enabled';
-                    statusText.className = 'ml-3 text-sm font-semibold text-indigo-400';
+                    statusText.className = 'db-schedule-status';
+                    statusText.dataset.enabled = String(res.data.auto_backup);
                     settingsGrid.classList.remove('hidden');
                 } else {
                     statusText.textContent = 'Disabled';
-                    statusText.className = 'ml-3 text-sm font-medium text-gray-400';
+                    statusText.className = 'db-schedule-status';
+                    statusText.dataset.enabled = String(res.data.auto_backup);
                     settingsGrid.classList.add('hidden');
                 }
             }
@@ -1089,25 +1135,25 @@ App.Databases = (function() {
 
             res.data.forEach(backup => {
                 const tr = document.createElement('tr');
-                tr.className = "hover:bg-gray-800/20 border-b border-gray-700/50 text-sm text-gray-300";
+                tr.className = "db-backup-row";
                 
                 const sizeMB = (backup.size / (1024 * 1024)).toFixed(2);
                 const createdTime = new Date(backup.created_at).toLocaleString();
 
                 tr.innerHTML = `
-                    <td class="px-6 py-4 font-mono text-xs text-white flex items-center space-x-2">
+                    <td><div class="db-table-file">
                         <i class="far fa-file-archive text-green-400"></i>
-                        <span>${escapeHTML(backup.filename)}</span>
+                        <span>${escapeHTML(backup.filename)}</span></div>
                     </td>
-                    <td class="px-6 py-4 font-semibold">${sizeMB} MB</td>
-                    <td class="px-6 py-4 text-gray-400">${createdTime}</td>
-                    <td class="px-6 py-4 text-right">
-                        <div class="flex justify-end space-x-2">
-                            <button onclick="App.Databases.restoreBackup('${escapeHTML(backup.filename)}', this)" class="px-3 py-1.5 bg-indigo-950/40 hover:bg-indigo-950/60 border border-indigo-500/20 text-indigo-400 text-xs font-bold rounded-lg transition-colors flex items-center space-x-1">
+                    <td class="db-table-secondary">${sizeMB} MB</td>
+                    <td class="db-table-secondary">${createdTime}</td>
+                    <td>
+                        <div class="db-table-actions">
+                            <button onclick="App.Databases.restoreBackup('${escapeHTML(backup.filename)}', this)" class="db-inline-button">
                                 <i class="fas fa-history"></i>
                                 <span>Restore</span>
                             </button>
-                            <a href="/api/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/download?filename=${encodeURIComponent(backup.filename)}" download class="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 border border-gray-600/30 text-gray-300 text-xs font-bold rounded-lg transition-colors flex items-center space-x-1">
+                            <a href="/api/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/download?filename=${encodeURIComponent(backup.filename)}" download class="db-inline-button">
                                 <i class="fas fa-download"></i>
                                 <span>Download</span>
                             </a>
@@ -1146,7 +1192,7 @@ App.Databases = (function() {
     }
 
     async function restoreBackup(filename, btnElement) {
-        if (!confirm(`Restore "${filename}"?\n\nThis will OVERWRITE current data in the live container.`)) {
+        if (!await App.UI.confirm(`Restore "${filename}"?\n\nThis will OVERWRITE current data in the live container.`)) {
             return;
         }
 
@@ -1234,10 +1280,10 @@ App.Databases = (function() {
             confirmMsg += `\n\n⚠️ This will also PURGE all data volumes on the remote host!`;
         }
 
-        if (!confirm(confirmMsg)) return;
+        if (!await App.UI.confirm(confirmMsg)) return;
 
         try {
-            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}?delete_volume=${deleteVolume}`);
+            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}?delete_volume=${deleteVolume}&confirm=${encodeURIComponent(currentDb.id)}`);
             if (res.success) {
                 App.UI.toast('success', 'Database cluster deleted.');
                 showListView();
@@ -1265,6 +1311,7 @@ App.Databases = (function() {
 
     async function loadSchemas() {
         if (!currentDb) return;
+        const target = currentDb;
         const tree = document.getElementById('db-explorer-tree');
         if (!tree) return;
 
@@ -1280,7 +1327,8 @@ App.Databases = (function() {
         tree.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-spinner fa-spin text-lg mb-2"></i><p class="text-xs">Loading schemas...</p></div>';
 
         try {
-            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/schemas`);
+            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${target.id}/schemas`);
+            if (currentDb !== target) return;
             if (!res.success || !res.data || res.data.length === 0) {
                 tree.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fas fa-folder-open text-lg mb-2 opacity-40"></i><p class="text-xs">No schemas found.</p></div>';
                 return;
@@ -1290,7 +1338,7 @@ App.Databases = (function() {
             renderTree();
             updateConsoleSchemaSelect();
         } catch (e) {
-            tree.innerHTML = '<div class="text-center text-red-400 py-8"><p class="text-xs">Failed to load schemas.</p></div>';
+            if (currentDb === target) tree.innerHTML = `<div class="text-center text-red-400 py-8"><p class="text-xs">Unable to load schemas: ${escapeHTML(e.message)}</p></div>`;
         }
     }
 
@@ -1341,7 +1389,7 @@ App.Databases = (function() {
             let actionHtml = '';
             if (currentDb.type !== 'redis') {
                 actionHtml = `
-                    <div class="hidden group-hover:flex items-center space-x-1 ml-2 flex-shrink-0">
+                    <div class="db-tree-actions hidden group-hover:flex items-center space-x-1 ml-2 flex-shrink-0">
                         <button onclick="event.stopPropagation(); App.Databases.openCreateTableModal('${escapeHTML(schema)}')" class="p-1 text-green-400 hover:text-white rounded hover:bg-gray-700 transition-colors" title="Create ${tableLabel}">
                             <i class="fas fa-plus text-[10px]"></i>
                         </button>
@@ -1354,12 +1402,12 @@ App.Databases = (function() {
 
             html += `
                 <div class="select-none">
-                    <div class="group flex items-center justify-between px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${isExpanded ? 'bg-gray-800/80 text-white' : 'text-gray-400 hover:bg-gray-800/40 hover:text-gray-200'}">
-                        <div onclick="App.Databases.toggleSchema('${escapeHTML(schema)}')" class="flex items-center min-w-0 flex-1">
+                    <div class="db-tree-row group flex items-center justify-between px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${isExpanded ? 'bg-gray-800/80 text-white' : 'text-gray-400 hover:bg-gray-800/40 hover:text-gray-200'}">
+                        <button type="button" aria-expanded="${isExpanded}" onclick="App.Databases.toggleSchema('${escapeHTML(schema)}')" class="db-tree-select flex items-center min-w-0 flex-1">
                             <i class="fas ${chevron} text-[8px] mr-2.5 transition-transform text-gray-500"></i>
                             <i class="${schemaIcon} text-xs mr-2 ${isExpanded ? 'text-blue-400' : 'text-gray-500'}"></i>
                             <span class="text-xs font-semibold truncate">${escapeHTML(schema)}</span>
-                        </div>
+                        </button>
                         ${actionHtml}
                     </div>`;
 
@@ -1370,12 +1418,12 @@ App.Databases = (function() {
                     tables.forEach(tbl => {
                         const isActive = explorerState.activeSchema === schema && explorerState.activeTable === tbl;
                         html += `
-                            <div class="group flex items-center justify-between pl-8 pr-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${isActive ? 'bg-blue-600/20 text-blue-300' : 'text-gray-400 hover:bg-gray-800/40 hover:text-gray-200'}">
-                                <div onclick="App.Databases.selectTable('${escapeHTML(schema)}', '${escapeHTML(tbl)}')" class="flex items-center min-w-0 flex-1">
+                            <div class="db-tree-row group flex items-center justify-between pl-8 pr-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${isActive ? 'bg-blue-600/20 text-blue-300' : 'text-gray-400 hover:bg-gray-800/40 hover:text-gray-200'}">
+                                <button type="button" aria-pressed="${isActive}" onclick="App.Databases.selectTable('${escapeHTML(schema)}', '${escapeHTML(tbl)}')" class="db-tree-select flex items-center min-w-0 flex-1">
                                     <i class="${tableIcon} text-[10px] mr-2 ${isActive ? 'text-blue-400' : 'text-gray-600'}"></i>
                                     <span class="text-xs truncate">${escapeHTML(tbl)}</span>
-                                </div>
-                                <div class="hidden group-hover:flex items-center ml-2 flex-shrink-0">
+                                </button>
+                                <div class="db-tree-actions hidden group-hover:flex items-center ml-2 flex-shrink-0">
                                     <button onclick="event.stopPropagation(); App.Databases.deleteTable('${escapeHTML(schema)}', '${escapeHTML(tbl)}')" class="p-1 text-red-400 hover:text-white rounded hover:bg-gray-700 transition-colors" title="Drop ${tableLabel}">
                                         <i class="fas fa-trash text-[10px]"></i>
                                     </button>
@@ -1392,6 +1440,8 @@ App.Databases = (function() {
     }
 
     async function toggleSchema(schema) {
+        if (!currentDb) return;
+        const target = currentDb;
         if (explorerState.expandedSchemas[schema]) {
             // Collapse
             delete explorerState.expandedSchemas[schema];
@@ -1404,7 +1454,8 @@ App.Databases = (function() {
         renderTree();
 
         try {
-            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/schemas/${encodeURIComponent(schema)}/tables`);
+            const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${target.id}/schemas/${encodeURIComponent(schema)}/tables`);
+            if (currentDb !== target) return;
             if (res.success && res.data) {
                 explorerState.expandedSchemas[schema] = res.data;
             }
@@ -1425,6 +1476,7 @@ App.Databases = (function() {
 
     async function loadTableData(schema, table, page) {
         if (!currentDb) return;
+        const target = currentDb;
 
         const dataContainer = document.getElementById('db-explorer-data');
         const titleEl = document.getElementById('db-explorer-title');
@@ -1443,6 +1495,7 @@ App.Databases = (function() {
 
         try {
             const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/schemas/${encodeURIComponent(schema)}/tables/${encodeURIComponent(table)}/rows?page=${page}&limit=${explorerState.limit}`);
+            if (currentDb !== target) return;
 
             if (!res.success || !res.data) {
                 dataContainer.innerHTML = '<div class="flex items-center justify-center h-full text-red-400"><p class="text-sm">Failed to load data.</p></div>';
@@ -1456,8 +1509,6 @@ App.Databases = (function() {
 
             // Meta info
             metaEl.innerHTML = `
-                <span>${label}: <strong class="text-gray-300">${escapeHTML(table)}</strong></span>
-                <span class="text-gray-600">|</span>
                 <span>${data.total.toLocaleString()} ${recordLabel}</span>
             `;
 
@@ -1504,7 +1555,7 @@ App.Databases = (function() {
                         pkVal: row[pkIdx]
                     }));
                     html += `
-                        <td class="px-4 py-2 text-center border-r border-gray-800/40 whitespace-nowrap space-x-1.5 w-16">
+                        <td class="db-record-actions px-4 py-2 text-center border-r border-gray-800/40 whitespace-nowrap space-x-1.5 w-16">
                             <button onclick="App.Databases.openEditRowModal('${rowDataEscaped}')" class="p-1 text-blue-400 hover:text-blue-300 rounded hover:bg-gray-800 transition-colors" title="Edit Record">
                                 <i class="fas fa-edit text-[10px]"></i>
                             </button>
@@ -1527,7 +1578,7 @@ App.Databases = (function() {
             pagination.classList.remove('hidden');
 
             document.getElementById('db-explorer-row-info').textContent = 
-                `Showing ${((page - 1) * explorerState.limit) + 1}–${Math.min(page * explorerState.limit, data.total)} of ${data.total.toLocaleString()} rows`;
+                data.total === 0 ? `0 ${recordLabel}` : `Showing ${((page - 1) * explorerState.limit) + 1}–${Math.min(page * explorerState.limit, data.total)} of ${data.total.toLocaleString()} ${recordLabel}`;
             document.getElementById('db-explorer-page-info').textContent = `${page} / ${totalPages}`;
 
             const prevBtn = document.getElementById('db-explorer-prev-btn');
@@ -1642,7 +1693,7 @@ App.Databases = (function() {
         if (!currentDb) return;
         const isMongo = currentDb.type === 'mongodb';
         const label = isMongo ? 'Database' : 'Schema';
-        if (!confirm(`Are you absolutely sure you want to drop the ${label} "${schemaName}"?\n\n⚠️ This will delete ALL tables, collections, and data within it!`)) {
+        if (!await App.UI.confirm(`Are you absolutely sure you want to drop the ${label} "${schemaName}"?\n\n⚠️ This will delete ALL tables, collections, and data within it!`)) {
             return;
         }
 
@@ -1800,7 +1851,7 @@ App.Databases = (function() {
         if (!currentDb) return;
         const isMongo = currentDb.type === 'mongodb';
         const label = isMongo ? 'Collection' : 'Table';
-        if (!confirm(`Are you absolutely sure you want to drop the ${label} "${table}"?`)) {
+        if (!await App.UI.confirm(`Are you absolutely sure you want to drop the ${label} "${table}"?`)) {
             return;
         }
 
@@ -2041,7 +2092,7 @@ App.Databases = (function() {
 
     async function deleteRow(schema, table, pkCol, pkVal) {
         if (!currentDb) return;
-        if (!confirm('Are you sure you want to delete this record?')) {
+        if (!await App.UI.confirm('Are you sure you want to delete this record?')) {
             return;
         }
 
@@ -2087,14 +2138,12 @@ App.Databases = (function() {
         if (currentDb.type === 'redis') {
             const banner = document.createElement('div');
             banner.id = 'db-redis-warning-banner';
-            banner.className = "p-4 mb-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-xs flex items-start space-x-3 shadow-lg shadow-red-500/5 backdrop-blur-md";
+            banner.className = "db-user-notice";
             banner.innerHTML = `
-                <div class="p-1.5 bg-red-500/20 rounded-lg text-red-300">
-                    <i class="fas fa-exclamation-triangle text-base"></i>
-                </div>
+                <i class="fas fa-circle-info" aria-hidden="true"></i>
                 <div>
-                    <h4 class="font-bold text-sm text-white mb-0.5">Redis Cluster Security Notice</h4>
-                    <p class="text-red-300/80 leading-relaxed">Redis operates natively using a <strong>single global connection password</strong>. Dynamic multi-user provisioning and scoped schema access are bypassed by default. External clients can connect using the connection string generated above.</p>
+                    <h4>Redis authentication</h4>
+                    <p>This Redis deployment uses a <strong>single connection password</strong>. Dynamic multi-user provisioning and scoped schema access are bypassed by default. External clients can connect using the connection string generated above.</p>
                 </div>
             `;
             if (panel) panel.insertBefore(banner, panel.firstChild);
@@ -2104,14 +2153,12 @@ App.Databases = (function() {
         if (currentDb.type === 'sqlite') {
             const banner = document.createElement('div');
             banner.id = 'db-redis-warning-banner';
-            banner.className = "p-4 mb-4 bg-sky-500/10 border border-sky-500/30 rounded-xl text-sky-400 text-xs flex items-start space-x-3 shadow-lg shadow-sky-500/5 backdrop-blur-md";
+            banner.className = "db-user-notice";
             banner.innerHTML = `
-                <div class="p-1.5 bg-sky-500/20 rounded-lg text-sky-300">
-                    <i class="fas fa-info-circle text-base"></i>
-                </div>
+                <i class="fas fa-circle-info" aria-hidden="true"></i>
                 <div>
-                    <h4 class="font-bold text-sm text-white mb-0.5">SQLite File-Based Security</h4>
-                    <p class="text-sky-300/80 leading-relaxed">SQLite is a <strong>file-based embedded database</strong> with no built-in user authentication or role management. Access is controlled by file-system permissions on the server. User provisioning is not applicable for this engine type.</p>
+                    <h4>SQLite access</h4>
+                    <p>SQLite is a <strong>file-based embedded database</strong> with no built-in user authentication or role management. Access is controlled by file-system permissions on the server. User provisioning is not applicable for this engine type.</p>
                 </div>
             `;
             if (panel) panel.insertBefore(banner, panel.firstChild);
@@ -2121,14 +2168,12 @@ App.Databases = (function() {
         if (currentDb.type === 'pocketbase') {
             const banner = document.createElement('div');
             banner.id = 'db-redis-warning-banner';
-            banner.className = "p-4 mb-4 bg-orange-500/10 border border-orange-500/30 rounded-xl text-orange-400 text-xs flex items-start space-x-3 shadow-lg shadow-orange-500/5 backdrop-blur-md";
+            banner.className = "db-user-notice";
             banner.innerHTML = `
-                <div class="p-1.5 bg-orange-500/20 rounded-lg text-orange-300">
-                    <i class="fas fa-info-circle text-base"></i>
-                </div>
+                <i class="fas fa-circle-info" aria-hidden="true"></i>
                 <div>
-                    <h4 class="font-bold text-sm text-white mb-0.5">PocketBase BaaS Auth Control</h4>
-                    <p class="text-orange-300/80 leading-relaxed">PocketBase manages its own administrator accounts, users, and API authorization rules directly. Multi-user provisioning inside GoPulse is bypassed. Please use the PocketBase Admin panel to configure database permissions and roles.</p>
+                    <h4>PocketBase access</h4>
+                    <p>PocketBase manages its own administrator accounts, users, and API authorization rules directly. Multi-user provisioning inside GoPulse is bypassed. Please use the PocketBase Admin panel to configure database permissions and roles.</p>
                 </div>
             `;
             if (panel) panel.insertBefore(banner, panel.firstChild);
@@ -2146,22 +2191,12 @@ App.Databases = (function() {
                 return;
             }
 
-            const hostIP = (App.System && App.System.currentServer && App.System.currentServer.host) 
-                || document.getElementById('settings-server-host')?.value 
-                || window.location.hostname 
-                || "127.0.0.1";
+            const hostIP = serverHost();
             tbody.innerHTML = '';
             res.data.forEach(user => {
                 const tr = document.createElement('tr');
-                tr.className = "hover:bg-gray-800/20 text-sm text-gray-300 transition-colors";
+                tr.className = "db-user-row";
                 
-                let badgeClass = "bg-blue-900/50 text-blue-400 border border-blue-500/20";
-                if (user.scope === 'readWrite') {
-                    badgeClass = "bg-green-900/50 text-green-400 border border-green-500/20";
-                } else if (user.scope === 'admin') {
-                    badgeClass = "bg-purple-900/50 text-purple-400 border border-purple-500/20";
-                }
-
                 // Exposed URL Connection String for each specific user
                 let targetDb = user.database;
                 if (!targetDb || targetDb === '* (All)') {
@@ -2181,21 +2216,21 @@ App.Databases = (function() {
                 }
 
                 tr.innerHTML = `
-                    <td class="px-6 py-4 font-mono font-semibold text-white">${escapeHTML(user.username)}</td>
-                    <td class="px-6 py-4">
-                        <span class="px-2.5 py-0.5 text-xs font-bold rounded-md uppercase ${badgeClass}">${user.scope}</span>
+                    <td class="font-mono">${escapeHTML(user.username)}</td>
+                    <td>
+                        <span class="db-user-permission" data-scope="${escapeHTML(user.scope)}">${escapeHTML(user.scope === 'readWrite' ? 'Read & write' : user.scope === 'admin' ? 'Admin' : user.scope === 'read' ? 'Read only' : user.scope)}</span>
                     </td>
-                    <td class="px-6 py-4 font-mono text-xs text-gray-400">${escapeHTML(user.database || 'public')}</td>
-                    <td class="px-6 py-4">
-                        <div class="flex items-center space-x-2">
-                            <input type="text" readonly value="${escapeHTML(userURI)}" class="bg-gray-900 border border-gray-700/60 rounded px-2 py-1 text-xs font-mono text-gray-400 w-64 focus:outline-none select-all" onclick="this.select()">
-                            <button onclick="App.Databases.copyUserURI(this)" class="p-1.5 bg-gray-700 hover:bg-gray-650 text-gray-300 hover:text-white rounded border border-gray-600 transition-all text-xs" title="Copy Connection String">
+                    <td class="db-table-secondary font-mono">${escapeHTML(user.database || 'public')}</td>
+                    <td>
+                        <div class="db-user-connection">
+                            <input type="text" readonly value="${escapeHTML(userURI)}" class="font-mono" aria-label="Connection string for ${escapeHTML(user.username)}" onclick="this.select()">
+                            <button onclick="App.Databases.copyUserURI(this)" class="db-inline-button" title="Copy connection string" aria-label="Copy connection string for ${escapeHTML(user.username)}">
                                 <i class="far fa-copy"></i>
                             </button>
                         </div>
                     </td>
-                    <td class="px-6 py-4 text-right">
-                        <button onclick="App.Databases.deleteUser('${escapeHTML(user.username)}')" class="p-2 bg-red-950/20 hover:bg-red-950/60 border border-red-500/10 hover:border-red-500/30 text-red-400 hover:text-red-300 rounded-lg transition-all text-xs" title="Remove User Access">
+                    <td>
+                        <button onclick="App.Databases.deleteUser('${escapeHTML(user.username)}')" class="db-inline-button db-revoke-button" title="Revoke access" aria-label="Revoke access for ${escapeHTML(user.username)}">
                             <i class="far fa-trash-alt"></i>
                         </button>
                     </td>
@@ -2352,7 +2387,7 @@ App.Databases = (function() {
 
     async function deleteUser(username) {
         if (!currentDb) return;
-        if (!confirm(`Are you sure you want to revoke database access for user "${username}"?`)) return;
+        if (!await App.UI.confirm(`Are you sure you want to revoke database access for user "${username}"?`)) return;
 
         try {
             App.UI.toast('info', `Revoking access for user ${username}...`);
@@ -2390,8 +2425,10 @@ App.Databases = (function() {
 
     function switchBaaSTab(tab) {
         activeBaaSTab = tab;
+        updateAdministrationNavigation('baas', tab, {env:'Keys & environment', backups:'Backups', settings:'Settings'});
         
         document.querySelectorAll('.baas-tab-btn').forEach(btn => {
+            btn.setAttribute?.('aria-pressed', String(btn.dataset.baasTab === tab));
             if (btn.dataset.baasTab === tab) {
                 btn.classList.remove('border-transparent', 'text-gray-400', 'hover:text-white');
                 btn.classList.add('border-orange-500', 'text-orange-400');
@@ -2427,9 +2464,7 @@ App.Databases = (function() {
     function renderBaaSOverview() {
         if (!currentDb) return;
         const banner = document.getElementById('baas-launch-banner');
-        const hostIP = (App.System && App.System.currentServer && App.System.currentServer.host) 
-            || window.location.hostname 
-            || "127.0.0.1";
+        const hostIP = serverHost();
             
         if (!banner) return;
         
@@ -2515,13 +2550,14 @@ App.Databases = (function() {
     }
 
     function startBaaSTelemetry() {
+        if (baasTelemetryInterval) clearInterval(baasTelemetryInterval);
         if (!currentDb) return;
         updateBaaSTelemetry();
         baasTelemetryInterval = setInterval(updateBaaSTelemetry, 4000);
     }
     
     async function updateBaaSTelemetry() {
-        if (!currentDb || activeBaaSTab !== 'overview') {
+        if (!currentDb || activeBaaSTab !== 'overview' || (App.Navigation && App.Navigation.current !== 'databases')) {
             if (baasTelemetryInterval) {
                 clearInterval(baasTelemetryInterval);
                 baasTelemetryInterval = null;
@@ -2529,6 +2565,9 @@ App.Databases = (function() {
             return;
         }
 
+        if (telemetryLoading) return;
+        telemetryLoading = true;
+        const target = currentDb;
         let coreContainerName = `gopulse-${currentDb.id}`;
         if (currentDb.type === 'appwrite') {
             coreContainerName = `gopulse-${currentDb.id}-appwrite`;
@@ -2540,6 +2579,7 @@ App.Databases = (function() {
                 App.API.get(`/databases/${currentDb.id}/telemetry`).catch(() => null)
             ]);
 
+            if (currentDb !== target) return;
             const cpuCircle = document.getElementById('baas-cpu-circle');
             const cpuValEl = document.getElementById('baas-cpu-val');
             if (statsRes && statsRes.success && statsRes.data) {
@@ -2595,12 +2635,16 @@ App.Databases = (function() {
 
         } catch (e) {
             console.error("BaaS telemetry polling error", e);
-        }
+        } finally { telemetryLoading = false; }
     }
 
     function renderBaaSEnv() {
         const container = document.getElementById('baas-keys-container');
         if (!container || !currentDb) return;
+        if (!credentialsLoaded) {
+            container.innerHTML = '<p class="text-sm text-gray-400">Reveal credentials in Settings before viewing environment examples. Database management permission is required.</p>';
+            return;
+        }
         container.innerHTML = '';
 
         const createKeyCard = (title, subtitle, value) => {
@@ -2978,13 +3022,11 @@ App.Databases = (function() {
         fileLabel.innerText = topicData.file;
 
         let code = topicData.code;
-        const hostIP = (App.System && App.System.currentServer && App.System.currentServer.host) 
-            || window.location.hostname 
-            || "127.0.0.1";
+        const hostIP = serverHost();
             
         code = code.replace(/HOST_IP/g, hostIP);
         code = code.replace(/HOST_PORT/g, currentDb.host_port);
-        code = code.replace(/DB_PASSWORD/g, currentDb.password);
+        code = code.replace(/DB_PASSWORD/g, credentialsLoaded ? currentDb.password : '<password>');
         code = code.replace(/DB_USER/g, currentDb.username);
 
         codeEl.innerText = code;
@@ -3001,13 +3043,14 @@ App.Databases = (function() {
         }
     }
 
-    function toggleBaaSPasswordVisibility() {
+    async function toggleBaaSPasswordVisibility() {
         if (!currentDb) return;
         const passEl = document.getElementById('baas-settings-pass');
         const eye = document.getElementById('baas-settings-pass-eye');
         if (!passEl || !eye) return;
 
         if (passEl.innerText === "••••••••") {
+            try { if (!await ensureCredentials()) return; } catch (error) { return; }
             passEl.innerText = currentDb.password;
             eye.className = "far fa-eye-slash";
         } else {
@@ -3025,10 +3068,10 @@ App.Databases = (function() {
             confirmMsg += `\n\n⚠️ This will also PURGE all data volumes, users, and configurations on the remote host!`;
         }
 
-        if (!confirm(confirmMsg)) return;
+        if (!await App.UI.confirm(confirmMsg)) return;
 
         try {
-            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}?delete_volume=${deleteVolume}`);
+            const res = await App.API.delete(`/servers/${App.config.SERVER_ID}/databases/${currentDb.id}?delete_volume=${deleteVolume}&confirm=${encodeURIComponent(currentDb.id)}`);
             if (res.success) {
                 App.UI.toast('success', 'BaaS engine instance successfully destroyed.');
                 showListView();
@@ -3059,11 +3102,13 @@ App.Databases = (function() {
                 
                 if (res.data.auto_backup) {
                     statusText.textContent = 'Enabled';
-                    statusText.className = 'ml-3 text-sm font-semibold text-orange-400';
+                    statusText.className = 'db-schedule-status';
+                    statusText.dataset.enabled = String(res.data.auto_backup);
                     settingsGrid.classList.remove('hidden');
                 } else {
                     statusText.textContent = 'Disabled';
-                    statusText.className = 'ml-3 text-sm font-medium text-gray-400';
+                    statusText.className = 'db-schedule-status';
+                    statusText.dataset.enabled = String(res.data.auto_backup);
                     settingsGrid.classList.add('hidden');
                 }
             }
@@ -3117,25 +3162,25 @@ App.Databases = (function() {
 
             res.data.forEach(backup => {
                 const tr = document.createElement('tr');
-                tr.className = "hover:bg-gray-800/20 border-b border-gray-700/50 text-sm text-gray-300";
+                tr.className = "db-backup-row";
                 
                 const sizeMB = (backup.size / (1024 * 1024)).toFixed(2);
                 const createdTime = new Date(backup.created_at).toLocaleString();
 
                 tr.innerHTML = `
-                    <td class="px-6 py-4 font-mono text-xs text-white flex items-center space-x-2">
+                    <td><div class="db-table-file">
                         <i class="far fa-file-archive text-orange-400"></i>
-                        <span>${escapeHTML(backup.filename)}</span>
+                        <span>${escapeHTML(backup.filename)}</span></div>
                     </td>
-                    <td class="px-6 py-4 font-semibold">${sizeMB} MB</td>
-                    <td class="px-6 py-4 text-gray-400">${createdTime}</td>
-                    <td class="px-6 py-4 text-right">
-                        <div class="flex justify-end space-x-2">
-                            <button onclick="App.Databases.restoreBackupBaaS('${escapeHTML(backup.filename)}', this)" class="px-3 py-1.5 bg-orange-950/40 hover:bg-orange-950/60 border border-orange-500/20 text-orange-400 text-xs font-bold rounded-lg transition-colors flex items-center space-x-1">
+                    <td class="db-table-secondary">${sizeMB} MB</td>
+                    <td class="db-table-secondary">${createdTime}</td>
+                    <td>
+                        <div class="db-table-actions">
+                            <button onclick="App.Databases.restoreBackupBaaS('${escapeHTML(backup.filename)}', this)" class="db-inline-button">
                                 <i class="fas fa-history"></i>
                                 <span>Restore</span>
                             </button>
-                            <a href="/api/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/download?filename=${encodeURIComponent(backup.filename)}" download class="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 border border-gray-600/30 text-gray-300 text-xs font-bold rounded-lg transition-colors flex items-center space-x-1">
+                            <a href="/api/servers/${App.config.SERVER_ID}/databases/${currentDb.id}/backups/download?filename=${encodeURIComponent(backup.filename)}" download class="db-inline-button">
                                 <i class="fas fa-download"></i>
                                 <span>Download</span>
                             </a>
@@ -3174,7 +3219,7 @@ App.Databases = (function() {
     }
 
     async function restoreBackupBaaS(filename, btnElement) {
-        if (!confirm(`Restore BaaS data snapshot "${filename}"?\n\n⚠️ This will OVERWRITE and completely replace the active container stack files.`)) {
+        if (!await App.UI.confirm(`Restore BaaS data snapshot "${filename}"?\n\n⚠️ This will OVERWRITE and completely replace the active container stack files.`)) {
             return;
         }
 
@@ -3237,16 +3282,23 @@ App.Databases = (function() {
 
     return {
         load,
-        switchSubTab,
+        filterItems,
+        filterInventory,
+        clearInventoryFilters,
+        openTool,
+        refreshDiagnostics,
         openProvisionModal,
         closeProvisionModal,
         onProvTypeChange,
         generatePass,
         submitProvision,
         togglePower,
+        confirmPower,
         quickCheckHealth,
         showListView,
         showManageView,
+        deactivate,
+        revealCredentials,
         switchManageTab,
         copyConnURI,
         runQuery,

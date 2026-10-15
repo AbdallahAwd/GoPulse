@@ -74,6 +74,7 @@ func (h *ExportHandler) ExportPreview(w http.ResponseWriter, r *http.Request) {
 			"databases": len(data.Databases),
 			"domains":   len(data.Domains),
 			"users":     len(data.Users),
+			"cron_jobs": len(data.CronJobs),
 		},
 	})
 }

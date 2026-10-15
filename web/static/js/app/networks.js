@@ -12,14 +12,14 @@ App.Docker.Networks = {
 
         // Show loading
         if (!tbody.hasChildNodes() || tbody.children[0].innerText.includes('Loading')) {
-             tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4"><i class="fas fa-spinner fa-spin mr-2"></i>Loading networks...</td></tr>';
+             tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4"><i class="fas fa-spinner fa-spin mr-2"></i>Loading networks...</td></tr>';
         }
 
         try {
             const response = await App.API.get('/networks');
             this.render(response.data || []);
         } catch (e) {
-             tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-red-400">Failed to load networks</td></tr>';
+             tbody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-red-400">Failed to load networks</td></tr>';
         }
     },
 
@@ -27,28 +27,15 @@ App.Docker.Networks = {
         const tbody = App.UI.el('networks-tbody');
         if (!tbody) return;
 
-        if (networks.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4 text-gray-400">No networks found</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = networks.map(n => `
-            <tr class="hover:bg-gray-700 transition-colors">
-                <td class="px-4 py-3 font-mono text-xs text-gray-400" title="${n.id}">${n.id.substring(0, 12)}</td>
-                <td class="px-4 py-3 text-white font-medium">${n.name}</td>
-                <td class="px-4 py-3 text-gray-400">${n.driver}</td>
-                <td class="px-4 py-3 text-gray-400">${n.scope}</td>
-                <td class="px-4 py-3 text-right">
-                    <button onclick="App.Docker.Networks.remove('${n.id}')" class="text-red-400 hover:text-red-300 hover:bg-red-900/30 p-2 rounded transition-colors" title="Remove Network">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                </td>
-            </tr>
-        `).join('');
+        const count = App.UI.el('docker-networks-count');
+        if (count) count.textContent = `${networks.length} ${networks.length === 1 ? 'network' : 'networks'}`;
+        if (networks.length === 0) { tbody.innerHTML = '<tr><td colspan="4" class="docker-table-state">No networks found</td></tr>'; return; }
+        const text = value => App.Docker.escapeHTML(value);
+        tbody.innerHTML = networks.map(n => `<tr><td><div class="docker-resource-name">${text(n.name)}</div><div class="docker-resource-id" title="${text(n.id)}">${text(String(n.id).substring(0,12))}</div></td><td class="docker-table-muted">${text(n.driver)}</td><td class="docker-table-muted">${text(n.scope)}</td><td><div class="docker-row-actions"><button onclick="App.Docker.Networks.remove(${App.Docker.handlerArgument(n.id)})" class="docker-icon-button docker-danger-button" title="Remove network" aria-label="Remove network ${text(n.name)}"><i class="far fa-trash-alt" aria-hidden="true"></i></button></div></td></tr>`).join('');
     },
 
     async remove(id) {
-        if (!confirm('Are you sure you want to remove this network?')) return;
+        if (!await App.UI.confirm('Are you sure you want to remove this network?')) return;
         try {
             await App.API.delete(`/networks/${id}`);
             App.UI.toast('success', 'Network removed successfully');

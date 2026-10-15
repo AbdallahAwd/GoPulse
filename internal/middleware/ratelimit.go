@@ -1,7 +1,12 @@
 package middleware
 
 import (
+	"encoding/json"
+	"math"
+	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -15,7 +20,7 @@ type RateLimiter struct {
 }
 
 type visitor struct {
-	tokens     int
+	tokens     float64
 	lastUpdate time.Time
 }
 
@@ -33,18 +38,57 @@ func NewRateLimiter(rate int, interval time.Duration) *RateLimiter {
 	return rl
 }
 
-// Handler returns the rate limiting middleware
+// Handler limits a token bucket without trusting proxy-supplied IP headers.
 func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := getIP(r)
+	return rl.handler(getIP)(next)
+}
 
-		if !rl.allow(ip) {
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+// APIOnlyHandler bounds API traffic before authentication while leaving the
+// application shell and recovery assets available, including after a 429.
+func (rl *RateLimiter) APIOnlyHandler(next http.Handler) http.Handler {
+	limited := rl.Handler(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			limited.ServeHTTP(w, r)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	})
+}
+
+// APIHandler gives signed-in users independent budgets, including users behind
+// the same reverse proxy. Authentication must run before this middleware.
+func (rl *RateLimiter) APIHandler(next http.Handler) http.Handler {
+	return rl.handler(func(r *http.Request) string {
+		if user, _ := r.Context().Value(UserContextKey).(string); user != "" {
+			return "user:" + user
+		}
+		return "ip:" + getIP(r)
+	})(next)
+}
+
+func (rl *RateLimiter) handler(key func(*http.Request) string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			identity := key(r)
+			if !rl.allow(identity) {
+				rl.mu.RLock()
+				tokens := rl.visitors[identity].tokens
+				rl.mu.RUnlock()
+				retry := int(math.Ceil((1 - tokens) * rl.interval.Seconds() / float64(rl.rate)))
+				if retry < 1 {
+					retry = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retry))
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "no-store")
+				w.WriteHeader(http.StatusTooManyRequests)
+				json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "Too many requests. Please wait before trying again.", "retry_after": retry})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // allow checks if a request from the given IP is allowed
@@ -57,7 +101,7 @@ func (rl *RateLimiter) allow(ip string) bool {
 
 	if !exists {
 		rl.visitors[ip] = &visitor{
-			tokens:     rl.rate - 1,
+			tokens:     float64(rl.rate - 1),
 			lastUpdate: now,
 		}
 		return true
@@ -65,15 +109,15 @@ func (rl *RateLimiter) allow(ip string) bool {
 
 	// Refill tokens based on time elapsed
 	elapsed := now.Sub(v.lastUpdate)
-	tokensToAdd := int(elapsed / rl.interval * time.Duration(rl.rate))
+	tokensToAdd := elapsed.Seconds() / rl.interval.Seconds() * float64(rl.rate)
 
 	v.tokens += tokensToAdd
-	if v.tokens > rl.rate {
-		v.tokens = rl.rate
+	if v.tokens > float64(rl.rate) {
+		v.tokens = float64(rl.rate)
 	}
 	v.lastUpdate = now
 
-	if v.tokens > 0 {
+	if v.tokens >= 1 {
 		v.tokens--
 		return true
 	}
@@ -99,18 +143,9 @@ func (rl *RateLimiter) cleanup() {
 
 // getIP extracts the IP address from the request
 func getIP(r *http.Request) string {
-	// Check X-Forwarded-For header first
-	forwarded := r.Header.Get("X-Forwarded-For")
-	if forwarded != "" {
-		return forwarded
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
 	}
-
-	// Check X-Real-IP header
-	realIP := r.Header.Get("X-Real-IP")
-	if realIP != "" {
-		return realIP
-	}
-
-	// Fall back to RemoteAddr
 	return r.RemoteAddr
 }

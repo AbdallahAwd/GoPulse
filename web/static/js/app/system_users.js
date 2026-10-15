@@ -123,11 +123,11 @@ App.SystemUsers = {
                 this.load();
                 App.UI.toast('success', `Linux user '${username}' created successfully.`);
             } else {
-                alert('Failed to create remote user: ' + (res.message || 'Unknown error'));
+                App.UI.toast('error', 'Failed to create remote user: ' + (res.message || 'Unknown error'));
             }
         } catch (error) {
             console.error('Failed to create Linux user:', error);
-            alert('An error occurred while provisioning the Linux user.');
+            App.UI.toast('error', 'An error occurred while provisioning the Linux user.');
         } finally {
             btn.innerHTML = originalText;
             btn.disabled = false;
@@ -135,7 +135,7 @@ App.SystemUsers = {
     },
 
     async deleteUser(username) {
-        if (!confirm(`Are you absolutely sure you want to delete remote Linux user '${username}' and their home directory?`)) return;
+        if (!await App.UI.confirm(`Are you absolutely sure you want to delete remote Linux user '${username}' and their home directory?`)) return;
 
         try {
             const res = await App.API.delete(`/system/users/${username}`);
@@ -143,11 +143,11 @@ App.SystemUsers = {
                 this.load();
                 App.UI.toast('success', `Linux user '${username}' deleted successfully.`);
             } else {
-                alert('Failed to delete remote user: ' + (res.message || 'Unknown error'));
+                App.UI.toast('error', 'Failed to delete remote user: ' + (res.message || 'Unknown error'));
             }
         } catch (error) {
             console.error('Failed to delete Linux user:', error);
-            alert('An error occurred while deleting the remote Linux user.');
+            App.UI.toast('error', 'An error occurred while deleting the remote Linux user.');
         }
     }
 };

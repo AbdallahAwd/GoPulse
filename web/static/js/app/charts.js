@@ -22,7 +22,14 @@ App.Charts = {
         }, 60000);
     },
 
+    pause() {
+        if (this.refreshInterval) clearInterval(this.refreshInterval);
+        this.refreshInterval = null;
+    },
+
     async fetchData() {
+        if (this.loading || (App.Navigation && App.Navigation.current !== 'overview')) return;
+        this.loading = true;
         try {
             const res = await App.API.get(`/stats/history?range=${this.currentRange}&server_id=${App.config.SERVER_ID}`);
             if (res.success && res.data) {
@@ -30,7 +37,7 @@ App.Charts = {
             }
         } catch (error) {
             console.error('Failed to load performance history:', error);
-        }
+        } finally { this.loading = false; }
     },
 
     setRange(range) {
@@ -116,10 +123,10 @@ App.Charts = {
                 tooltip: {
                     mode: 'index',
                     intersect: false,
-                    backgroundColor: '#1f2937',
-                    titleColor: '#9ca3af',
+                    backgroundColor: '#202125',
+                    titleColor: '#96999f',
                     bodyColor: '#ffffff',
-                    borderColor: '#374151',
+                    borderColor: '#2b2d32',
                     borderWidth: 1,
                     padding: 10,
                     cornerRadius: 6,
@@ -128,12 +135,12 @@ App.Charts = {
             },
             scales: {
                 x: {
-                    grid: { color: '#374151', drawBorder: false, borderDash: [2, 4] },
-                    ticks: { color: '#9ca3af', font: { size: 10 } }
+                    grid: { color: '#2b2d32', drawBorder: false, borderDash: [2, 4] },
+                    ticks: { color: '#96999f', font: { size: 10 } }
                 },
                 y: {
-                    grid: { color: '#374151', drawBorder: false, borderDash: [2, 4] },
-                    ticks: { color: '#9ca3af', font: { size: 10 } }
+                    grid: { color: '#2b2d32', drawBorder: false, borderDash: [2, 4] },
+                    ticks: { color: '#96999f', font: { size: 10 } }
                 }
             },
             interaction: { intersect: false, mode: 'index' }
@@ -145,9 +152,9 @@ App.Charts = {
             datasets: [{
                 label: 'CPU',
                 data: cpuData,
-                borderColor: '#3b82f6',
+                borderColor: '#c3f36b',
                 borderWidth: 2,
-                backgroundColor: (context) => this.createGradient(context.chart.ctx, '#3b82f6'),
+                backgroundColor: (context) => this.createGradient(context.chart.ctx, '#c3f36b'),
                 fill: true,
                 tension: 0.3,
                 pointRadius: 0,
@@ -167,9 +174,9 @@ App.Charts = {
             datasets: [{
                 label: 'Memory',
                 data: memData,
-                borderColor: '#a855f7',
+                borderColor: '#a8b8d0',
                 borderWidth: 2,
-                backgroundColor: (context) => this.createGradient(context.chart.ctx, '#a855f7'),
+                backgroundColor: (context) => this.createGradient(context.chart.ctx, '#a8b8d0'),
                 fill: true,
                 tension: 0.3,
                 pointRadius: 0,
@@ -189,9 +196,9 @@ App.Charts = {
             datasets: [{
                 label: 'Disk',
                 data: diskData,
-                borderColor: '#eab308',
+                borderColor: '#e4bd78',
                 borderWidth: 2,
-                backgroundColor: (context) => this.createGradient(context.chart.ctx, '#eab308'),
+                backgroundColor: (context) => this.createGradient(context.chart.ctx, '#e4bd78'),
                 fill: true,
                 tension: 0.3,
                 pointRadius: 0,
@@ -212,9 +219,9 @@ App.Charts = {
                 {
                     label: 'Download (Rx)',
                     data: rxSpeeds,
-                    borderColor: '#10b981',
+                    borderColor: '#88c7b0',
                     borderWidth: 2,
-                    backgroundColor: (context) => this.createGradient(context.chart.ctx, '#10b981'),
+                    backgroundColor: (context) => this.createGradient(context.chart.ctx, '#88c7b0'),
                     fill: true,
                     tension: 0.3,
                     pointRadius: 0,
@@ -223,9 +230,9 @@ App.Charts = {
                 {
                     label: 'Upload (Tx)',
                     data: txSpeeds,
-                    borderColor: '#f43f5e',
+                    borderColor: '#b4a5d4',
                     borderWidth: 2,
-                    backgroundColor: (context) => this.createGradient(context.chart.ctx, '#f43f5e'),
+                    backgroundColor: (context) => this.createGradient(context.chart.ctx, '#b4a5d4'),
                     fill: true,
                     tension: 0.3,
                     pointRadius: 0,
@@ -236,7 +243,7 @@ App.Charts = {
             ...baseOptions,
             plugins: {
                 ...baseOptions.plugins,
-                legend: { display: true, labels: { color: '#9ca3af', font: { size: 10 } } }
+                legend: { display: true, labels: { color: '#96999f', font: { size: 10 } } }
             }
         });
     },

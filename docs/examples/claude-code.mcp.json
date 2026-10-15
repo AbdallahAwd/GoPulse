@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "gopulse": {
+      "type": "http",
+      "url": "${GOPULSE_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${GOPULSE_AGENT_TOKEN}"
+      }
+    }
+  }
+}

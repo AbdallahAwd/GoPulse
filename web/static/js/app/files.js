@@ -602,7 +602,7 @@ App.Files = {
     },
 
     async delete(path) {
-        if (!confirm(`Delete ${path}?`)) return;
+        if (!await App.UI.confirm(`Delete ${path}?`)) return;
         try {
             await App.API.post('/files/action', { action: 'delete', path });
             App.UI.toast('success', 'Item deleted');

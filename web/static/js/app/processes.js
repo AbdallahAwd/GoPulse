@@ -51,7 +51,7 @@ App.Processes = {
     },
 
     async kill(pid) {
-        if (!confirm(`Are you sure you want to kill process ${pid}?`)) return;
+        if (!await App.UI.confirm(`Are you sure you want to kill process ${pid}?`)) return;
         try {
             await App.API.delete(`/processes/${pid}`);
             App.UI.toast('success', `Process ${pid} terminated`);

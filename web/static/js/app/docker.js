@@ -21,16 +21,14 @@ App.Docker = {
     switchView(viewId) {
         this.activeView = viewId;
 
-        // Update Nav
+        // Keep the existing view IDs and loaders; selection is expressed by aria-pressed.
         document.querySelectorAll('.docker-nav-btn').forEach(btn => {
-            if (btn.dataset.target === viewId) {
-               btn.classList.remove('text-gray-400', 'hover:text-white', 'hover:bg-gray-700');
-               btn.classList.add('bg-blue-600', 'text-white');
-            } else {
-               btn.classList.add('text-gray-400', 'hover:text-white', 'hover:bg-gray-700');
-               btn.classList.remove('bg-blue-600', 'text-white');
-            }
+            btn.setAttribute('aria-pressed', String(btn.dataset.target === viewId));
         });
+        const menu = document.getElementById('docker-manage-menu');
+        if (menu) { menu.open = false; menu.dataset.active = String(viewId === 'networks-view'); }
+        const label = document.getElementById('docker-manage-label');
+        if (label) label.textContent = viewId === 'networks-view' ? 'Networks' : 'Manage';
 
         // Update Views
         document.querySelectorAll('.docker-view').forEach(el => el.classList.add('hidden'));
@@ -38,6 +36,14 @@ App.Docker = {
 
         // Load Data
         this.refresh();
+    },
+
+    escapeHTML(value) {
+        return String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+    },
+
+    handlerArgument(value) {
+        return this.escapeHTML(JSON.stringify(String(value ?? '')));
     },
 
     async refresh() {
@@ -181,7 +187,7 @@ App.Docker.Run = {
     async submit() {
         const name = document.getElementById('run-container-name').value;
         const ports = document.getElementById('run-container-ports').value;
-        const btn = document.querySelector('#run-image-modal button.bg-green-600');
+        const btn = document.getElementById('run-image-submit');
         
         const originalText = btn.innerHTML;
         btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Running...';
@@ -453,7 +459,7 @@ App.Docker.FilePicker = {
             // Or just show everything and only allow selecting directories?
             // For now, let's show everything but style accordingly.
             
-            const icon = file.is_dir ? 'fa-folder text-yellow-400' : 'fa-file-code text-blue-400';
+            const icon = file.is_dir ? 'fa-folder docker-picker-icon' : 'fa-file-code docker-picker-icon';
             const isSelectable = this.mode === 'directory' ? file.is_dir : true;
             
             // If mode is directory, files should probably be greyed out or just not selectable
@@ -463,10 +469,10 @@ App.Docker.FilePicker = {
             tr.className = `border-b border-gray-700/50 transition-colors ${cursorClass}`;
             tr.innerHTML = `
                 <td class="py-3 px-4 w-12 text-center"><i class="fas ${icon}"></i></td>
-                <td class="py-3 px-4 font-medium text-white">${file.name}</td>
+                <td class="py-3 px-4 font-medium text-white">${App.Docker.escapeHTML(file.name)}</td>
                 <td class="py-3 px-4 text-right">
                     ${isSelectable ? 
-                        `<button class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs">Select</button>` : 
+                        `<button class="docker-inline-button">Select</button>` :
                         ''}
                 </td>
             `;
@@ -502,12 +508,12 @@ App.Docker.FilePicker = {
         // Let's add a "Select Current Folder" button in the header or top of list if in directory mode.
         if (this.mode === 'directory') {
              const tr = document.createElement('tr');
-             tr.className = 'border-b border-gray-700/50 bg-blue-900/20 hover:bg-blue-900/30 cursor-pointer';
+             tr.className = 'docker-picker-current cursor-pointer';
              tr.innerHTML = `
                 <td class="py-3 px-4 text-center"><i class="fas fa-check text-green-400"></i></td>
-                <td class="py-3 px-4 font-medium text-green-400 italic">Select Current Directory (".")</td>
+                <td class="py-3 px-4">Use current directory</td>
                 <td class="py-3 px-4 text-right">
-                     <button class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs select-current-btn">Select</button>
+                     <button class="docker-inline-button select-current-btn">Select</button>
                 </td>
              `;
              tr.onclick = (e) => {
@@ -556,4 +562,19 @@ App.Docker.FilePicker = {
 // Initialize when DOM is ready (or called from main.js)
 document.addEventListener('DOMContentLoaded', () => {
     App.Docker.init();
+});
+
+document.addEventListener('click', event => {
+    const menu = document.getElementById('docker-manage-menu');
+    if (menu?.open && !menu.contains(event.target)) menu.open = false;
+});
+
+document.addEventListener('click', event => {
+    document.querySelectorAll('.docker-container-menu[open]').forEach(menu => {
+        if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
+    });
+});
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.docker-container-menu[open], #docker-manage-menu[open]').forEach(menu => { menu.open = false; menu.querySelector('summary')?.focus(); });
 });

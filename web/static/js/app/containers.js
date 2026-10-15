@@ -23,38 +23,30 @@ App.Docker.Containers = {
         }
         App.state.lastContainers = containers;
 
+        const count = App.UI.el('docker-containers-count');
+        if (count) count.textContent = `${containers.length} ${containers.length === 1 ? 'container' : 'containers'}`;
         if (containers.length === 0) {
-            grid.innerHTML = `<div class="col-span-full text-center py-8 text-gray-400"><i class="fas fa-box-open text-4xl mb-2"></i><p>No containers found</p></div>`;
+            grid.innerHTML = `<div class="docker-empty-state"><i class="fas fa-box-open" aria-hidden="true"></i><h3>No containers yet</h3><p>Run a local image or build a Docker Compose project to create containers.</p></div>`;
             return;
         }
-
-        grid.innerHTML = containers.map(c => `
-            <div class="bg-gray-700 rounded-lg p-4 ${c.state === 'running' ? 'container-running' : 'container-stopped'} transition-all duration-300 hover:shadow-xl">
-                <div class="flex items-start justify-between mb-3">
-                    <div class="flex-1 min-w-0">
-                        <h3 class="font-bold text-lg text-white truncate" title="${c.name}">${c.name}</h3>
-                        <p class="text-sm text-gray-400 truncate" title="${c.image}">${c.image}</p>
-                    </div>
-                    <span class="px-2 py-1 text-xs rounded-full ${c.state === 'running' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${c.state}</span>
-                </div>
-                <p class="text-xs text-gray-500 mb-4">${c.status}</p>
-                <div class="flex space-x-2">
-                    ${c.state === 'running' ? 
-                        `<button id="btn-stop-${c.id}" onclick="App.Docker.Containers.action('${c.id}', 'stop')" class="flex-1 bg-red-600 hover:bg-red-700 px-3 py-2 rounded text-sm text-white transition-colors"><i class="fas fa-stop mr-1"></i>Stop</button>` :
-                        `<button id="btn-start-${c.id}" onclick="App.Docker.Containers.action('${c.id}', 'start')" class="flex-1 bg-green-600 hover:bg-green-700 px-3 py-2 rounded text-sm text-white transition-colors"><i class="fas fa-play mr-1"></i>Start</button>`
-                    }
-                    <button id="btn-restart-${c.id}" onclick="App.Docker.Containers.action('${c.id}', 'restart')" class="flex-1 bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded text-sm text-white transition-colors"><i class="fas fa-sync mr-1"></i>Restart</button>
-                    <button id="btn-delete-${c.id}" onclick="App.Docker.Containers.action('${c.id}', 'delete')" class="px-3 py-2 text-red-400 hover:text-red-300 rounded text-sm"><i class="fas fa-trash"></i></button>
-                </div>
-                <div class="mt-2 text-right">
-                     <button onclick="App.Docker.Containers.logs('${c.id}')" class="text-xs text-gray-400 hover:text-white"><i class="fas fa-terminal mr-1"></i>Logs</button>
-                </div>
+        const text = value => App.Docker.escapeHTML(value);
+        const arg = value => App.Docker.handlerArgument(value);
+        grid.innerHTML = containers.map(c => `<article class="docker-container-card">
+            <div class="docker-container-heading"><div><h3 title="${text(c.name)}">${text(c.name)}</h3><p class="docker-container-id">${text(String(c.id).substring(0,12))}</p></div><span class="app-status" data-status="${text(c.state)}"><span aria-hidden="true"></span>${text(c.state)}</span></div>
+            <dl class="docker-container-details"><div><dt>Image</dt><dd title="${text(c.image)}">${text(c.image)}</dd></div><div><dt>Status</dt><dd>${text(c.status)}</dd></div></dl>
+            <div class="docker-container-actions">
+                <button onclick="App.Docker.Containers.logs(${arg(c.id)})" class="console-button secondary"><i class="fas fa-terminal" aria-hidden="true"></i>Logs</button>
+                ${c.state === 'running' ? `<button id="btn-stop-${text(c.id)}" onclick="App.Docker.Containers.action(${arg(c.id)}, 'stop')" class="console-button secondary"><i class="fas fa-stop" aria-hidden="true"></i>Stop</button>` : `<button id="btn-start-${text(c.id)}" onclick="App.Docker.Containers.action(${arg(c.id)}, 'start')" class="console-button secondary"><i class="fas fa-play" aria-hidden="true"></i>Start</button>`}
+                <details class="docker-container-menu"><summary aria-label="More actions for ${text(c.name)}"><i class="fas fa-ellipsis" aria-hidden="true"></i></summary><div>
+                    <button id="btn-restart-${text(c.id)}" onclick="App.Docker.Containers.action(${arg(c.id)}, 'restart')" class="docker-inline-button"><i class="fas fa-rotate" aria-hidden="true"></i>Restart</button>
+                    <button id="btn-delete-${text(c.id)}" onclick="App.Docker.Containers.action(${arg(c.id)}, 'delete')" class="docker-inline-button docker-danger-button"><i class="far fa-trash-alt" aria-hidden="true"></i>Remove container</button>
+                </div></details>
             </div>
-        `).join('');
+        </article>`).join('');
     },
 
     async action(id, actionType) {
-        if (actionType === 'delete' && !confirm('Are you sure you want to remove this container?')) return;
+        if (actionType === 'delete' && !await App.UI.confirm('Are you sure you want to remove this container?')) return;
         
         const btnId = `btn-${actionType}-${id}`;
         const btn = document.getElementById(btnId);
@@ -141,10 +133,7 @@ App.Docker.Containers = {
                         .replace(/"/g, "&quot;")
                         .replace(/'/g, "&#039;");
 
-                    return `<div class="font-mono text-xs hover:bg-gray-900 px-1 rounded select-text">
-                        <span class="text-gray-600 mr-2 select-none">[${time}]</span>
-                        <span class="${colorClass}">${safeMessage}</span>
-                    </div>`;
+                    return `<div class="docker-log-line"><span class="docker-log-time">[${time}]</span><span class="${colorClass}">${safeMessage}</span></div>`;
                 }).join('');
                 
                 // Scroll to bottom
@@ -153,7 +142,7 @@ App.Docker.Containers = {
                  output.innerHTML = '<div class="text-red-500">Failed to load logs.</div>';
             }
         } catch (e) {
-            output.innerHTML = `<div class="text-red-500">Error: ${e.message}</div>`;
+            output.innerHTML = `<div class="text-red-500">Error: ${App.Docker.escapeHTML(e.message)}</div>`;
         }
     },
 

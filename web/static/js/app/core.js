@@ -7,6 +7,7 @@ window.App = {
     config: {
         API_BASE: '/api',
         SERVER_ID: document.getElementById('current-server-id')?.value,
+        SERVER_HOST: document.getElementById('current-server-id')?.dataset.host,
     },
     state: {
         lastProcesses: [],
@@ -26,7 +27,7 @@ App.API = {
     // Helper to constructing URLs with Server context if needed
     url(endpoint) {
         // Global endpoints or already scoped ones (not per-server)
-        if (endpoint.startsWith('/servers') || endpoint.startsWith('/stats') || endpoint.startsWith('/github')) {
+        if (endpoint.startsWith('/servers') || endpoint.startsWith('/stats') || endpoint.startsWith('/github') || endpoint.startsWith('/operations')) {
             return endpoint;
         }
         
@@ -48,7 +49,16 @@ App.API = {
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const text = await response.text();
+                let message = text;
+                try { const value = JSON.parse(text); message = value.error || value.message || text; } catch {}
+                const retryAfter = Number(response.headers.get('Retry-After')) || 0;
+                if (response.status === 429) message = `Too many API requests. Try again in ${retryAfter || 1} seconds.`;
+                if (response.status === 401) message = 'Your session expired. Sign in again.';
+                const error = new Error(message || `Request failed (${response.status}).`);
+                error.status = response.status;
+                error.retryAfter = retryAfter;
+                throw error;
             }
 
             return await response.json();

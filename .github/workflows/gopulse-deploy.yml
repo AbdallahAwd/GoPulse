@@ -2,7 +2,7 @@ name: CI and GoPulse deploy
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read

@@ -12,6 +12,8 @@ import (
 
 // ExportStore combines all entity stores to support full dashboard export/import.
 type ExportStore struct {
+	CronJobs      *CronStore
+	ImportCronJob func(models.CronJob, string) (string, error)
 	Servers       *ServerStore
 	Projects      *ProjectStore
 	Databases     *DatabaseStore
@@ -68,6 +70,25 @@ func (s *ExportStore) ExportAll() (*models.GoPulseExport, error) {
 		LoadBalancers: lbs,
 	}
 
+	export.QdrantConfigs = make(map[string]models.QdrantConfig)
+	if s.CronJobs != nil {
+		export.CronJobs, err = s.CronJobs.List("")
+		if err != nil {
+			return nil, err
+		}
+		for i := range export.CronJobs {
+			export.CronJobs[i].LastRun = nil
+		}
+	}
+	for _, db := range export.Databases {
+		if db.Type == "qdrant" {
+			cfg, err := s.Databases.GetQdrantConfig(db.ID)
+			if err != nil {
+				return nil, fmt.Errorf("Qdrant configuration missing for %s", db.ID)
+			}
+			export.QdrantConfigs[db.ID] = cfg
+		}
+	}
 	// Ensure nil slices become empty arrays in JSON.
 	if export.Servers == nil {
 		export.Servers = []models.Server{}
@@ -207,6 +228,20 @@ func (s *ExportStore) ImportAll(data *models.GoPulseExport, mode string) (*model
 			}
 		}
 	}
+	for id, cfg := range data.QdrantConfigs {
+		db, err := s.Databases.GetDatabase(id)
+		if err != nil || db.Type != "qdrant" {
+			continue
+		}
+		if mode == "skip" {
+			if _, err := s.Databases.GetQdrantConfig(id); err == nil {
+				continue
+			}
+		}
+		if err := s.Databases.SetQdrantConfig(id, cfg); err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("Qdrant settings %s: %v", id, err))
+		}
+	}
 
 	// --- Domains ---
 	for _, dom := range data.Domains {
@@ -269,12 +304,6 @@ func (s *ExportStore) ImportAll(data *models.GoPulseExport, mode string) (*model
 			if addErr := s.LoadBalancers.AddLoadBalancer(lb); addErr != nil {
 				report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s (%s): %v", lb.Name, lb.ID, addErr))
 			} else {
-				// Also insert backends
-				for _, b := range lb.Backends {
-					if bErr := s.LoadBalancers.AddBackend(b); bErr != nil {
-						report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s backend %s: %v", lb.Name, b.ID, bErr))
-					}
-				}
 				report.LoadBalancersCreated++
 			}
 		} else {
@@ -289,16 +318,31 @@ func (s *ExportStore) ImportAll(data *models.GoPulseExport, mode string) (*model
 				if addErr := s.LoadBalancers.AddLoadBalancer(lb); addErr != nil {
 					report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s (%s) re-add: %v", lb.Name, lb.ID, addErr))
 				} else {
-					for _, b := range lb.Backends {
-						if bErr := s.LoadBalancers.AddBackend(b); bErr != nil {
-							report.Errors = append(report.Errors, fmt.Sprintf("load balancer %s backend %s: %v", lb.Name, b.ID, bErr))
-						}
-					}
 					report.LoadBalancersUpdated++
 				}
 			}
 		}
 	}
 
+	// Cron definitions are validated by the scheduler and restored paused.
+	for _, job := range data.CronJobs {
+		if s.ImportCronJob == nil {
+			report.Errors = append(report.Errors, "cron job "+job.ID+": cron import is unavailable")
+			continue
+		}
+		outcome, err := s.ImportCronJob(job, mode)
+		if err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("cron job %s (%s): %v", job.Name, job.ID, err))
+			continue
+		}
+		switch outcome {
+		case "created":
+			report.CronJobsCreated++
+		case "updated":
+			report.CronJobsUpdated++
+		case "skipped":
+			report.CronJobsSkipped++
+		}
+	}
 	return report, nil
 }

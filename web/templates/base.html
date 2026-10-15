@@ -6,6 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Title}}</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Match legacy utilities (including hover/focus and generated classes) to the console.
+        const consoleNeutrals = {50:'#f1f2f4',100:'#e7e8eb',200:'#d2d4d9',300:'#b9bdc5',400:'#96999f',500:'#777b83',600:'#51555e',700:'#2b2d32',750:'#26282d',800:'#18191c',850:'#151619',900:'#101113',950:'#0c0d0f',955:'#090a0b'};
+        const consoleAccent = {50:'#f2fbe4',100:'#e5f8c6',200:'#d3ff87',300:'#c3f36b',400:'#c3f36b',500:'#b5df65',600:'#93b84f',700:'#627b37',800:'#455533',900:'#242c1b',950:'#1b2116',955:'#151a10'};
+        tailwind.config = {theme:{extend:{colors:{gray:consoleNeutrals,slate:consoleNeutrals,blue:consoleAccent,indigo:consoleAccent,purple:consoleAccent,cyan:consoleAccent,pink:consoleAccent},fontSize:{'2xs':'11px'}}}};
+    </script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
     <style>
@@ -48,66 +54,134 @@
                 opacity: .5;
             }
         }
+        .skip-link { position:fixed; top:-80px; left:16px; z-index:100; background:#2563eb; padding:12px 16px; border-radius:8px; }
+        .skip-link:focus { top:12px; }
+        .workspace-header { background:#181f2b; border-bottom:1px solid #334155; }
+        .workspace-topbar { max-width:1440px; margin:auto; display:flex; align-items:center; justify-content:space-between; padding:18px 24px; gap:12px; }
+        .workspace-brand { font-size:24px; font-weight:700; white-space:nowrap; }
+        .workspace-brand i { color:#60a5fa; margin-right:8px; }
+        .workspace-account { display:flex; align-items:center; gap:20px; }
+        .workspace-signout { color:#cbd5e1; font-size:14px; }
+        .workspace-navigation { max-width:1440px; margin:auto; display:flex; flex-wrap:wrap; gap:4px; padding:0 24px 12px; }
+        .workspace-navigation a { padding:10px 14px; border-radius:8px; display:flex; align-items:center; gap:9px; color:#94a3b8; font-size:14px; font-weight:600; }
+        .workspace-navigation a:hover { background:#253044; color:white; }
+        .workspace-navigation a[aria-current="page"] { background:#233553; color:#bfdbfe; }
+        .workspace-menu-toggle { display:none; min-width:44px; min-height:44px; border:1px solid #475569; border-radius:8px; }
+        .workspace-header a:focus-visible, .workspace-header button:focus-visible, .server-navigation a:focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
+        .workspace-page { max-width:1320px; padding:32px 24px; margin:auto; }
+        .workspace-page-heading { display:flex; justify-content:space-between; gap:16px; align-items:center; margin-bottom:28px; }
+        .workspace-page h1 { font-size:28px; font-weight:700; }
+        .workspace-page-heading p { color:#94a3b8; margin-top:6px; }
+        .workspace-panel { background:#181f2b; border:1px solid #334155; border-radius:12px; padding:24px; }
+        .workspace-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; background:#2563eb; padding:10px 16px; border-radius:8px; font-size:14px; font-weight:600; min-height:44px; }
+        .workspace-button.secondary { background:#263244; border:1px solid #475569; }
+        .workspace-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+        .workspace-summary { display:block; }
+        .workspace-summary strong { display:block; font-size:32px; margin:8px 0; }
+        .workspace-summary span, .workspace-help { color:#94a3b8; font-size:14px; }
+        .workspace-toolbar { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:20px; }
+        .workspace-input { background:#111827; border:1px solid #475569; border-radius:8px; padding:10px 12px; min-height:44px; color:#f1f5f9; }
+        .workspace-toolbar input { flex:1; min-width:160px; }
+        .workspace-table-wrap { overflow-x:auto; }
+        .workspace-table { width:100%; text-align:left; }
+        .workspace-table th { font-size:12px; color:#94a3b8; padding:12px; border-bottom:1px solid #334155; }
+        .workspace-table td { padding:16px 12px; border-bottom:1px solid #273244; font-size:14px; }
+        .workspace-table a { color:#93c5fd; }
+        .workspace-state { display:inline-block; background:#273244; border:1px solid #475569; padding:4px 8px; border-radius:6px; font-size:12px; text-transform:capitalize; }
+        .workspace-empty { text-align:center; padding:40px 16px; color:#cbd5e1; }
+        .workspace-empty p { color:#94a3b8; margin-top:8px; }
+        .workspace-alert { color:#fecaca; background:#451d28; border:1px solid #7f3348; padding:14px; border-radius:8px; margin-bottom:16px; }
+        .workspace-picker { background:#181f2b; color:white; border:1px solid #475569; border-radius:12px; padding:24px; width:min(480px,calc(100% - 32px)); }
+        .workspace-picker::backdrop { background:rgba(0,0,0,.75); }
+        .server-navigation { width:240px; flex-shrink:0; padding:16px; border:1px solid #334155; border-radius:12px; background:#181f2b; }
+        .server-navigation a { display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:8px; color:#94a3b8; font-size:14px; }
+        .server-navigation a[aria-current="page"] { background:#233553; color:#bfdbfe; }
+        .server-navigation h2 { color:#94a3b8; text-transform:uppercase; font-size:11px; letter-spacing:.08em; margin:12px 12px 6px; }
+        .server-mobile-navigation { display:none; }
+        @media(max-width:1023px) { .server-navigation { display:none; } .server-mobile-navigation { display:block; width:100%; margin-bottom:16px; } }
+        @media(max-width:767px) {
+            .workspace-topbar { padding:12px 16px; }
+            .workspace-brand { font-size:21px; }
+            .workspace-account { gap:12px; }
+            #ws-status { display:none; }
+            .workspace-menu-toggle { display:block; }
+            .workspace-navigation { display:none; padding:0 16px 16px; }
+            .workspace-navigation[data-open="true"] { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .workspace-page { padding:24px 16px; }
+            .workspace-page-heading { align-items:flex-start; flex-direction:column; }
+            .workspace-grid { grid-template-columns:1fr; }
+            .workspace-panel { padding:16px; }
+            .workspace-table, .workspace-table tbody { display:block; }
+            .workspace-table thead { display:none; }
+            .workspace-table tr { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border-bottom:1px solid #334155; padding:12px 0; }
+            .workspace-table td { display:block; padding:8px 4px; border:0; min-width:0; overflow-wrap:anywhere; }
+            .workspace-table td:first-child { grid-column:1 / -1; font-weight:600; font-size:16px; }
+            .workspace-table td:last-child { grid-column:1 / -1; }
+            .workspace-table td[data-label]::before { content:attr(data-label); display:block; font-size:11px; color:#94a3b8; margin-bottom:4px; font-weight:400; }
+        }
     </style>
+    <link rel="stylesheet" href="/static/css/console.css">
+    <link rel="stylesheet" href="/static/css/components.css">
 </head>
 
-<body class="bg-gray-900 text-gray-100">
+<body class="console bg-gray-900 text-gray-100 {{if or (eq .Page "login") (eq .Page "register")}}console-auth{{end}}" data-page="{{.Page}}">
     {{if and (ne .Page "login") (ne .Page "register")}}
-    <nav class="bg-gray-800 border-b border-gray-700">
-        <div class="container mx-auto px-4 py-4">
-            <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-8">
-                    <div class="flex items-center space-x-3">
-                        <i class="fas fa-server text-blue-400 text-2xl"></i>
-                        <a href="/" class="text-2xl font-bold text-white hover:text-blue-400 transition-colors">GoPulse</a>
-                    </div>
-                    <div class="hidden sm:flex items-center space-x-1">
-                        <a href="/" class="px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center space-x-1.5 {{if or (eq .Page "servers") (eq .Page "dashboard")}}text-white bg-gray-700/50 border border-gray-600/30{{else}}text-gray-400 hover:text-white hover:bg-gray-700/30{{end}}">
-                            <i class="fas fa-network-wired text-xs"></i>
-                            <span>Servers</span>
-                        </a>
-                        <a href="/users" class="px-3 py-2 rounded-lg text-sm font-semibold transition-all flex items-center space-x-1.5 {{if eq .Page "users"}}text-white bg-gray-700/50 border border-gray-600/30{{else}}text-gray-400 hover:text-white hover:bg-gray-700/30{{end}}">
-                            <i class="fas fa-users-cog text-xs"></i>
-                            <span>User Management</span>
-                        </a>
-                    </div>
-                </div>
-                <div class="flex items-center space-x-4">
-                    <div id="ws-status" class="flex items-center space-x-2">
-                        <span class="h-2 w-2 rounded-full bg-gray-500" id="ws-indicator"></span>
-                        <span class="text-sm text-gray-400">Connecting...</span>
-                    </div>
-                    {{if .ServerID}}
-                    <button onclick="App.System.showPowerModal()"
-                        class="text-gray-400 hover:text-red-500 transition-colors" title="Power Options">
-                        <i class="fas fa-power-off"></i>
-                    </button>
-                    {{end}}
-                    <a href="/logout" class="text-gray-400 hover:text-red-500 transition-all flex items-center space-x-1.5 px-3 py-1.5 rounded-lg hover:bg-red-500/10 border border-transparent hover:border-red-500/20 text-sm font-semibold" title="Sign Out">
-                        <i class="fas fa-sign-out-alt"></i>
-                        <span class="hidden sm:inline">Sign Out</span>
-                    </a>
-                </div>
-            </div>
-        </div>
-    </nav>
+    <a class="skip-link" href="#page-content">Skip to content</a>
+    <aside class="console-rail" id="console-rail">
+        <a href="/" class="console-logo"><span class="console-logo-mark"><i class="fas fa-layer-group" aria-hidden="true"></i></span>GoPulse<span class="console-logo-dot">.</span></a>
+        <div class="console-workspace"><span class="console-avatar">G</span><div><strong>My infrastructure</strong><small>Server management</small></div></div>
+        {{if eq .Page "dashboard"}}
+        <a href="/" class="console-back"><i class="fas fa-arrow-left" aria-hidden="true"></i> All servers</a>
+        <div class="console-server-context"><span class="console-eyebrow">SELECTED SERVER</span><strong>{{.ServerName}}</strong><code>{{.ServerHost}}</code></div>
+        <nav id="dashboard-sidebar-nav" class="server-navigation" aria-label="Server sections">
+            {{$group := ""}}{{range .ServerNavigation}}{{if or (not $.IsDbOnly) (not .AppOnly)}}
+            {{if ne $group .Group}}<h2>{{.Group}}</h2>{{$group = .Group}}{{end}}
+            <a href="?view={{.Key}}" class="tab-btn" data-tab="{{.Key}}" id="nav-btn-{{.Key}}"><i class="fas {{.Icon}}" aria-hidden="true"></i><span>{{.Label}}</span></a>
+            {{end}}{{end}}
+        </nav>
+        {{else}}
+        <p class="console-nav-label">WORKSPACE</p>
+        <nav id="workspace-navigation" class="workspace-navigation" aria-label="Workspace" data-open="false">
+            {{range .GlobalNavigation}}<a href="{{.URL}}" data-section="{{.Key}}" {{if eq $.GlobalSection .Key}}aria-current="page"{{end}}><i class="fas {{.Icon}}" aria-hidden="true"></i><span>{{.Label}}</span>{{if eq .Key "servers"}}<span class="console-nav-count" id="rail-server-count">—</span>{{end}}</a>{{end}}
+        </nav>
+        <div class="console-rail-note"><i class="fas fa-network-wired" aria-hidden="true"></i><strong>Your stack. Your servers.</strong><p>Applications, data, and traffic, managed from one place.</p></div>
+        {{end}}
+        <div class="console-rail-footer">{{if .CanManageUsers}}<a href="/users"><i class="fas fa-user-group" aria-hidden="true"></i> Team &amp; access</a>{{end}}<a href="/logout"><i class="fas fa-arrow-right-from-bracket" aria-hidden="true"></i> Sign out</a><span><span class="console-small-mark">G</span> GoPulse console</span></div>
+    </aside>
+    <header class="console-topbar">
+        <div class="console-topbar-path"><button id="workspace-menu-toggle" class="workspace-menu-toggle" aria-label="Open navigation" aria-controls="console-rail" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button><span class="console-topbar-home">Workspace</span><i class="fas fa-chevron-right" aria-hidden="true"></i><strong>{{if eq .Page "dashboard"}}<a href="/">Servers</a><i class="fas fa-chevron-right console-path-arrow" aria-hidden="true"></i>{{.ServerName}}{{else if eq .Page "servers"}}Servers{{else if eq .Page "users"}}Team &amp; access{{else}}{{.SectionTitle}}{{end}}</strong></div>
+        <div class="console-topbar-actions">{{if eq .Page "dashboard"}}<label class="sr-only" for="console-server-switcher">Switch server</label><select id="console-server-switcher" class="console-switcher"><option value="{{.ServerID}}">{{.ServerName}}</option></select>{{end}}<div id="ws-status" class="flex items-center gap-2" title="Dashboard live connection; not server health"><span class="h-2 w-2 rounded-full bg-gray-500" id="ws-indicator"></span><span class="text-xs text-gray-400">Connecting…</span></div><span class="console-account-avatar" title="Your workspace">G</span></div>
+    </header>
+    <button class="console-mobile-scrim" id="console-mobile-scrim" aria-label="Close navigation" hidden></button>
     {{end}}
 
-    {{template "content" .}}
+    <div id="page-content" tabindex="-1">{{template "content" .}}</div>
 
-    <!-- Toast Notification -->
-    <div id="toast"
-        class="fixed bottom-4 right-4 bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 transform translate-y-32 transition-transform duration-300 hidden z-50">
-        <div class="flex items-center space-x-3">
-            <i id="toast-icon" class="fas fa-info-circle text-blue-500"></i>
-            <p id="toast-message" class="text-white"></p>
-        </div>
+    <!-- Shared feedback: text is assigned safely by App.UI. -->
+    <div id="toast" class="ui-toast hidden" role="status" aria-live="polite" aria-atomic="true">
+        <span class="ui-toast-symbol"><i id="toast-icon" class="fas fa-info-circle" aria-hidden="true"></i></span>
+        <div class="ui-toast-copy"><strong id="toast-title">Notice</strong><p id="toast-message"></p></div>
+        <button type="button" class="ui-icon-button" aria-label="Dismiss notification" onclick="App.UI.dismissToast()"><i class="fas fa-times" aria-hidden="true"></i></button>
     </div>
 
+    <dialog id="ui-confirm-dialog" class="ui-confirm" aria-labelledby="ui-confirm-title" aria-describedby="ui-confirm-message">
+        <form method="dialog">
+            <div class="ui-confirm-body">
+                <span class="ui-confirm-symbol"><i class="fas fa-triangle-exclamation" aria-hidden="true"></i></span>
+                <h2 id="ui-confirm-title">Confirm action</h2>
+                <p id="ui-confirm-message"></p>
+                <label id="ui-confirm-input-label" hidden>Confirmation text<input id="ui-confirm-input" type="text" autocomplete="off"></label>
+            </div>
+            <div class="ui-dialog-actions">
+                <button type="submit" value="cancel" formnovalidate class="ui-button ui-button-secondary" autofocus>Cancel</button>
+                <button type="submit" value="confirm" id="ui-confirm-submit" class="ui-button ui-button-danger">Confirm action</button>
+            </div>
+        </form>
+    </dialog>
 
     <!-- Power Modal -->
     <div id="power-modal"
-        class="fixed inset-0 bg-black bg-opacity-80 hidden z-50 flex items-center justify-center opacity-0 transition-opacity duration-300">
+        class="ui-dialog-overlay fixed inset-0 bg-black bg-opacity-80 hidden z-50 flex items-center justify-center opacity-0 transition-opacity duration-300">
         <div
             class="bg-gray-800 rounded-lg shadow-2xl w-full max-w-md border border-gray-700 transform scale-95 transition-transform duration-300">
             <div class="flex items-center justify-between p-4 border-b border-gray-700 bg-gray-900 bg-opacity-50">
@@ -161,8 +235,9 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js" type="text/javascript" charset="utf-8"></script>
 
-    <script src="/static/js/websocket.js"></script>
     <script src="/static/js/app/core.js"></script>
+    <script src="/static/js/app/ui.js"></script>
+    <script src="/static/js/websocket.js"></script>
     <script src="/static/js/app/system.js"></script>
     <script src="/static/js/app/processes.js"></script>
     <script src="/static/js/app/docker.js"></script>
@@ -177,9 +252,18 @@
     <script src="/static/js/app/editor.js"></script>
     <script src="/static/js/app/charts.js"></script>
     <script src="/static/js/app/terminal.js"></script>
+    <script src="/static/js/app/database_connection.js"></script>
     <script src="/static/js/app/databases.js"></script>
+ <script src="/static/js/app/infrastructure.js"></script>
+ <script src="/static/js/app/load_balancer_wizard.js"></script>
     <script src="/static/js/app/system_users.js"></script>
     <script src="/static/js/app/firewall.js"></script>
+    <script src="/static/js/app/cron.js"></script>
+    <script src="/static/js/app/navigation.js"></script>
+    <script src="/static/js/app/workspace.js"></script>
+    <script src="/static/js/app/fleet.js"></script>
+    <script src="/static/js/app/agents.js"></script>
+    <script src="/static/js/app/dashboard_settings.js"></script>
     <script src="/static/js/app/main.js"></script>
 </body>
 

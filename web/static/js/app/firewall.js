@@ -517,8 +517,8 @@ App.Firewall = {
 	},
 
 	// --- Delete Rule Action ---
-	confirmDeleteRule(id, port) {
-		if (confirm(`Are you sure you want to delete the rule for port "${port}"?`)) {
+	async confirmDeleteRule(id, port) {
+		if (await App.UI.confirm(`Are you sure you want to delete the rule for port "${port}"?`)) {
 			this.deleteRule(id);
 		}
 	},
@@ -549,7 +549,7 @@ App.Firewall = {
 			confirmMsg = `WARNING: Are you sure you want to PERMANENTLY delete ${this.state.selectedRuleIds.size} selected rules? This could disrupt SSH connectivity.`;
 		}
 
-		if (!confirm(confirmMsg)) return;
+		if (!await App.UI.confirm(confirmMsg)) return;
 
 		this.showLoading(true);
 		try {
@@ -576,11 +576,11 @@ App.Firewall = {
 		const action = this.state.enabled ? 'disable' : 'enable';
 
 		if (action === 'disable') {
-			if (!confirm('WARNING: Disabling the firewall will expose all ports on your VPS. Are you sure you want to proceed?')) {
+			if (!await App.UI.confirm('WARNING: Disabling the firewall will expose all ports on your VPS. Are you sure you want to proceed?')) {
 				return;
 			}
 		} else {
-			if (!confirm('Enable firewall? Lockout prevention will check and allow your active SSH connection port.')) {
+			if (!await App.UI.confirm('Enable firewall? Lockout prevention will check and allow your active SSH connection port.')) {
 				return;
 			}
 		}
@@ -602,8 +602,8 @@ App.Firewall = {
 	},
 
 	// --- Reset Firewall ---
-	confirmReset() {
-		if (confirm('CAUTION: This will delete ALL database rule cache and run a firewall reset command on the VPS. Connection safety checks will run to preserve SSH access. Do you want to proceed?')) {
+	async confirmReset() {
+		if (await App.UI.confirm('CAUTION: This will delete ALL database rule cache and run a firewall reset command on the VPS. Connection safety checks will run to preserve SSH access. Do you want to proceed?')) {
 			this.resetFirewall();
 		}
 	},
@@ -764,7 +764,7 @@ App.Firewall = {
 	},
 
 	async restoreBackup(id) {
-		if (!confirm('WARNING: Restoring this backup will replace all current rules both in local cache and on the VPS firewall! Do you want to proceed?')) {
+		if (!await App.UI.confirm('WARNING: Restoring this backup will replace all current rules both in local cache and on the VPS firewall! Do you want to proceed?')) {
 			return;
 		}
 
@@ -785,7 +785,7 @@ App.Firewall = {
 	},
 
 	async deleteBackup(id) {
-		if (!confirm('Are you sure you want to delete this backup permanently?')) return;
+		if (!await App.UI.confirm('Are you sure you want to delete this backup permanently?')) return;
 
 		this.showLoading(true);
 		try {
@@ -850,7 +850,7 @@ App.Firewall = {
 	},
 
 	async cancelSchedule(id) {
-		if (!confirm('Are you sure you want to cancel this scheduled task?')) return;
+		if (!await App.UI.confirm('Are you sure you want to cancel this scheduled task?')) return;
 
 		this.showLoading(true);
 		try {
