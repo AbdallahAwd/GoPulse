@@ -4,10 +4,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"strings"
 	"time"
 )
 
 type OperationStore struct{ db *sql.DB }
+
+func decodeOperation(raw string, op *models.Operation) error {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	return decoder.Decode(op)
+}
 
 func NewOperationStore(path string) (*OperationStore, error) {
 	db, err := openSQLiteStore(path)
@@ -29,7 +36,7 @@ func (s *OperationStore) Get(id string) (models.Operation, error) {
 	err := s.db.QueryRow(`SELECT data FROM operations WHERE id=?`, id).Scan(&raw)
 	var op models.Operation
 	if err == nil {
-		err = json.Unmarshal([]byte(raw), &op)
+		err = decodeOperation(raw, &op)
 	}
 	return op, err
 }
@@ -46,7 +53,7 @@ func (s *OperationStore) List() ([]models.Operation, error) {
 			return nil, err
 		}
 		var op models.Operation
-		if err := json.Unmarshal([]byte(raw), &op); err != nil {
+		if err := decodeOperation(raw, &op); err != nil {
 			return nil, err
 		}
 		ops = append(ops, op)
@@ -66,7 +73,7 @@ func (s *OperationStore) Recover() error {
 			return err
 		}
 		var op models.Operation
-		if err := json.Unmarshal([]byte(raw), &op); err != nil {
+		if err := decodeOperation(raw, &op); err != nil {
 			rows.Close()
 			return err
 		}
@@ -121,7 +128,7 @@ func (s *OperationStore) GetByRequest(owner, key string) (models.Operation, erro
 	err := s.db.QueryRow(`SELECT data FROM operations WHERE owner=? AND json_extract(data,'$.request_key')=?`, owner, key).Scan(&raw)
 	var op models.Operation
 	if err == nil {
-		err = json.Unmarshal([]byte(raw), &op)
+		err = decodeOperation(raw, &op)
 	}
 	return op, err
 }

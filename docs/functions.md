@@ -1,6 +1,6 @@
 # Serverless Functions
 
-GoPulse Functions runs short Python and JavaScript handlers in disposable Docker containers on a registered Linux server. Create a draft in **Server → Functions**, deploy it, then invoke the deployed version with a test event, a cron schedule, or a dedicated authenticated HTTP trigger. No AWS account is required.
+GoPulse Functions runs short Python and JavaScript handlers in disposable Docker containers on a registered Linux server. Create a draft in **Server → Functions**, deploy it, then invoke the deployed version with a test event, a cron schedule, or a dedicated authenticated HTTP trigger, or the [MCP gateway](mcp-functions.md). No AWS account is required.
 
 ## Setup and first invocation
 
@@ -9,7 +9,7 @@ The managed host needs Linux, Bash, GNU `timeout`, Docker Engine, a verified SSH
 1. Open **Functions → Create function** on a managed server.
 2. Choose **Python 3.13** or **JavaScript / Node.js 24**. Start with the supplied example. Save the draft.
 3. Select **Deploy draft**, then open its deployment logs. The previous deployed version remains active if validation fails. Deployment validates syntax, not application behavior; test an event before relying on it.
-4. Open the function, enter a JSON event, and select **Run function**. Returns are JSON records in the invocation logs alongside stdout and stderr.
+4. Open the function, enter a JSON event, and select **Run function**. The return value is stored separately as JSON (up to 32 KiB), alongside bounded stdout/stderr logs.
 5. Optional: edit the draft to enable a cron or HTTP trigger, then deploy again. For HTTP, create a bearer token in the function details and copy it immediately. It is shown once; rotation invalidates the previous token.
 
 Python uses `def handler(event, context)` or `async def handler(event, context)`. JavaScript uses CommonJS `module.exports.handler = async (event, context) => { ... }`. Only the runtime's standard library is available. Context contains `invocation_id`, `function_id`, `version_id`, and `trigger`. Each invocation starts fresh. There is no package installation, environment-secret manager, outbound network access, persistent disk, or provisioned warm container in this release.
@@ -36,7 +36,7 @@ curl --request POST 'https://YOUR-GOPULSE/api/function-triggers/SERVER_ID/FUNCTI
   --data '{"name":"World"}'
 ```
 
-Protect HTTP tokens and use HTTPS. Tokens cannot read code, retrieve logs, deploy or cancel functions. GoPulse stores only their SHA-256 hash. Trigger calls also recheck the current owner's account permissions and server scope. Pausing triggers disables both HTTP and scheduled execution immediately; manual runs remain available. Resuming schedules starts from the next future slot.
+Protect HTTP tokens and use HTTPS. Tokens cannot read code, retrieve logs, deploy or cancel functions. GoPulse stores only their SHA-256 hash. Trigger calls also recheck the current owner's account permissions and server scope. Pausing triggers disables HTTP, scheduled, and MCP execution immediately; manual runs remain available. Resuming schedules starts from the next future slot.
 
 ## Requirements and operating envelope
 
@@ -115,6 +115,7 @@ All dashboard endpoints are under `/api/servers/{serverID}/functions` and requir
 | PUT /{id} | Replace draft; increment revision |
 | DELETE /{id} | Delete function, versions, token hash and history; reject active/pending-cleanup attempts |
 | POST /{id}/deploy | Deploy current draft; return 202 run receipt |
+| POST /{id}/mcp | Immediately enable/disable MCP exposure; requires deployed version to enable |
 | POST /{id}/run | Invoke deployed version with raw JSON event; return 202 receipt |
 | POST /{id}/pause | `{ "paused": true }` or false; immediate automatic-trigger switch |
 | POST /{id}/http-token | Rotate token; return plaintext once and trigger path |
@@ -155,3 +156,7 @@ GOPULSE_TEST_FUNCTION_DOCKER=1 go test ./internal/services -run '^TestFunctionsL
 ```
 
 That test pulls a runtime image and verifies non-root/read-only/no-network execution, watchdog timeout and memory failure. Never point it at a production workload. Live Docker testing was skipped during this change per the user's earlier preference.
+
+## Structured return values
+
+Invocations now store `result` separately from console logs. Both Python and JavaScript wrappers require a JSON-serializable return value whose wrapper envelope fits 32 KiB of UTF-8. Oversized or unserializable values fail the invocation. Python `None` and JavaScript `undefined` return JSON null. Existing historical runs have no separate result field. Results survive console log truncation and follow the same function history retention policy. The stream framing is an output delimiter, not a security boundary; all handler output remains untrusted. See [MCP functions](mcp-functions.md) for exposure, approvals, and assistant result access.

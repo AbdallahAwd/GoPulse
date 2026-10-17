@@ -17,6 +17,7 @@ App.Functions = {
   this.el('fn-detail-close').addEventListener('click',()=>{this.selected=null;this.clearToken();this.el('fn-detail').classList.add('hidden');});
   this.el('fn-list').addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(b)this.action(b.dataset.action,b.dataset.id);});
   this.el('fn-runs').addEventListener('click',e=>{const b=e.target.closest('button[data-run]');if(!b)return;if(b.dataset.action==='cancel')this.action('cancel',this.selected,b.dataset.run);else{this.selectedRun=b.dataset.run;this.renderLogs();}});
+  this.el('fn-mcp-toggle')?.addEventListener('click',()=>this.action('mcp',this.selected));
   this.el('fn-run')?.addEventListener('click',()=>this.action('run',this.selected));this.el('fn-token')?.addEventListener('click',()=>this.action('token',this.selected));
  },
  async load() {this.init();if(!this.timer)this.timer=setInterval(()=>{if(!document.hidden && App.Navigation.current==='functions')this.refresh();},3000);await this.refresh();},
@@ -53,6 +54,7 @@ App.Functions = {
   const id=this.selected,f=this.functions.find(f=>f.id===id);if(!f){this.selected=null;this.clearToken();this.el('fn-detail').classList.add('hidden');return;}
   try{const [runs,versions]=await Promise.all([App.API.get(this.base(id)+'/runs'),App.API.get(this.base(id)+'/versions')]);if(generation!==this.generation || id!==this.selected)return;this.runs=runs.data || [];this.versions=versions.data || [];this.el('fn-detail').classList.remove('hidden');this.el('fn-detail-title').textContent=f.draft.name;this.el('fn-detail-info').textContent=f.deployed?`Running revision ${f.deployed.revision} · ${f.deployed.id}`:'Draft only. Deploy before running.';
    this.el('fn-triggers').textContent=f.paused?'Automatic triggers are paused. Manual runs remain available.':f.deployed?`Manual${f.deployed.spec.http_enabled?' · Authenticated HTTP':''}${f.deployed.spec.schedule_enabled?' · '+f.deployed.spec.schedule+' ('+f.deployed.spec.timezone+')':''}`:'No deployed triggers.';
+   this.el('fn-mcp-url').value=window.location.origin+'/api/mcp';this.el('fn-mcp-tool').value='function_'+f.id.replaceAll('-','');this.el('fn-mcp-status').textContent=f.mcp_enabled?(f.paused?'MCP selected, triggers paused.':'Selected for MCP. Assistants with permission can discover and run this deployment.'):'Hidden from MCP. Enable only functions intended for AI assistants.';if(this.el('fn-mcp-toggle')){this.el('fn-mcp-toggle').textContent=f.mcp_enabled?'Remove from MCP':'Expose to MCP';this.el('fn-mcp-toggle').disabled=this.busy || !f.deployed;}
    if(this.el('fn-run'))this.el('fn-run').disabled=this.busy || !f.deployed;this.renderRuns();
   }catch(e){if(generation===this.generation)this.el('fn-error').textContent=e.message;}
  },
@@ -61,13 +63,14 @@ App.Functions = {
   this.el('fn-runs').innerHTML=this.runs.map(r=>`<tr><td>${e(this.date(r.started_at))}</td><td>${r.kind==='deploy'?'Deployment':'Invocation'} · r${Number(r.revision)}<small>${e(r.trigger)}</small></td><td>${e(this.status(r.status))}${r.needs_cleanup && r.status!=='running'?'<small>Cleanup pending</small>':''}</td><td>${r.status==='running'?'—':(Number(r.duration_ms)/1000).toFixed(2)+'s'}</td><td><div class="monitor-actions"><button class="console-button secondary" data-run="${e(r.id)}">Logs</button>${this.canWrite() && r.status==='running'?`<button class="console-button secondary" data-action="cancel" data-run="${e(r.id)}" ${this.busy?'disabled':''}>Cancel</button>`:''}</div></td></tr>`).join('') || '<tr><td colspan="5">No executions yet. Deploy a draft to get started.</td></tr>';
   if(!this.runs.some(r=>r.id===this.selectedRun))this.selectedRun=this.runs[0]?.id || null;this.renderLogs();
  },
- renderLogs() {const r=this.runs.find(r=>r.id===this.selectedRun);this.el('fn-log-title').textContent=r?`${r.kind==='deploy'?'Deployment':'Invocation'} · ${r.id}`:'Select an execution to view logs';this.el('fn-log-status').textContent=r?this.status(r.status):'';this.el('fn-log-error').textContent=r?.error || '';this.el('fn-logs').textContent=r?(r.logs || (r.status==='running'?'Waiting for output…':'No console output.'))+(r.logs_truncated?'\n[Log limit reached; additional output discarded]':''):'';},
+ renderLogs() {const r=this.runs.find(r=>r.id===this.selectedRun);this.el('fn-result').textContent=r && Object.prototype.hasOwnProperty.call(r,'result')?JSON.stringify(r.result,null,2):'No return value available.';this.el('fn-log-title').textContent=r?`${r.kind==='deploy'?'Deployment':'Invocation'} · ${r.id}`:'Select an execution to view logs';this.el('fn-log-status').textContent=r?this.status(r.status):'';this.el('fn-log-error').textContent=r?.error || '';this.el('fn-logs').textContent=r?(r.logs || (r.status==='running'?'Waiting for output…':'No console output.'))+(r.logs_truncated?'\n[Log limit reached; additional output discarded]':''):'';},
  async action(action,id,runID='') {
   if(this.busy)return;const f=this.functions.find(f=>f.id===id);if(!f)return;
   if(action==='details'){if(this.selected!==id){this.clearToken();this.selectedRun=null;}this.selected=id;await this.details();return;}
   if(!this.canWrite())return;if(action==='edit'){this.openEditor(f);return;}
   if(action==='delete'&&!window.confirm(`Delete “${f.draft.name}”, all versions, and its invocation history? Active runs must finish first.`))return;
   if(action==='token'&&!window.confirm('Create a new HTTP bearer token? Any previous token stops working immediately.'))return;
+  if(action==='mcp' && !f.mcp_enabled && !window.confirm('Expose this deployed function to AI assistants with permission to access this server?'))return;
   let event;
   if(action==='run'){try{event=JSON.parse(this.el('fn-event').value);}catch(e){this.el('fn-event-error').textContent='Enter valid JSON before running.';return;}this.el('fn-event-error').textContent='';}
   const epoch=this.epoch;this.busy=true;this.render();
@@ -76,6 +79,7 @@ App.Functions = {
    if(action==='deploy')result=await App.API.post(this.base(id)+'/deploy',{});
    else if(action==='run')result=await App.API.post(this.base(id)+'/run',event);
    else if(action==='cancel')await App.API.post(this.base(id)+'/runs/'+encodeURIComponent(runID)+'/cancel',{});
+   else if(action==='mcp')await App.API.post(this.base(id)+'/mcp',{enabled:!f.mcp_enabled});
    else if(action==='pause')await App.API.post(this.base(id)+'/pause',{paused:!f.paused});
    else if(action==='delete'){await App.API.delete(this.base(id));if(this.selected===id){this.selected=null;this.clearToken();this.el('fn-detail').classList.add('hidden');}}
    else if(action==='token'){

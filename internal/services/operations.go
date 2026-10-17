@@ -9,6 +9,7 @@ import (
 	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/google/uuid"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -102,7 +103,11 @@ func (s *Operations) launch(op models.Operation, work OperationWork) {
 	go func() {
 		defer s.wg.Done()
 		defer func() { <-s.workers }()
-		ctx, cancel := context.WithTimeout(s.ctx, 8*time.Minute)
+		deadline := 8 * time.Minute
+		if strings.HasPrefix(op.Kind, "function_") {
+			deadline = 16 * time.Minute
+		}
+		ctx, cancel := context.WithTimeout(s.ctx, deadline)
 		defer cancel()
 		var persistErr error
 		result, err := executeOperation(ctx, work, func(step string) {

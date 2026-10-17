@@ -32,6 +32,18 @@ type FunctionLogs struct {
 	mu        sync.Mutex
 	data      []byte
 	truncated bool
+	result    json.RawMessage
+}
+
+func (l *FunctionLogs) SetResult(value json.RawMessage) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.result = append(json.RawMessage(nil), value...)
+}
+func (l *FunctionLogs) Result() json.RawMessage {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append(json.RawMessage(nil), l.result...)
 }
 
 func (l *FunctionLogs) Write(p []byte) (int, error) {
@@ -76,7 +88,9 @@ else:
     exec(code,scope)
     result=scope['handler'](p['event'],p['context'])
     if inspect.isawaitable(result): result=asyncio.run(result)
-    print(json.dumps({'result':result},allow_nan=False))
+    encoded=json.dumps({'result':result},allow_nan=False)
+    if len(encoded.encode('utf-8'))>32768: raise ValueError('Function result exceeds 32 KiB')
+    print('\n\x1e'+p['result_marker']+':'+encoded)
 `
 const functionJSWrapper = `const fs=require('node:fs');
 (async()=>{
@@ -86,7 +100,9 @@ const functionJSWrapper = `const fs=require('node:fs');
  const {handler}=require('/tmp/handler.cjs');
  if(typeof handler!=='function')throw new Error('Export module.exports.handler = async (event, context) => ...');
  const result=await handler(p.event,p.context);
- console.log(JSON.stringify({result:result??null}));
+ const encoded=JSON.stringify({result:result??null});
+ if(Buffer.byteLength(encoded)>32768)throw new Error('Function result exceeds 32 KiB');
+ console.log('\n\x1e'+p.result_marker+':'+encoded);
 })().catch(e=>{console.error(e.stack||String(e));process.exitCode=1;});
 `
 
@@ -153,7 +169,7 @@ func functionPayload(spec models.FunctionSpec, r models.FunctionRun, event json.
 	if len(event) == 0 {
 		event = json.RawMessage(`{}`)
 	}
-	data, _ := json.Marshal(map[string]interface{}{"code": spec.Code, "event": event, "validate": validate, "context": map[string]interface{}{"invocation_id": r.ID, "function_id": r.FunctionID, "version_id": r.VersionID, "trigger": r.Trigger}})
+	data, _ := json.Marshal(map[string]interface{}{"code": spec.Code, "event": event, "validate": validate, "result_marker": r.ID, "context": map[string]interface{}{"invocation_id": r.ID, "function_id": r.FunctionID, "version_id": r.VersionID, "trigger": r.Trigger}})
 	return data
 }
 func (b *SSHFunctionBackend) checkHost(ctx context.Context, server string) error {
@@ -222,8 +238,14 @@ func (b *SSHFunctionBackend) Execute(ctx context.Context, v models.FunctionVersi
 	if err != nil {
 		return -1, err
 	}
-	err = b.run(ctx, r.ServerID, command, bytes.NewReader(functionPayload(v.Spec, r, event, false)), logs)
+	output := &functionOutput{logs: logs, marker: []byte("\x1e" + r.ID + ":")}
+	err = b.run(ctx, r.ServerID, command, bytes.NewReader(functionPayload(v.Spec, r, event, false)), output)
+	resultErr := output.finish()
 	if err == nil {
+		if resultErr != nil {
+			fmt.Fprintln(logs, resultErr)
+			return -1, resultErr
+		}
 		return 0, nil
 	}
 	var exit *ssh.ExitError

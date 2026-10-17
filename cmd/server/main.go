@@ -226,7 +226,7 @@ func main() {
 		projectService.AutoStartProjects(ctx)
 	}()
 
-	mcpHandler := &handlers.MCPHandler{Servers: serverStore, Databases: databaseService, LoadBalancers: loadBalancerService, Manager: serviceManager, Collector: collector, Operations: operations, Auth: authMiddleware}
+	mcpHandler := &handlers.MCPHandler{Servers: serverStore, Databases: databaseService, LoadBalancers: loadBalancerService, Manager: serviceManager, Collector: collector, Operations: operations, Auth: authMiddleware, Functions: functionService}
 
 	// Setup Router
 	r := chi.NewRouter()

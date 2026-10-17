@@ -50,6 +50,7 @@ func (h *FunctionHandler) Routes(r chi.Router) {
 	r.Post("/{functionID}/run", h.Run)
 	r.Post("/{functionID}/pause", h.Pause)
 	r.Post("/{functionID}/http-token", h.Token)
+	r.Post("/{functionID}/mcp", h.MCP)
 	r.Get("/{functionID}/versions", h.Versions)
 	r.Get("/{functionID}/runs", h.Runs)
 	r.Post("/{functionID}/runs/{runID}/cancel", h.Cancel)
@@ -162,6 +163,20 @@ func (h *FunctionHandler) Pause(w http.ResponseWriter, r *http.Request) {
 func (h *FunctionHandler) Token(w http.ResponseWriter, r *http.Request) {
 	token, e := h.Service.RotateToken(chi.URLParam(r, "serverID"), chi.URLParam(r, "functionID"))
 	functionResponse(w, 200, map[string]string{"token": token, "path": "/api/function-triggers/" + chi.URLParam(r, "serverID") + "/" + chi.URLParam(r, "functionID")}, e)
+}
+func (h *FunctionHandler) MCP(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if !functionDecode(w, r, &input) {
+		return
+	}
+	if input.Enabled == nil {
+		respondError(w, 400, "enabled must be a boolean", nil)
+		return
+	}
+	f, e := h.Service.SetMCP(chi.URLParam(r, "serverID"), chi.URLParam(r, "functionID"), functionActor(r), *input.Enabled)
+	functionResponse(w, 200, f, e)
 }
 func (h *FunctionHandler) Runs(w http.ResponseWriter, r *http.Request) {
 	f, ok := h.scoped(w, r)

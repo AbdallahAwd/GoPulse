@@ -90,7 +90,7 @@ func mcpRedact(value interface{}, preview bool) interface{} {
 			out[i] = mcpRedact(item, preview)
 		}
 		return out
-	case nil, string, bool, float64, int, int64:
+	case nil, string, bool, float64, int, int64, json.Number:
 		return value
 	default:
 		raw, err := json.Marshal(value)
@@ -98,7 +98,9 @@ func mcpRedact(value interface{}, preview bool) interface{} {
 			return "[unavailable]"
 		}
 		var decoded interface{}
-		if json.Unmarshal(raw, &decoded) != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if decoder.Decode(&decoded) != nil {
 			return "[unavailable]"
 		}
 		return mcpRedact(decoded, preview)

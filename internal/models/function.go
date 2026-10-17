@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // FunctionSpec is a draft; a deployment snapshots it into an immutable version.
 type FunctionSpec struct {
@@ -17,16 +20,17 @@ type FunctionSpec struct {
 	HTTPEnabled     bool   `json:"http_enabled"`
 }
 type Function struct {
-	ID        string           `json:"id"`
-	ServerID  string           `json:"server_id"`
-	OwnerID   string           `json:"owner_id"`
-	Paused    bool             `json:"paused"`
-	Revision  int              `json:"revision"`
-	Draft     FunctionSpec     `json:"draft"`
-	Deployed  *FunctionVersion `json:"deployed,omitempty"`
-	NextRunAt time.Time        `json:"next_run_at"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
+	ID         string           `json:"id"`
+	ServerID   string           `json:"server_id"`
+	OwnerID    string           `json:"owner_id"`
+	Paused     bool             `json:"paused"`
+	MCPEnabled bool             `json:"mcp_enabled"`
+	Revision   int              `json:"revision"`
+	Draft      FunctionSpec     `json:"draft"`
+	Deployed   *FunctionVersion `json:"deployed,omitempty"`
+	NextRunAt  time.Time        `json:"next_run_at"`
+	CreatedAt  time.Time        `json:"created_at"`
+	UpdatedAt  time.Time        `json:"updated_at"`
 }
 type FunctionVersion struct {
 	ID         string       `json:"id"`
@@ -38,21 +42,22 @@ type FunctionVersion struct {
 	CreatedAt  time.Time    `json:"created_at"`
 }
 type FunctionRun struct {
-	ID            string    `json:"id"`
-	FunctionID    string    `json:"function_id"`
-	ServerID      string    `json:"server_id"`
-	VersionID     string    `json:"version_id"`
-	Revision      int       `json:"revision"`
-	Kind          string    `json:"kind"`
-	Trigger       string    `json:"trigger"`
-	ActorID       string    `json:"actor_id"`
-	Status        string    `json:"status"`
-	StartedAt     time.Time `json:"started_at"`
-	FinishedAt    time.Time `json:"finished_at"`
-	DurationMS    int64     `json:"duration_ms"`
-	ExitCode      *int      `json:"exit_code"`
-	Logs          string    `json:"logs"`
-	LogsTruncated bool      `json:"logs_truncated"`
-	Error         string    `json:"error,omitempty"`
-	NeedsCleanup  bool      `json:"needs_cleanup"`
+	ID            string          `json:"id"`
+	FunctionID    string          `json:"function_id"`
+	ServerID      string          `json:"server_id"`
+	VersionID     string          `json:"version_id"`
+	Revision      int             `json:"revision"`
+	Kind          string          `json:"kind"`
+	Trigger       string          `json:"trigger"`
+	ActorID       string          `json:"actor_id"`
+	Status        string          `json:"status"`
+	StartedAt     time.Time       `json:"started_at"`
+	FinishedAt    time.Time       `json:"finished_at"`
+	DurationMS    int64           `json:"duration_ms"`
+	ExitCode      *int            `json:"exit_code"`
+	Logs          string          `json:"logs"`
+	LogsTruncated bool            `json:"logs_truncated"`
+	Error         string          `json:"error,omitempty"`
+	NeedsCleanup  bool            `json:"needs_cleanup"`
+	Result        json.RawMessage `json:"result,omitempty"`
 }
