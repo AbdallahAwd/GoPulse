@@ -40,6 +40,8 @@ In the repository's GitHub settings, add these **Actions secrets**:
 - `GOPULSE_WEBHOOK_URL`: the URL shown by the GoPulse project webhook panel.
 - `GOPULSE_WEBHOOK_SECRET`: the matching secret shown by that panel.
 
+The GoPulse repository ships a manual deployment workflow gated by real tests and the `production` environment. Configure environment reviewers before using it. For a different application repository, adapt the following example and replace the CI step with its real checks; do not deploy from a placeholder test. Pin Actions to reviewed commit SHAs.
+
 Create `.github/workflows/gopulse-deploy.yml`:
 
 ```yaml
@@ -57,8 +59,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Replace this block with the project's real test/build commands.
-      - run: echo "Run the project's tests and production build here"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: make check # Adapt to the consuming repository's actual checks.
 
   deploy:
     needs: ci

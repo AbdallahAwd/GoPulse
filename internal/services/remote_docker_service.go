@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/remote"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/remote"
 )
 
 // RemoteDockerService handles Docker operations on a remote server via SSH

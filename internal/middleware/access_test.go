@@ -20,6 +20,37 @@ func TestSameOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestOriginGuardAllowsOAuthNavigationButRejectsCrossSiteAPIRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, mode, dest, origin string
+		status                           int
+	}{
+		{"OAuth callback", "GET", "navigate", "document", "", 204},
+		{"API fetch", "GET", "cors", "empty", "", 403},
+		{"iframe", "GET", "navigate", "iframe", "", 403},
+		{"WebSocket", "GET", "websocket", "empty", "https://evil.example", 403},
+		{"cross-site form", "POST", "navigate", "document", "https://evil.example", 403},
+		{"navigation with foreign Origin", "GET", "navigate", "document", "https://evil.example", 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, "https://panel.example/auth/github/callback?code=test", nil)
+			r.Header.Set("Sec-Fetch-Site", "cross-site")
+			r.Header.Set("Sec-Fetch-Mode", tc.mode)
+			r.Header.Set("Sec-Fetch-Dest", tc.dest)
+			if tc.origin != "" {
+				r.Header.Set("Origin", tc.origin)
+			}
+			w := httptest.NewRecorder()
+			OriginGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			})).ServeHTTP(w, r)
+			if w.Code != tc.status {
+				t.Fatalf("status %d, want %d", w.Code, tc.status)
+			}
+		})
+	}
+}
 func TestPermissionGuardDoesNotInterpretResourceIDsAsPermissions(t *testing.T) {
 	for _, path := range []string{"/api/servers/firewall/databases/db/start", "/api/servers/databases/services/nginx/restart"} {
 		request := httptest.NewRequest("POST", path, nil)

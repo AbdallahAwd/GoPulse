@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/google/uuid"
 )
 

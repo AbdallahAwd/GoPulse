@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/golang-jwt/jwt/v5"
 )
 

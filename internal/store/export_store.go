@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/google/uuid"
 )
 
@@ -134,7 +134,7 @@ func (s *ExportStore) ImportAll(data *models.GoPulseExport, mode string) (*model
 		if srv.AuthType != "key" || srv.SSHKeyContent == "" {
 			return nil
 		}
-		keysDir := filepath.Join(os.Getenv("HOME"), ".gopulse", "keys")
+		keysDir := filepath.Join(DataDirectory(), "keys")
 		if err := os.MkdirAll(keysDir, 0700); err != nil {
 			return fmt.Errorf("create keys directory: %w", err)
 		}

@@ -1,7 +1,7 @@
 package store
 
 import (
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"path/filepath"
 	"testing"
 )

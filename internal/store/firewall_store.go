@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 // FirewallStore handles SQL persistence for the firewall module tables
@@ -437,7 +437,7 @@ func (s *FirewallStore) ListPendingSchedules() ([]models.FirewallSchedule, error
 	defer s.mu.RUnlock()
 
 	now := time.Now().UTC()
-	rows, err := s.db.Query(`SELECT `+scheduleSelectColumns+` FROM firewall_schedules WHERE executed = 0 AND status = 'pending' ORDER BY scheduled_at ASC`)
+	rows, err := s.db.Query(`SELECT ` + scheduleSelectColumns + ` FROM firewall_schedules WHERE executed = 0 AND status = 'pending' ORDER BY scheduled_at ASC`)
 	if err != nil {
 		return nil, err
 	}

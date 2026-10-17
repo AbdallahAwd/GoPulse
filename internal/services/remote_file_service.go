@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/remote"
+	"github.com/AbdallahAwd/GoPulse/internal/remote"
 )
 
 // RemoteFileService implements FileService using SFTP

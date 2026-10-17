@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 	"errors"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"path/filepath"
 	"strings"
 	"testing"

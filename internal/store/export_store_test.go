@@ -3,14 +3,15 @@ package store
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 func TestExportAndImport(t *testing.T) {
+	keyDataDir := t.TempDir()
+	t.Setenv("GOPULSE_DATA_DIR", keyDataDir)
 	// Setup Source Stores in a temp directory
 	srcDir := t.TempDir()
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
@@ -252,8 +253,8 @@ func TestExportAndImport(t *testing.T) {
 	if impSrvKey.KeyPath == mockKeyPath {
 		t.Errorf("Imported key path was not rewritten, still points to old path: %s", impSrvKey.KeyPath)
 	}
-	if !strings.Contains(impSrvKey.KeyPath, filepath.Join(destDir, ".gopulse", "keys")) {
-		t.Errorf("Imported key path was not written to local home folder: %s", impSrvKey.KeyPath)
+	if filepath.Dir(impSrvKey.KeyPath) != filepath.Join(keyDataDir, "keys") {
+		t.Errorf("Imported key did not use GOPULSE_DATA_DIR: %s", impSrvKey.KeyPath)
 	}
 
 	importedKeyBytes, err := os.ReadFile(impSrvKey.KeyPath)

@@ -122,6 +122,8 @@
     </style>
     <link rel="stylesheet" href="/static/css/console.css">
     <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/monitoring.css">
+ <link rel="stylesheet" href="/static/css/functions.css">
 </head>
 
 <body class="console bg-gray-900 text-gray-100 {{if or (eq .Page "login") (eq .Page "register")}}console-auth{{end}}" data-page="{{.Page}}">
@@ -230,7 +232,7 @@
     </div>
 
     <!-- Third-Party Libraries (CDN) -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.7/ace.js" type="text/javascript" charset="utf-8"></script>
@@ -259,6 +261,9 @@
     <script src="/static/js/app/system_users.js"></script>
     <script src="/static/js/app/firewall.js"></script>
     <script src="/static/js/app/cron.js"></script>
+    <script src="/static/js/app/alerts.js"></script>
+ <script src="/static/js/app/remote_backups.js"></script>
+ <script src="/static/js/app/functions.js"></script>
     <script src="/static/js/app/navigation.js"></script>
     <script src="/static/js/app/workspace.js"></script>
     <script src="/static/js/app/fleet.js"></script>

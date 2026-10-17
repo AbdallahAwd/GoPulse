@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/remote"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/remote"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 )
 
 // ProjectService manages project lifecycle

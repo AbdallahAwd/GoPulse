@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 var ErrCronBusy = errors.New("job is already running")

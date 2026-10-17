@@ -176,6 +176,12 @@ App.UI = {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     },
 
+    markStatsUnavailable() {
+        for (const id of ['cpu-usage','memory-usage','disk-usage','load-avg']) { const el = this.el(id); if (el) el.textContent = '—'; }
+        for (const id of ['cpu-bar','memory-bar','disk-bar']) { const el = this.el(id); if (el) el.style.width = '0%'; }
+        const detail = this.el('load-details'); if (detail) detail.textContent = 'Metrics unavailable';
+    },
+
     updateStats(stats) {
         if (!stats || !stats.cpu) return;
 
@@ -190,9 +196,9 @@ App.UI = {
         updateEl('cpu-usage', stats.cpu.percent.toFixed(1));
         updateEl('memory-usage', stats.memory.used_percent.toFixed(1));
 
-        // Disk (First partition)
+        // Disk (highest filesystem usage, consistent with history and alerts)
         if (stats.disk?.length > 0) {
-            updateEl('disk-usage', stats.disk[0].used_percent.toFixed(1));
+            updateEl('disk-usage', Math.max(...stats.disk.map(disk => disk.used_percent)).toFixed(1));
         }
 
         // Load Average

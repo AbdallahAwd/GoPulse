@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/services"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/gorilla/websocket"
 )
 
@@ -23,9 +23,9 @@ type StatsCache struct {
 }
 
 type ServerStatsUpdate struct {
-	ServerID string
-	Stats    *models.SystemStats
-	Error    string
+	ServerID string              `json:"server_id"`
+	Stats    *models.SystemStats `json:"stats,omitempty"`
+	Error    string              `json:"error,omitempty"`
 }
 
 // Collector is responsible for collecting system statistics periodically from all servers
@@ -35,6 +35,7 @@ type Collector struct {
 	providers       map[string]services.StatsProvider
 	providersMu     sync.RWMutex
 	cache           *StatsCache
+	monitoring      *services.MonitoringService
 	history         *StatsHistory
 	interval        time.Duration
 	clients         map[*websocket.Conn]func(string) bool
@@ -70,7 +71,7 @@ func (c *Collector) Start(ctx context.Context) {
 	c.collectAllStats(ctx)
 
 	// Start broadcaster goroutine
-	go c.broadcaster()
+	go c.broadcaster(ctx)
 
 	for {
 		select {
@@ -100,6 +101,8 @@ func (c *Collector) collectAllStats(ctx context.Context) {
 
 // collectServerStats gathers stats for a single server
 func (c *Collector) collectServerStats(ctx context.Context, server models.Server) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	c.providersMu.RLock()
 	provider, exists := c.providers[server.ID]
 	c.providersMu.RUnlock()
@@ -108,6 +111,7 @@ func (c *Collector) collectServerStats(ctx context.Context, server models.Server
 		var err error
 		provider, err = c.providerFactory(server)
 		if err != nil {
+			c.observe(server.ID, nil)
 			log.Printf("Failed to get provider for server %s: %v", server.Name, err)
 			c.broadcastUpdate(ServerStatsUpdate{
 				ServerID: server.ID,
@@ -123,6 +127,7 @@ func (c *Collector) collectServerStats(ctx context.Context, server models.Server
 
 	stats, err := provider.GetSystemStats(ctx)
 	if err != nil {
+		c.observe(server.ID, nil)
 		log.Printf("Error collecting stats for server %s: %v", server.Name, err)
 		c.broadcastUpdate(ServerStatsUpdate{
 			ServerID: server.ID,
@@ -131,6 +136,12 @@ func (c *Collector) collectServerStats(ctx context.Context, server models.Server
 		return
 	}
 
+	if services.Snapshot(stats, time.Now()).Unavailable {
+		c.observe(server.ID, nil)
+		c.broadcastUpdate(ServerStatsUpdate{ServerID: server.ID, Error: "Metrics unavailable"})
+		return
+	}
+	c.observe(server.ID, stats)
 	// Update cache
 	now := time.Now()
 	c.cache.mu.Lock()
@@ -178,12 +189,21 @@ func (c *Collector) GetCachedStats(serverID string) (*models.SystemStats, time.T
 	if !ok {
 		return nil, time.Time{}
 	}
+	if c.monitoring != nil && time.Since(c.cache.lastUpdate[serverID]) > c.monitoring.MaxGap {
+		return nil, c.cache.lastUpdate[serverID]
+	}
 	return stats, c.cache.lastUpdate[serverID]
 }
 
 // broadcaster sends stats to all connected WebSocket clients
-func (c *Collector) broadcaster() {
-	for update := range c.broadcast {
+func (c *Collector) broadcaster(ctx context.Context) {
+	for {
+		var update ServerStatsUpdate
+		select {
+		case <-ctx.Done():
+			return
+		case update = <-c.broadcast:
+		}
 		c.clientsMu.RLock()
 		clients := make([]*websocket.Conn, 0, len(c.clients))
 		for client, authorize := range c.clients {
@@ -264,4 +284,25 @@ func (c *Collector) GetHistory(serverID string, duration time.Duration) []models
 		return nil
 	}
 	return c.history.Get(serverID, duration)
+}
+
+func (c *Collector) SetMonitoring(service *services.MonitoringService) { c.monitoring = service }
+func (c *Collector) observe(serverID string, stats *models.SystemStats) {
+	if stats == nil {
+		c.cache.mu.Lock()
+		delete(c.cache.stats, serverID)
+		delete(c.cache.lastUpdate, serverID)
+		c.cache.mu.Unlock()
+	}
+	if c.monitoring != nil {
+		if err := c.monitoring.Observe(serverID, stats, time.Now().UTC()); err != nil {
+			log.Printf("Persisting metrics and alerts for %s failed: %v", serverID, err)
+		}
+	}
+}
+func (c *Collector) QueryHistory(serverID string, duration time.Duration) ([]models.StatsSnapshot, error) {
+	if c.history == nil {
+		return []models.StatsSnapshot{}, nil
+	}
+	return c.history.Query(serverID, duration)
 }

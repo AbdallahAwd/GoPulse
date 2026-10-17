@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 	"fmt"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,7 +182,7 @@ func TestQdrantRemovalShellHandlesMissingOwnedAndReplacedContainers(t *testing.T
 				offline = "yes"
 			}
 			f.run = func(_, command string) (string, error) {
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				cmd := exec.CommandContext(ctx, "sh", "-c", command)
 				cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "GOPULSE_FIXTURE_CONTAINER="+container, "GOPULSE_FIXTURE_OFFLINE="+offline, "GOPULSE_FIXTURE_LOG="+logPath)

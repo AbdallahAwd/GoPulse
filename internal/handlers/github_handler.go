@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/amaa/gopulse/internal/config"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/config"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 )
@@ -41,25 +43,12 @@ func (h *GitHubHandler) getRedirectURL(r *http.Request) string {
 	}
 
 	scheme := "http"
-	if forwardedProto := firstForwardedValue(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
-		scheme = forwardedProto
-	} else if r.TLS != nil {
+	if r.TLS != nil {
 		scheme = "https"
 	}
-
-	host := firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = r.Host
-	}
-
-	return fmt.Sprintf("%s://%s%s", scheme, host, githubOAuthCallbackPath)
-}
-
-func firstForwardedValue(value string) string {
-	if comma := strings.Index(value, ","); comma >= 0 {
-		value = value[:comma]
-	}
-	return strings.TrimSpace(value)
+	// Proxy deployments must configure a callback URL; client-controlled
+	// forwarding headers cannot select an OAuth redirect origin.
+	return fmt.Sprintf("%s://%s%s", scheme, r.Host, githubOAuthCallbackPath)
 }
 
 // 1. Redirect to GitHub
@@ -75,7 +64,7 @@ func (h *GitHubHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Path:     githubOAuthCallbackPath,
 		MaxAge:   10 * 60,
 		HttpOnly: true,
-		Secure:   requestIsHTTPS(r),
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	redirectURL := h.getRedirectURL(r)
@@ -101,7 +90,7 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Path:     githubOAuthCallbackPath,
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   requestIsHTTPS(r),
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -122,7 +111,7 @@ func (h *GitHubHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		Value:    token.AccessToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   requestIsHTTPS(r),
+		Secure:   h.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 	}
 	if !token.Expiry.IsZero() {
@@ -150,11 +139,9 @@ func constantTimeEqual(left, right string) bool {
 	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
 }
 
-func requestIsHTTPS(r *http.Request) bool {
-	if strings.EqualFold(firstForwardedValue(r.Header.Get("X-Forwarded-Proto")), "https") {
-		return true
-	}
-	return r.TLS != nil
+func (h *GitHubHandler) secureCookie(r *http.Request) bool {
+	callback, err := url.Parse(h.getRedirectURL(r))
+	return r.TLS != nil || (err == nil && callback.Scheme == "https")
 }
 
 // 3. List Repos (API)
@@ -182,6 +169,10 @@ func (h *GitHubHandler) ListRepos(w http.ResponseWriter, r *http.Request) {
 
 // 4. Clone Repo (API)
 func (h *GitHubHandler) CloneRepo(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasPermission(r, "projects:write") {
+		respondError(w, http.StatusForbidden, "Permission required: projects:write", nil)
+		return
+	}
 	cookie, err := r.Cookie("github_token")
 	if err != nil {
 		respondError(w, http.StatusUnauthorized, "GitHub not connected", err)
@@ -200,13 +191,17 @@ func (h *GitHubHandler) CloneRepo(w http.ResponseWriter, r *http.Request) {
 		RestartOnBoot bool   `json:"restart_on_boot"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
 	if req.ServerID == "" {
 		respondError(w, http.StatusBadRequest, "server_id is required", nil)
+		return
+	}
+	if !middleware.CanAccessServer(r, req.ServerID) {
+		respondError(w, http.StatusForbidden, "Server access denied", nil)
 		return
 	}
 
@@ -239,6 +234,10 @@ func (h *GitHubHandler) CloneRepo(w http.ResponseWriter, r *http.Request) {
 // account to an existing uploaded project. Repository metadata comes from
 // GitHub rather than trusting a client-supplied clone URL.
 func (h *GitHubHandler) ConnectRepo(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasPermission(r, "projects:write") {
+		respondError(w, http.StatusForbidden, "Permission required: projects:write", nil)
+		return
+	}
 	cookie, err := r.Cookie("github_token")
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		respondError(w, http.StatusUnauthorized, "GitHub not connected", err)
@@ -258,6 +257,11 @@ func (h *GitHubHandler) ConnectRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, err := h.projectService.GetProject(r.Context(), req.ProjectID)
+	if err != nil || !middleware.CanAccessServer(r, existing.ServerID) {
+		respondError(w, http.StatusNotFound, "Application not found", nil)
+		return
+	}
 	token := &oauth2.Token{AccessToken: cookie.Value}
 	repo, err := h.service.GetRepo(r.Context(), token, req.FullName)
 	if err != nil {

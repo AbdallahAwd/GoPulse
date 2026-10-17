@@ -3,7 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"time"
 )
 

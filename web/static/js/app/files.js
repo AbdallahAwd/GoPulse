@@ -3,6 +3,21 @@
  */
 
 App.Files = {
+    escapeHtml(value) {
+        return String(value ?? '').replace(/[&<>"']/g, character => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[character]));
+    },
+
+    jsArg(value) {
+        return this.escapeHtml(JSON.stringify(String(value ?? '')));
+    },
+
+    actionIcon(path, action) {
+        const entry = Array.from(document.querySelectorAll('[data-path]')).find(element => element.dataset.path === path);
+        return entry ? entry.querySelector(`[data-file-action="${action}"] i`) : null;
+    },
+
     async list(path = '/') {
         if (!App.config.SERVER_ID) return;
         const overlay = App.UI.el('file-loading-overlay');
@@ -41,16 +56,16 @@ App.Files = {
                 bgColor: 'bg-yellow-400/10'
             };
         }
-        
+
         const ext = name.split('.').pop().toLowerCase();
-        
+
         const fileTypes = {
             // Archives
             'zip': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
             'tar': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
             'gz': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
             'rar': { icon: 'fa-file-archive', color: 'text-orange-400', bgColor: 'bg-orange-400/10' },
-            
+
             // Code
             'js': { icon: 'fa-file-code', color: 'text-yellow-300', bgColor: 'bg-yellow-300/10' },
             'ts': { icon: 'fa-file-code', color: 'text-blue-400', bgColor: 'bg-blue-400/10' },
@@ -64,11 +79,11 @@ App.Files = {
             'py': { icon: 'fa-file-code', color: 'text-green-400', bgColor: 'bg-green-400/10' },
             'rb': { icon: 'fa-file-code', color: 'text-red-500', bgColor: 'bg-red-500/10' },
             'rs': { icon: 'fa-file-code', color: 'text-amber-600', bgColor: 'bg-amber-600/10' },
-            
+
             // Scripts
             'sh': { icon: 'fa-terminal', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
             'bash': { icon: 'fa-terminal', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
-            
+
             // Config/Data
             'json': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
             'yaml': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
@@ -76,7 +91,7 @@ App.Files = {
             'toml': { icon: 'fa-file-signature', color: 'text-purple-400', bgColor: 'bg-purple-400/10' },
             'lock': { icon: 'fa-lock', color: 'text-amber-500', bgColor: 'bg-amber-500/10' },
             'env': { icon: 'fa-sliders-h', color: 'text-pink-400', bgColor: 'bg-pink-400/10' },
-            
+
             // Media
             'png': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
             'jpg': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
@@ -84,12 +99,12 @@ App.Files = {
             'gif': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
             'svg': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
             'ico': { icon: 'fa-file-image', color: 'text-emerald-400', bgColor: 'bg-emerald-400/10' },
-            
+
             // Docs
             'md': { icon: 'fa-file-alt', color: 'text-teal-400', bgColor: 'bg-teal-400/10' },
             'txt': { icon: 'fa-file-alt', color: 'text-slate-300', bgColor: 'bg-slate-300/10' },
             'pdf': { icon: 'fa-file-pdf', color: 'text-rose-500', bgColor: 'bg-rose-500/10' },
-            
+
             // Database
             'sql': { icon: 'fa-database', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
             'db': { icon: 'fa-database', color: 'text-blue-500', bgColor: 'bg-blue-500/10' },
@@ -110,11 +125,11 @@ App.Files = {
     setViewMode(mode) {
         this.viewMode = mode;
         localStorage.setItem('gopulse_files_view_mode', mode);
-        
+
         // Update toggle UI
         const btnList = App.UI.el('btn-view-list');
         const btnGrid = App.UI.el('btn-view-grid');
-        
+
         if (btnList && btnGrid) {
             if (mode === 'list') {
                 btnList.className = 'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-all text-white bg-blue-600 shadow';
@@ -124,7 +139,7 @@ App.Files = {
                 btnList.className = 'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center space-x-1.5 transition-all text-gray-400 hover:text-white';
             }
         }
-        
+
         // Re-render
         if (App.state.lastFilesList) {
             this.render(App.state.lastFilesList);
@@ -137,7 +152,7 @@ App.Files = {
 
         const fileList = files || []; // Handle null/undefined files
         const path = App.state.currentPath;
-        
+
         // Initialize view mode
         if (!this.viewMode) {
             this.viewMode = localStorage.getItem('gopulse_files_view_mode') || 'list';
@@ -167,7 +182,7 @@ App.Files = {
                 const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
                 parentGridItem = `
                     <div class="relative bg-gray-900/20 hover:bg-gray-700/10 border border-gray-800/40 hover:border-gray-700/60 rounded-xl p-4 transition-all duration-200 group flex flex-col items-center justify-center text-center cursor-pointer min-h-[140px]"
-                        onclick="App.Files.list('${parentPath}')">
+                        onclick="App.Files.list(${this.jsArg(parentPath)})">
                         <div class="w-16 h-16 rounded-2xl flex items-center justify-center bg-gray-800/50 text-gray-400 group-hover:text-blue-400 mb-3 transition-transform duration-300 group-hover:scale-105">
                             <i class="fas fa-level-up-alt text-2xl"></i>
                         </div>
@@ -181,27 +196,27 @@ App.Files = {
                 const fileMeta = this.getFileIcon(file.name, file.is_dir);
                 const size = file.is_dir ? 'Folder' : App.UI.formatBytes(file.size);
                 const fullPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
-                
+
                 return `
                 <div class="relative bg-gray-900/30 hover:bg-gray-700/20 border border-gray-800/60 hover:border-gray-700/80 rounded-xl p-4 transition-all duration-200 group flex flex-col items-center text-center cursor-pointer select-none file-grid-item"
-                    data-path="${fullPath}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${file.name}"
-                    onclick="event.preventDefault(); ${file.is_dir ? 
-                        `App.Files.list('${fullPath}')` : 
-                        `App.Editor.open('${fullPath}')`}">
-                    
+                    data-path="${this.escapeHtml(fullPath)}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${this.escapeHtml(file.name)}"
+                    onclick="event.preventDefault(); ${file.is_dir ?
+                        `App.Files.list(${this.jsArg(fullPath)})` :
+                        `App.Editor.open(${this.jsArg(fullPath)})`}">
+
                     <!-- Quick Actions Hover Overlay -->
                     <div class="absolute top-2 right-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-all duration-200 z-10">
                         ${!file.is_dir ? `
-                        <button onclick="event.stopPropagation(); App.Files.download('${fullPath}')" 
+                        <button onclick="event.stopPropagation(); App.Files.download(${this.jsArg(fullPath)})"
                             class="w-7 h-7 flex items-center justify-center bg-gray-950/80 hover:bg-emerald-950/60 border border-gray-800 hover:border-emerald-500/40 text-gray-400 hover:text-emerald-400 rounded-full transition-all" title="Download">
                             <i class="fas fa-download text-[10px]"></i>
                         </button>` : ''}
                         ${file.is_dir ? `
-                        <button onclick="event.stopPropagation(); App.Files.zip('${fullPath}')" 
+                        <button data-file-action="zip" onclick="event.stopPropagation(); App.Files.zip(${this.jsArg(fullPath)})"
                             class="w-7 h-7 flex items-center justify-center bg-gray-950/80 hover:bg-amber-950/60 border border-gray-800 hover:border-amber-500/40 text-gray-400 hover:text-amber-400 rounded-full transition-all" title="Zip Folder">
                             <i class="fas fa-file-zipper text-[10px]"></i>
                         </button>` : ''}
-                        <button onclick="event.stopPropagation(); App.Files.delete('${fullPath}')" 
+                        <button onclick="event.stopPropagation(); App.Files.delete(${this.jsArg(fullPath)})"
                             class="w-7 h-7 flex items-center justify-center bg-gray-950/80 hover:bg-red-950/60 border border-gray-800 hover:border-red-500/40 text-gray-400 hover:text-red-400 rounded-full transition-all" title="Delete">
                             <i class="fas fa-trash-alt text-[10px]"></i>
                         </button>
@@ -214,7 +229,7 @@ App.Files = {
 
                     <!-- Details -->
                     <span class="text-gray-200 group-hover:text-blue-400 transition-colors font-medium text-xs break-all line-clamp-2 px-1 w-full">
-                        ${file.name}
+                        ${this.escapeHtml(file.name)}
                     </span>
                     <span class="text-[10px] text-gray-500 font-mono mt-1">
                         ${size}
@@ -237,7 +252,7 @@ App.Files = {
                 const parentPath = path.substring(0, path.lastIndexOf('/')) || '/';
                 parentRow = `
                     <tr class="border-b border-gray-800/40 hover:bg-gray-700/20 transition-colors group cursor-pointer"
-                        onclick="App.Files.list('${parentPath}')">
+                        onclick="App.Files.list(${this.jsArg(parentPath)})">
                         <td class="py-3 px-4 text-center">
                             <div class="w-9 h-9 rounded-lg flex items-center justify-center bg-gray-800/40 text-gray-500">
                                 <i class="fas fa-level-up-alt text-sm"></i>
@@ -255,20 +270,20 @@ App.Files = {
                 const size = file.is_dir ? '-' : App.UI.formatBytes(file.size);
                 const date = new Date(file.mod_time).toLocaleString();
                 const fullPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
-                
+
                 return `
                 <tr class="border-b border-gray-800/40 hover:bg-gray-700/20 transition-colors group cursor-pointer file-item"
-                    data-path="${fullPath}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${file.name}">
+                    data-path="${this.escapeHtml(fullPath)}" data-type="${file.is_dir ? 'dir' : 'file'}" data-name="${this.escapeHtml(file.name)}">
                     <td class="py-2.5 px-4 text-center">
                         <div class="w-9 h-9 rounded-lg flex items-center justify-center ${fileMeta.bgColor} ${fileMeta.color} transition-transform group-hover:scale-105">
                             <i class="fas ${fileMeta.icon} text-base"></i>
                         </div>
                     </td>
                     <td class="py-2.5 px-4 font-semibold text-gray-200 group-hover:text-blue-400 transition-colors">
-                        <a href="#" onclick="event.preventDefault(); ${file.is_dir ? 
-                            `App.Files.list('${fullPath}')` : 
-                            `App.Editor.open('${fullPath}')`}" class="block py-1">
-                            ${file.name}
+                        <a href="#" onclick="event.preventDefault(); ${file.is_dir ?
+                            `App.Files.list(${this.jsArg(fullPath)})` :
+                            `App.Editor.open(${this.jsArg(fullPath)})`}" class="block py-1">
+                            ${this.escapeHtml(file.name)}
                         </a>
                     </td>
                     <td class="py-2.5 px-4 text-gray-400 font-mono text-xs">${size}</td>
@@ -276,21 +291,21 @@ App.Files = {
                     <td class="py-2.5 px-4 text-right">
                         <div class="flex items-center justify-end space-x-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200">
                             ${!file.is_dir ? `
-                            <button onclick="event.stopPropagation(); App.Files.download('${fullPath}')" 
+                            <button onclick="event.stopPropagation(); App.Files.download(${this.jsArg(fullPath)})"
                                 class="p-1.5 bg-gray-900/80 hover:bg-emerald-950/40 border border-gray-800 hover:border-emerald-500/30 text-gray-400 hover:text-emerald-400 rounded-lg transition-all" title="Download">
                                 <i class="fas fa-download text-xs"></i>
                             </button>` : ''}
                             ${file.is_dir ? `
-                            <button onclick="event.stopPropagation(); App.Files.zip('${fullPath}')" 
+                            <button data-file-action="zip" onclick="event.stopPropagation(); App.Files.zip(${this.jsArg(fullPath)})"
                                 class="p-1.5 bg-gray-900/80 hover:bg-amber-950/40 border border-gray-800 hover:border-amber-500/30 text-gray-400 hover:text-amber-400 rounded-lg transition-all" title="Zip Folder">
                                 <i class="fas fa-file-zipper text-xs"></i>
                             </button>` : ''}
                             ${!file.is_dir && file.name.endsWith('.zip') ? `
-                            <button onclick="event.stopPropagation(); App.Files.unzip('${fullPath}')" 
+                            <button data-file-action="unzip" onclick="event.stopPropagation(); App.Files.unzip(${this.jsArg(fullPath)})"
                                 class="p-1.5 bg-gray-900/80 hover:bg-blue-950/40 border border-gray-800 hover:border-blue-500/30 text-gray-400 hover:text-blue-400 rounded-lg transition-all" title="Unzip">
                                 <i class="fas fa-box-open text-xs"></i>
                             </button>` : ''}
-                            <button onclick="event.stopPropagation(); App.Files.delete('${fullPath}')" 
+                            <button onclick="event.stopPropagation(); App.Files.delete(${this.jsArg(fullPath)})"
                                 class="p-1.5 bg-gray-900/80 hover:bg-red-950/40 border border-gray-800 hover:border-red-500/30 text-gray-400 hover:text-red-400 rounded-lg transition-all" title="Delete">
                                 <i class="fas fa-trash-alt text-xs"></i>
                             </button>
@@ -340,9 +355,9 @@ App.Files = {
         }
 
         const parts = normalizedPath.split('/').filter(p => p !== '');
-        
+
         let html = `
-            <button onclick="App.Files.navigateToSegment('/', event)" 
+            <button onclick="App.Files.navigateToSegment('/', event)"
                 class="flex items-center text-gray-400 hover:text-blue-400 font-semibold transition-colors focus:outline-none shrink-0">
                 <i class="fas fa-hdd mr-1.5"></i>root
             </button>
@@ -352,16 +367,16 @@ App.Files = {
         parts.forEach((part, index) => {
             currentBuildPath += '/' + part;
             const isLast = index === parts.length - 1;
-            
+
             html += `
                 <span class="text-gray-650 px-1 select-none shrink-0 font-mono text-[10px]">/</span>
-                <button onclick="App.Files.navigateToSegment('${currentBuildPath}', event)" 
+                <button onclick="App.Files.navigateToSegment(${this.jsArg(currentBuildPath)}, event)"
                     class="font-semibold transition-colors focus:outline-none truncate max-w-[120px] ${
-                        isLast 
-                        ? 'text-white font-bold cursor-default pointer-events-none' 
+                        isLast
+                        ? 'text-white font-bold cursor-default pointer-events-none'
                         : 'text-gray-400 hover:text-blue-400'
                     }">
-                    ${part}
+                    ${this.escapeHtml(part)}
                 </button>
             `;
         });
@@ -414,7 +429,7 @@ App.Files = {
 
         const path = input.value.trim() || '/';
         this.list(path);
-        
+
         const form = App.UI.el('file-path-form');
         const display = App.UI.el('file-breadcrumbs-display');
         if (form && display) {
@@ -533,7 +548,7 @@ App.Files = {
         // Reset and Setup
         typeInput.value = type;
         nameInput.value = '';
-        
+
         if (type === 'directory') {
             title.textContent = 'Create New Folder';
             icon.className = 'fas fa-folder-plus text-yellow-400';
@@ -560,7 +575,7 @@ App.Files = {
 
         modal.classList.add('opacity-0');
         modal.querySelector('div').classList.add('scale-95');
-        
+
         setTimeout(() => {
             modal.classList.add('hidden');
         }, 300);
@@ -576,7 +591,7 @@ App.Files = {
         }
 
         const fullPath = App.state.currentPath === '/' ? `/${name}` : `${App.state.currentPath}/${name}`;
-        
+
         // Button Loading State
         const btn = document.querySelector('#create-item-modal button:last-child');
         const originalText = btn.innerHTML;
@@ -593,7 +608,7 @@ App.Files = {
             this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
             this.closeCreateModal();
-        } catch (e) { 
+        } catch (e) {
             // Error handled by API
         } finally {
             btn.innerHTML = originalText;
@@ -613,21 +628,21 @@ App.Files = {
 
     async zip(path) {
         try {
-            const btn = document.querySelector(`button[onclick="App.Files.zip('${path}')"] i`);
+            const btn = this.actionIcon(path, 'zip');
             if (btn) btn.className = 'fas fa-spinner fa-spin';
-            
+
             await App.API.post('/files/action', { action: 'compress', path });
             App.UI.toast('success', 'Folder zipped successfully');
             this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
-        } catch (e) { 
+        } catch (e) {
              App.UI.toast('error', 'Failed to zip folder');
         }
     },
 
     async unzip(path) {
         try {
-            const btn = document.querySelector(`button[onclick="App.Files.unzip('${path}')"] i`);
+            const btn = this.actionIcon(path, 'unzip');
             if (btn) btn.className = 'fas fa-spinner fa-spin';
 
             await App.API.post('/files/action', { action: 'decompress', path });
@@ -640,7 +655,7 @@ App.Files = {
     },
 
     download(path) {
-        const url = App.config.SERVER_ID 
+        const url = App.config.SERVER_ID
             ? `${App.config.API_BASE}/servers/${App.config.SERVER_ID}/files/content?path=${encodeURIComponent(path)}`
             : `${App.config.API_BASE}/files/content?path=${encodeURIComponent(path)}`;
         window.location.href = url;
@@ -652,7 +667,7 @@ App.Files = {
 
         const formData = new FormData();
         formData.append('file', input.files[0]);
-        
+
         const btn = App.UI.el('upload-btn');
         const originalText = btn.innerHTML;
         btn.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>Uploading 0%...`;
@@ -669,7 +684,7 @@ App.Files = {
             this.invalidatePathSuggestions(App.state.currentPath);
             this.list(App.state.currentPath);
             input.value = '';
-        } catch (e) { /* Handled */ } 
+        } catch (e) { /* Handled */ }
         finally {
              btn.innerHTML = originalText;
              btn.disabled = false;
@@ -681,12 +696,12 @@ App.Files = {
         const modal = App.UI.el('terminal-modal');
         const pathEl = App.UI.el('terminal-path');
         const input = App.UI.el('terminal-input');
-        
+
         if (!modal || !pathEl || !input) return;
 
         pathEl.textContent = App.state.currentPath;
         modal.classList.remove('hidden');
-        
+
         // Transition
         setTimeout(() => {
             modal.classList.remove('opacity-0');
@@ -700,11 +715,11 @@ App.Files = {
             if (e.key === 'Enter') {
                 const cmd = input.value.trim();
                 if (!cmd) return;
-                
+
                 // Echo command
                 this.appendTerminalOutput(`$ ${cmd}`, 'text-white font-bold');
                 input.value = '';
-                
+
                 await this.executeCommand(cmd);
             }
         };
@@ -713,7 +728,7 @@ App.Files = {
     closeTerminal() {
         const modal = App.UI.el('terminal-modal');
         if (!modal) return;
-        
+
         modal.classList.add('opacity-0');
         modal.querySelector('div').classList.add('scale-95');
         setTimeout(() => modal.classList.add('hidden'), 300);

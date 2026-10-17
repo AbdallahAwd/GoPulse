@@ -2,13 +2,17 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/google/uuid"
 )
+
+// ErrRegistrationClosed means the initial administrator has already been created.
+var ErrRegistrationClosed = errors.New("registration is closed")
 
 // UserStore handles storage and retrieval of user credentials.
 type UserStore struct {
@@ -88,6 +92,40 @@ func scanUser(scanner interface {
 func (s *UserStore) AddUser(user models.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.addUser(user)
+}
+
+// RegisterFirstUser atomically checks the empty store and creates its administrator.
+// Every registration request must use this method rather than HasUsers/AddUser.
+func (s *UserStore) RegisterFirstUser(user models.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if user.ID == "" {
+		user.ID = uuid.New().String()
+	}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now()
+	}
+	result, err := s.db.Exec(`INSERT INTO users
+		(id, username, password, role, permissions, allowed_servers, created_at)
+		SELECT ?, ?, ?, 'admin', '["*"]', '[]', ?
+		WHERE NOT EXISTS (SELECT 1 FROM users)`,
+		user.ID, user.Username, user.Password, timeToText(user.CreatedAt))
+	if err != nil {
+		return err
+	}
+	created, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if created == 0 {
+		return ErrRegistrationClosed
+	}
+	return nil
+}
+
+// addUser requires the store's write lock.
+func (s *UserStore) addUser(user models.User) error {
 
 	var exists int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE username = ?`, user.Username).Scan(&exists); err != nil {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/amaa/gopulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"

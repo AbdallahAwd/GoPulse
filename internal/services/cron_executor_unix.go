@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 func executeLocalCron(parent context.Context, job models.CronJob, output *cronOutput) (*int, bool, error) {

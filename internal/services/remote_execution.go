@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"regexp"
 )
 

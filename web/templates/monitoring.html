@@ -1,0 +1,26 @@
+{{define "monitoring-panel"}}
+<section id="alerts-tab" class="tab-content hidden" data-can-write="{{.CanManageServers}}">
+    <div class="console-section-heading"><div><h2>Alerts</h2><p>Watch resource usage and collection availability. Get notified when a problem starts and recovers.</p></div><div class="monitor-actions"><button id="alerts-refresh" class="console-button secondary">Refresh</button>{{if .CanManageServers}}<button id="alerts-create" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Create rule</button>{{end}}</div></div>
+    <p id="alerts-error" class="workspace-alert" role="alert"></p>
+    <div id="alerts-summary" class="monitor-summary" aria-live="polite"></div>
+    <div id="alerts-rules" class="monitor-rules" aria-live="polite"><p class="console-subtle">Loading alert rules…</p></div>
+    <div class="console-section-heading mt-8"><div><h2>Incident and delivery history</h2><p>Latest 100 events. Events and metrics are retained for 30 days.</p></div></div>
+    <div class="monitor-table-scroll" role="region" tabindex="0" aria-label="Alert event history"><table class="monitor-table"><thead><tr><th>Time</th><th>Rule</th><th>Event</th><th>Webhook delivery</th></tr></thead><tbody id="alerts-events"></tbody></table></div>
+    <p class="console-subtle mt-4">Availability means GoPulse can collect host metrics. Unknown means readings are missing. GoPulse must be running to evaluate rules and send notifications.</p>
+</section>
+<dialog id="alert-editor" class="cron-dialog" aria-labelledby="alert-editor-title">
+    <form id="alert-form" class="cron-dialog-layout">
+        <header class="cron-dialog-header"><div><h2 id="alert-editor-title">Create alert rule</h2><p>Configure a rule for {{.ServerName}}.</p></div><button type="button" id="alert-close" class="cron-close" aria-label="Close alert editor"><i class="fas fa-xmark" aria-hidden="true"></i></button></header>
+        <div class="cron-dialog-body">
+            <p id="alert-form-error" class="workspace-alert" role="alert"></p>
+            <label class="cron-field" for="alert-name">Rule name<input id="alert-name" required maxlength="100" placeholder="Disk space running low"></label>
+            <div class="cron-form-grid"><label class="cron-field" for="alert-metric">Metric<select id="alert-metric"><option value="cpu">CPU usage</option><option value="memory">Memory usage</option><option value="disk">Highest disk usage</option><option value="availability">Metrics availability</option></select></label><label class="cron-field" for="alert-threshold">Above percentage<input id="alert-threshold" type="number" min="0" max="100" step="0.1" required value="85"><span id="alert-threshold-hint" class="cron-field-hint">Fires when usage stays strictly above this threshold.</span></label></div>
+            <label class="cron-field" for="alert-duration">For at least (seconds)<input id="alert-duration" type="number" min="0" max="86400" required value="300"><span class="cron-field-hint">0 fires on the first matching reading. Gaps reset pending durations.</span></label>
+            <label class="cron-field" for="alert-webhook">Webhook URL <span class="cron-optional">optional</span><input id="alert-webhook" type="url" maxlength="2048" placeholder="https://your-service.example/hooks/gopulse" autocomplete="off"><span class="cron-field-hint">Sends signed JSON to a public HTTPS endpoint. Leave empty for dashboard-only alerts.</span></label>
+            <div id="alert-signing-key" class="hidden"><label class="cron-field" for="alert-secret">Webhook signing secret<input id="alert-secret" type="password" readonly autocomplete="off"><span class="cron-field-hint">Use this key to verify the X-GoPulse-Signature header on your receiver. Protect it like a password.</span></label><label class="cron-enable"><input id="alert-reveal" type="checkbox"><span>Show signing secret</span></label></div>
+            <label class="cron-enable"><input id="alert-enabled" type="checkbox" checked><span>Enable this rule<small>Saving changes resets evaluation. Previously recorded events remain in history.</small></span></label>
+        </div>
+        <footer class="cron-dialog-footer"><button id="alert-cancel" type="button" class="console-button secondary">Cancel</button><button id="alert-save" type="submit" class="console-button">Save rule</button></footer>
+    </form>
+</dialog>
+{{end}}

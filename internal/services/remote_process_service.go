@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/remote"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/remote"
 )
 
 // RemoteProcessService handles process management on a remote server via SSH

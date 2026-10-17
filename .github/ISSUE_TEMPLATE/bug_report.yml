@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible problem using sanitized data.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities, follow SECURITY.md. Never include secrets, exports or private host details."
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit or version, operating system, Go version, deployment method.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or screenshots

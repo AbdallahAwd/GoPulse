@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amaa/gopulse/internal/config"
+	"github.com/AbdallahAwd/GoPulse/internal/config"
 	"golang.org/x/oauth2"
 )
 

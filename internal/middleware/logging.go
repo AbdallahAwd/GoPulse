@@ -25,7 +25,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		log.Printf(
 			"%s %s %d %s %s",
 			r.Method,
-			r.RequestURI,
+			r.URL.EscapedPath(),
 			wrapped.statusCode,
 			duration,
 			r.RemoteAddr,
@@ -58,6 +58,9 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
+				if err == http.ErrAbortHandler {
+					panic(err)
+				}
 				log.Printf("PANIC: %v", err)
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			}

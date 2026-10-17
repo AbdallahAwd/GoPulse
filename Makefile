@@ -1,9 +1,10 @@
-.PHONY: build run test clean docker install deps
+.PHONY: build build-prod run dev deps test test-ui test-race check vet fmt-check test-coverage clean docker docker-run install fmt lint security secrets licenses help
 
 # Build variables
 BINARY_NAME=gopulse
 BUILD_DIR=bin
-MAIN_PATH=cmd/server/main.go
+MAIN_PATH=./cmd/server
+TOOLS_DIR=$(CURDIR)/bin/tools
 
 # Build the application
 build:
@@ -31,12 +32,41 @@ dev:
 deps:
 	@echo "Installing dependencies..."
 	@go mod download
-	@go mod tidy
 
 # Run tests
 test:
 	@echo "Running tests..."
 	@go test -v ./...
+
+# Frontend regression tests (Node.js 22+)
+test-ui:
+	@node --test web/tests/*.test.cjs
+
+test-race:
+	@go test -race ./...
+
+vet:
+	@go vet ./...
+
+fmt-check:
+	@test -z "$$(gofmt -l cmd internal web)" || (gofmt -l cmd internal web; exit 1)
+
+check: fmt-check vet test test-ui build-prod
+
+security:
+	@mkdir -p $(TOOLS_DIR)
+	@GOBIN=$(TOOLS_DIR) go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+	@$(TOOLS_DIR)/govulncheck ./...
+
+secrets:
+	@mkdir -p $(TOOLS_DIR)
+	@GOBIN=$(TOOLS_DIR) go install github.com/zricethezav/gitleaks/v8@v8.30.0
+	@GITLEAKS=$(TOOLS_DIR)/gitleaks bash scripts/check-secrets.sh
+
+licenses:
+	@mkdir -p $(TOOLS_DIR)
+	@GOBIN=$(TOOLS_DIR) go install github.com/google/go-licenses/v2@v2.0.1
+	@GOROOT="$$(go env GOROOT)" $(TOOLS_DIR)/go-licenses save ./cmd/server --save_path=third_party_licenses --force --ignore=github.com/AbdallahAwd/GoPulse
 
 # Run tests with coverage
 test-coverage:
@@ -57,12 +87,14 @@ docker:
 	@echo "Building Docker image..."
 	@docker build -t gopulse:latest .
 
-# Run Docker container
+# Run a remote-management container; .env must contain a persistent JWT secret.
 docker-run:
 	@docker run -d \
 		--name gopulse \
-		-p 8080:8080 \
-		-v /var/run/docker.sock:/var/run/docker.sock \
+		--env-file .env \
+		-e GOPULSE_SERVER_HOST=0.0.0.0 \
+		-p 127.0.0.1:8080:8080 \
+		-v gopulse-data:/var/lib/gopulse \
 		gopulse:latest
 
 # Install the binary to /usr/local/bin
@@ -76,10 +108,8 @@ fmt:
 	@echo "Formatting code..."
 	@go fmt ./...
 
-# Lint code (requires golangci-lint)
-lint:
-	@echo "Linting code..."
-	@golangci-lint run
+# Lint using the standard toolchain
+lint: fmt-check vet
 
 # Show help
 help:
@@ -96,4 +126,9 @@ help:
 	@echo "  docker-run     - Run Docker container"
 	@echo "  install        - Install binary to /usr/local/bin"
 	@echo "  fmt            - Format code"
-	@echo "  lint           - Lint code"
+	@echo "  lint           - Check formatting and run go vet"
+	@echo "  check          - Format, vet, Go/JS tests and production build"
+	@echo "  test-race      - Run Go tests with the race detector"
+	@echo "  security       - Scan reachable Go vulnerabilities"
+	@echo "  secrets        - Scan working tree and all Git history"
+	@echo "  licenses       - Collect dependency license notices"

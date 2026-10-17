@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 // LoadBalancerStore handles storage and retrieval of load balancer configurations.

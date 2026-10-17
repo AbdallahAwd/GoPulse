@@ -1,0 +1,11 @@
+# Allow only source and module metadata into the build context.
+*
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!web/
+!web/**
+!LICENSE

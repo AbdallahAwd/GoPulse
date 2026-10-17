@@ -3,9 +3,10 @@ package services
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
@@ -126,6 +127,9 @@ func (s *LocalStatsService) GetDiskStats(ctx context.Context) ([]models.DiskStat
 
 	var result []models.DiskStats
 	for _, partition := range partitions {
+		if !monitorDiskPartition(partition.Fstype, slices.Contains(partition.Opts, "ro")) {
+			continue
+		}
 		usage, err := disk.Usage(partition.Mountpoint)
 		if err != nil {
 			continue
@@ -187,4 +191,13 @@ func (s *LocalStatsService) GetHostInfo(ctx context.Context) (map[string]interfa
 		"uptime":           info.Uptime,
 		"boot_time":        info.BootTime,
 	}, nil
+}
+
+// Read-only images (for example snap/squashfs and optical media) are normally
+// 100% used and must not generate capacity alerts.
+func monitorDiskPartition(filesystem string, readOnly bool) bool {
+	if readOnly {
+		return false
+	}
+	return !slices.Contains([]string{"squashfs", "iso9660", "udf", "devfs", "devtmpfs", "proc", "sysfs", "cgroup", "cgroup2", "autofs"}, filesystem)
 }

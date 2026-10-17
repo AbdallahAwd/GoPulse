@@ -2,7 +2,7 @@
 // remain responsible for resource actions and their authorization.
 App.Navigation = {
     titles: {
-        overview: 'Overview', projects: 'Applications', databases: 'Databases',
+        functions:'Functions', 'remote-backups':'Remote Backups', alerts: 'Alerts', overview: 'Overview', projects: 'Applications', databases: 'Databases',
         domains: 'Domains and TLS', 'load-balancers': 'Load balancers',
         processes: 'Processes', docker: 'Docker', cron: 'Cron jobs', files: 'Files', terminal: 'Terminal',
         'system-users': 'Server users', firewall: 'Firewall', settings: 'Server settings'
@@ -42,16 +42,22 @@ App.Navigation = {
         if (title) title.textContent = this.titles[view];
         document.title = `GoPulse - ${document.getElementById('current-server-id')?.dataset.name || 'Server'} - ${this.titles[view]}`;
         const description = document.getElementById('server-section-description');
-        if (description) description.textContent = {overview:'Manage resources and inspect this server.',projects:'Build, deploy, and manage applications on this server.',databases:'Manage database instances, services, and backups on this server.',domains:'Manage domains and certificates on this server.','load-balancers':'Route traffic from this server to application backends.',processes:'Inspect processes and resource usage on this server.',docker:'Manage containers, images, volumes, and networks.',cron:'Schedule commands and inspect their execution on this server.',files:'Browse and edit files on this server.',terminal:'Open an interactive terminal on this server.','system-users':'Manage operating system users and their access.',firewall:'Manage network access and firewall rules.',settings:'Configure preferences for this server workspace.'}[view];
+        if (description) description.textContent = {functions:'Create, deploy, and run isolated functions with triggers and logs.','remote-backups':'Schedule encrypted off-server backups and verify recovery.',alerts:'Configure alerts and inspect incidents and webhook deliveries.',overview:'Manage resources and inspect this server.',projects:'Build, deploy, and manage applications on this server.',databases:'Manage database instances, services, and backups on this server.',domains:'Manage domains and certificates on this server.','load-balancers':'Route traffic from this server to application backends.',processes:'Inspect processes and resource usage on this server.',docker:'Manage containers, images, volumes, and networks.',cron:'Schedule commands and inspect their execution on this server.',files:'Browse and edit files on this server.',terminal:'Open an interactive terminal on this server.','system-users':'Manage operating system users and their access.',firewall:'Manage network access and firewall rules.',settings:'Configure preferences for this server workspace.'}[view];
         const globalSection = 'servers';
         document.querySelectorAll('#workspace-navigation a').forEach(link => {
             if (link.dataset.section === globalSection) link.setAttribute('aria-current', 'page');
             else link.removeAttribute('aria-current');
         });
+        if (view !== 'functions') App.Functions?.deactivate();
+        if (view !== 'remote-backups') App.RemoteBackups?.deactivate();
+        if (view !== 'alerts') App.Alerts?.deactivate();
         if (view !== 'cron') App.Cron?.deactivate();
         if (view !== 'databases') App.Databases.deactivate();
         if (view !== 'overview') App.Charts.pause();
         const loaders = {
+            'remote-backups': () => App.RemoteBackups.load(),
+            functions: () => App.Functions.load(),
+            alerts: () => App.Alerts.load(),
             overview: () => {
                 App.Charts.init();
             },

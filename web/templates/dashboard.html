@@ -80,16 +80,18 @@
 
         <!-- Performance History Charts -->
         <div class="bg-gray-800 rounded-lg shadow-lg p-6">
-            <div class="flex items-center justify-between mb-6">
+            <div class="flex items-center justify-between mb-6 history-heading">
                 <h2 class="text-xl font-bold flex items-center">
                     <i class="fas fa-chart-area text-blue-500 mr-2"></i>Performance History
                 </h2>
                 <div class="flex items-center space-x-4">
                     <!-- Range selectors -->
-                    <div class="flex bg-gray-700 p-1 rounded-lg text-xs font-semibold">
+                    <div class="flex bg-gray-700 p-1 rounded-lg text-xs font-semibold history-ranges">
                         <button onclick="App.Charts.setRange('1h')" id="btn-chart-1h" class="px-3 py-1.5 rounded-md text-gray-300 hover:text-white transition-all bg-gray-800 text-white">1h</button>
                         <button onclick="App.Charts.setRange('6h')" id="btn-chart-6h" class="px-3 py-1.5 rounded-md text-gray-400 hover:text-white transition-all">6h</button>
                         <button onclick="App.Charts.setRange('24h')" id="btn-chart-24h" class="px-3 py-1.5 rounded-md text-gray-400 hover:text-white transition-all">24h</button>
+                        <button onclick="App.Charts.setRange('7d')" id="btn-chart-7d" class="px-3 py-1.5 rounded-md text-gray-400 hover:text-white transition-all">7d</button>
+                        <button onclick="App.Charts.setRange('30d')" id="btn-chart-30d" class="px-3 py-1.5 rounded-md text-gray-400 hover:text-white transition-all">30d</button>
                     </div>
                     <button onclick="App.Charts.toggleCollapse()" class="text-gray-400 hover:text-white transition-colors" id="btn-charts-collapse">
                         <i class="fas fa-chevron-up"></i>
@@ -97,6 +99,7 @@
                 </div>
             </div>
             
+            <p id="history-feedback" role="status" aria-live="polite">Loading saved metric history…</p>
             <div id="charts-container" class="grid grid-cols-1 md:grid-cols-2 gap-6 transition-all duration-300">
                 <div class="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
                     <h3 class="text-sm font-semibold text-gray-400 mb-2">CPU Usage (%)</h3>
@@ -164,6 +167,10 @@
             </div>
         </div>
     </div>
+
+    {{template "monitoring-panel" .}}
+ {{template "remote-backups-panel" .}}
+ {{template "functions-panel" .}}
 
     <!-- Cron jobs are scheduled by GoPulse for this server, not by its crontab. -->
     <section id="cron-tab" class="tab-content hidden" data-can-write="{{.CanWriteCron}}">

@@ -3,7 +3,7 @@ package handlers
 import (
 	"strings"
 
-	"github.com/amaa/gopulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
 	"net/http"
 )
 

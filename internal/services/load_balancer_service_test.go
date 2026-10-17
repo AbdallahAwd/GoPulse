@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 func TestGenerateNginxConfig(t *testing.T) {
@@ -137,4 +137,3 @@ func TestLbShellQuote(t *testing.T) {
 		}
 	}
 }
-
