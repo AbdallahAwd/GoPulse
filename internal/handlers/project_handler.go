@@ -8,8 +8,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -50,6 +51,10 @@ func (h *ProjectHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	filtered := []models.Project{}
 	for _, p := range projects {
 		if p.ServerID == serverID {
+			if !middleware.HasPermission(r, "projects:write") {
+				p.WebhookSecret = ""
+				p.EnvVars = nil
+			}
 			filtered = append(filtered, p)
 		}
 	}
@@ -93,6 +98,10 @@ func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusNotFound, "Project not found", err)
 		return
+	}
+	if !middleware.HasPermission(r, "projects:write") {
+		project.WebhookSecret = ""
+		project.EnvVars = nil
 	}
 
 	respondJSON(w, http.StatusOK, models.APIResponse{
@@ -321,6 +330,10 @@ func (h *ProjectHandler) DisableWebhook(w http.ResponseWriter, r *http.Request) 
 
 // GetEnvVars handles GET /api/servers/{serverID}/projects/{id}/env
 func (h *ProjectHandler) GetEnvVars(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasPermission(r, "projects:write") {
+		respondError(w, http.StatusForbidden, "Permission required: projects:write", nil)
+		return
+	}
 	projectID := chi.URLParam(r, "id")
 	vars, err := h.service.GetEnvVars(r.Context(), projectID)
 	if err != nil {
@@ -486,6 +499,9 @@ func (h *ProjectHandler) GetAutomation(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Failed to get project automation", err)
 		return
+	}
+	if !middleware.HasPermission(r, "projects:write") {
+		automation.WebhookSecret = ""
 	}
 
 	respondJSON(w, http.StatusOK, models.APIResponse{

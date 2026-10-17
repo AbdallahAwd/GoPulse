@@ -16,7 +16,7 @@ GoPulse/
 │   ├── middleware/      # HTTP middleware (auth, recovery, logging)
 │   ├── handlers/        # HTTP controllers (translates requests to services)
 │   ├── services/        # Business logic layer (SSH executors, backup schedulers)
-│   ├── monitor/         # Background collector & stats history ring buffer
+│   ├── monitor/         # Background collector & persistent stats history adapter
 │   ├── store/           # Data persistence layer (SQLite + legacy JSON)
 │   └── models/          # Shared domain entities & data schemas
 ├── web/
@@ -32,7 +32,7 @@ Requests enter through `main.go` → Routed via `chi` router → Validated by `m
 ## 🗄️ Database & Storage Layer (`internal/store/`)
 
 GoPulse uses **SQLite** as its database engine.
-- **SQLite Database Path**: Located at `~/.gopulse/gopulse.db`.
+- **SQLite Database Path**: Located at `$GOPULSE_DATA_DIR/gopulse.db`, defaulting to `~/.gopulse/gopulse.db`.
 - **Legacy JSON Support**: The stores originally persisted data in individual JSON files (e.g. `servers.json`, `users.json`). To maintain compatibility, `sqlite.go` implements a one-time legacy import helper (`importJSONOnce`) which reads legacy JSON files and populates the SQLite tables during initialization.
 - **Schema Migrations**: Database tables are defined and migrated programmatically on startup in `sqlite.go`. Avoid raw SQLite configuration modifications; always update the migration array in `sqlite.go` if schema modifications are required.
 - **Timestamp Preservation**: Store addition methods (e.g. `AddProject`, `AddDatabase`, `AddDomain`) conditionally set `CreatedAt = time.Now()` only when the field `IsZero()`. This preserves timestamps during imports or restorations.
@@ -41,9 +41,9 @@ GoPulse uses **SQLite** as its database engine.
 
 ## 🔐 Authentication & User Management
 
-- **User Bootstrapping**: If the database contains zero users, the first user created is automatically assigned the `admin` role with a wildcard permission (`*`).
-- **Passwords**: User passwords are saved as bcrypt hashes.
-- **User Import**: The `AddUserRaw(models.User)` store method bypasses the default role allocation and password-hashing steps. It writes the record exactly as provided. This allows account migrations between instances without resetting passwords.
+- **User Bootstrapping**: Public registration uses the atomic `RegisterFirstUser` insert. Exactly one initial account receives the `admin` role and wildcard permission (`*`); further public registrations are rejected. Administrator-created users use `AddUser`.
+- **Passwords**: HTTP authentication handlers hash user passwords with bcrypt before calling the store; `AddUser` does not hash passwords itself.
+- **User Import**: The `AddUserRaw(models.User)` store method bypasses the default role allocation. It expects an already hashed password, just like the other store methods. It writes the record exactly as provided. This allows account migrations between instances without resetting passwords.
 
 ---
 
@@ -73,3 +73,19 @@ To ensure migrated backups do not break because of local file dependencies:
 1. **Keep Imports Port-Agnostic**: Key paths must always be derived dynamically using the target environment's home directory (`os.Getenv("HOME")`). Do not hardcode filesystem roots.
 2. **Clipboard Access**: When implementing copy buttons, provide a fallback text selector (`document.execCommand('copy')`) in JavaScript to support plain-HTTP contexts.
 3. **Vanilla CSS & Tailwind**: The project uses Tailwind CSS loaded via CDN globally. Minimize introducing complex custom CSS build pipes; rely on vanilla Tailwind classes and inline styles where appropriate.
+
+## Contributor verification
+
+Run `make check` and `make test-race`. `make security` scans reachable Go vulnerabilities; `make secrets` scans tracked source and all Git history. See `CONTRIBUTING.md` for setup and `SECURITY.md` for deployment boundaries and historical credential exposure. Keep local configuration, runtime state, private keys and real infrastructure screenshots out of Git. The canonical module path is `github.com/AbdallahAwd/GoPulse`, matching the repository clone URL.
+
+## Monitoring and alert delivery
+
+Production history reads SQLite `metric_minutes` through `MonitoringStore`; the legacy in-memory `StatsHistory` constructor remains available for embedders. `MonitoringService.Observe` atomically commits minute summaries, rule evaluation state, incident events, and webhook outbox entries. Network delivery runs separately with leases and retries. Keep raw measurements distinct from SQL chart aggregates; never substitute zero for missing readings. The alert routes require server scope and `server:write` for writes. Protect and redact webhook URLs and signing keys. See `docs/monitoring.md` for evaluation semantics, retention, and migration limits.
+
+## Remote Backups
+
+`RemoteBackupService` owns persisted scheduling, two execution workers, per-plan overlap protection and restart cleanup. `SSHBackupBackend` streams native dumps through standard age encryption to SFTP; tests download the recorded archive, authenticate it fully, and restore into isolated scratch storage. Never restore tests into production containers or mount production data. Keep keys under `DataDirectory()/remote-backup-keys` and out of exports/logs. Both `database:write` and `server:write`, plus both server scopes, are required for writes and key/archive downloads. Resource deletion must check backup-plan dependencies before any remote destructive action; database lifecycle changes use the shared lock. See `docs/remote-backups.md` for recovery, retention boundaries and verification limits.
+
+## Serverless Functions
+
+`FunctionService` owns immutable deployment snapshots, eight execution workers (four per managed server), user/RBAC rechecks, cron triggers, bounded live logs, and durable cleanup. `SSHFunctionBackend` passes source/event only through stdin to allowlisted, pinned Docker images. Keep functions non-root, network-disabled, read-only, mount-free, and resource-limited. Function bearer tokens are hash-only and authenticate only the exact POST trigger endpoint; never broaden the auth exemption. Pending cleanup must block executions and deletion and survive history pruning. The supported control plane is one GoPulse process. See `docs/functions.md`; real Docker tests are explicit opt-in.

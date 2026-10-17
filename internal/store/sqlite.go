@@ -77,6 +77,23 @@ func openSQLiteStore(legacyPath string) (*sql.DB, error) {
 
 func migrateSQLiteSchema(db *sql.DB) error {
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS functions (id TEXT PRIMARY KEY,server_id TEXT NOT NULL,token_hash TEXT NOT NULL DEFAULT '',data TEXT NOT NULL,FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE RESTRICT)`,
+		`CREATE INDEX IF NOT EXISTS idx_functions_server ON functions(server_id)`,
+		`CREATE TABLE IF NOT EXISTS function_versions (id TEXT PRIMARY KEY,function_id TEXT NOT NULL,data TEXT NOT NULL,FOREIGN KEY(function_id) REFERENCES functions(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_function_versions ON function_versions(function_id)`,
+		`CREATE TABLE IF NOT EXISTS function_runs (id TEXT PRIMARY KEY,function_id TEXT NOT NULL,server_id TEXT NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL,needs_cleanup INTEGER NOT NULL,data TEXT NOT NULL,FOREIGN KEY(function_id) REFERENCES functions(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_function_runs ON function_runs(function_id,status)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_function_deploy ON function_runs(function_id) WHERE status='running' AND kind='deploy'`,
+
+		`CREATE TABLE IF NOT EXISTS remote_backup_plans (id TEXT PRIMARY KEY,server_id TEXT NOT NULL,database_id TEXT NOT NULL,destination_id TEXT NOT NULL,enabled INTEGER NOT NULL,next_run_at INTEGER NOT NULL,data TEXT NOT NULL,FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE RESTRICT,FOREIGN KEY(destination_id) REFERENCES servers(id) ON DELETE RESTRICT,FOREIGN KEY(database_id) REFERENCES databases(id) ON DELETE RESTRICT)`,
+		`CREATE INDEX IF NOT EXISTS idx_remote_backup_plans_due ON remote_backup_plans(enabled,next_run_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_remote_backup_plans_server ON remote_backup_plans(server_id)`,
+		`CREATE TABLE IF NOT EXISTS remote_backup_runs (id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,status TEXT NOT NULL,needs_cleanup INTEGER NOT NULL,data TEXT NOT NULL,FOREIGN KEY(plan_id) REFERENCES remote_backup_plans(id) ON DELETE RESTRICT)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_remote_backup_runs_active ON remote_backup_runs(plan_id) WHERE status='running'`,
+		`CREATE INDEX IF NOT EXISTS idx_remote_backup_runs_plan ON remote_backup_runs(plan_id)`,
+		`CREATE TABLE IF NOT EXISTS remote_backup_artifacts (id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,pruned INTEGER NOT NULL,created_at INTEGER NOT NULL,data TEXT NOT NULL,FOREIGN KEY(plan_id) REFERENCES remote_backup_plans(id) ON DELETE RESTRICT)`,
+		`CREATE INDEX IF NOT EXISTS idx_remote_backup_artifacts_plan ON remote_backup_artifacts(plan_id,created_at DESC)`,
+
 		`CREATE TABLE IF NOT EXISTS agent_credentials (id TEXT PRIMARY KEY,owner TEXT NOT NULL,token_hash TEXT NOT NULL UNIQUE,data TEXT NOT NULL)`,
 		`CREATE INDEX IF NOT EXISTS idx_agent_credentials_owner ON agent_credentials(owner)`,
 		`CREATE TABLE IF NOT EXISTS cron_jobs (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, enabled INTEGER NOT NULL, next_run_at INTEGER NOT NULL, data TEXT NOT NULL, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE)`,
@@ -259,6 +276,13 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			timestamp TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_firewall_activity_logs_server_id ON firewall_activity_logs(server_id)`,
+		`CREATE TABLE IF NOT EXISTS metric_minutes (server_id TEXT NOT NULL, minute INTEGER NOT NULL, samples INTEGER NOT NULL, failures INTEGER NOT NULL, cpu_sum REAL NOT NULL, mem_sum REAL NOT NULL, disk_sum REAL NOT NULL, net_rx INTEGER NOT NULL, net_tx INTEGER NOT NULL, PRIMARY KEY(server_id,minute), FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_minutes_retention ON metric_minutes(minute)`,
+		`CREATE TABLE IF NOT EXISTS alert_rules (id TEXT PRIMARY KEY, server_id TEXT NOT NULL, data TEXT NOT NULL, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_rules_server ON alert_rules(server_id)`,
+		`CREATE TABLE IF NOT EXISTS alert_events (id TEXT PRIMARY KEY, rule_id TEXT NOT NULL, server_id TEXT NOT NULL, occurred_at INTEGER NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL, last_error TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL, destination TEXT NOT NULL, secret TEXT NOT NULL, FOREIGN KEY(rule_id) REFERENCES alert_rules(id) ON DELETE CASCADE, FOREIGN KEY(server_id) REFERENCES servers(id) ON DELETE CASCADE)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_due ON alert_events(status,next_attempt)`,
+		`CREATE INDEX IF NOT EXISTS idx_alert_events_server ON alert_events(server_id,occurred_at DESC)`,
 	}
 
 	for _, stmt := range statements {

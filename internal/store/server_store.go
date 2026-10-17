@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 // ServerStore handles storage and retrieval of server configurations.

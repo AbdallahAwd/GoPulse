@@ -23,6 +23,7 @@ function init() {
             if (App.Navigation.current !== 'overview') return;
             const res = await App.API.get(`/stats?server_id=${App.config.SERVER_ID}`);
             if (res.success && res.data.stats) App.UI.updateStats(res.data.stats);
+            else App.UI.markStatsUnavailable();
         } catch (e) {} finally { statsLoading = false; }
     };
 

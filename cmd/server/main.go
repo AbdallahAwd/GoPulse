@@ -9,17 +9,18 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/amaa/gopulse/internal/config"
-	"github.com/amaa/gopulse/internal/handlers"
-	"github.com/amaa/gopulse/internal/middleware"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/monitor"
-	"github.com/amaa/gopulse/internal/services"
-	"github.com/amaa/gopulse/internal/store"
-	"github.com/amaa/gopulse/web"
+	"github.com/AbdallahAwd/GoPulse/internal/config"
+	"github.com/AbdallahAwd/GoPulse/internal/handlers"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/monitor"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/web"
 	"github.com/go-chi/chi/v5"
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 )
@@ -34,10 +35,7 @@ func main() {
 	log.Printf("Starting GoPulse VPS Dashboard on %s:%d", cfg.Server.Host, cfg.Server.Port)
 
 	// Initialize Server Store
-	dataDir := os.Getenv("GOPULSE_DATA_DIR")
-	if dataDir == "" {
-		dataDir = filepath.Join(os.Getenv("HOME"), ".gopulse")
-	}
+	dataDir := store.DataDirectory()
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		log.Fatalf("Failed to create data directory: %v", err)
 	}
@@ -59,20 +57,27 @@ func main() {
 
 	// Initialize Auth Middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.Auth.JWTSecret, userStore)
+	authMiddleware.SetSessionOptions(cfg.Auth.TokenDuration, cfg.Auth.SecureCookies)
 	authMiddleware.SetAgentStore(agentStore)
 
 	// Initialize Service Manager
 	serviceManager := services.NewServiceManager(serverStore)
 	defer serviceManager.CloseAll()
 
-	// Initialize Stats History (in-memory ring buffer, 24 hours at 1-minute interval = 1440 entries)
-	statsHistory := monitor.NewStatsHistory(1440)
+	monitoringStore, err := store.NewMonitoringStore(filepath.Join(dataDir, "monitoring.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize monitoring: %v", err)
+	}
+	monitoringService := services.NewMonitoringService(monitoringStore, serverStore, cfg.Monitoring.PollInterval)
+	statsHistory := monitor.NewPersistentStatsHistory(monitoringStore)
+	monitoringHandler := &handlers.MonitoringHandler{Service: monitoringService}
 
 	// Initialize Stats Collector
 	factory := func(server models.Server) (services.StatsProvider, error) {
 		return serviceManager.GetStatsProvider(server.ID)
 	}
 	collector := monitor.NewCollector(serverStore, factory, cfg.Monitoring.PollInterval, statsHistory)
+	collector.SetMonitoring(monitoringService)
 
 	// Initialize Handlers
 	dashboardHandler := handlers.NewDashboardHandler(web.Assets, serverStore)
@@ -127,6 +132,28 @@ func main() {
 		log.Fatalf("Failed to initialize database store: %v", err)
 	}
 	databaseService := services.NewDatabaseService(databaseStore, serviceManager)
+	remoteBackupStore, err := store.NewRemoteBackupStore(filepath.Join(dataDir, "remote_backups.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize remote backups: %v", err)
+	}
+	remoteBackupService, err := services.NewRemoteBackupService(remoteBackupStore, serverStore, databaseStore, userStore, services.NewSSHBackupBackend(serverStore, databaseStore), filepath.Join(dataDir, "remote-backup-keys"))
+	if err != nil {
+		log.Fatalf("Failed to initialize remote backup scheduler: %v", err)
+	}
+	defer remoteBackupService.Close()
+	functionStore, err := store.NewFunctionStore(filepath.Join(dataDir, "functions.json"))
+	if err != nil {
+		log.Fatalf("Failed to initialize serverless functions: %v", err)
+	}
+	functionService, err := services.NewFunctionService(functionStore, serverStore, userStore, services.NewSSHFunctionBackend(serverStore))
+	if err != nil {
+		log.Fatalf("Failed to initialize function execution: %v", err)
+	}
+	defer functionService.Close()
+	functionHandler := &handlers.FunctionHandler{Service: functionService}
+
+	remoteBackupHandler := &handlers.RemoteBackupHandler{Service: remoteBackupService}
+
 	databaseHandler := handlers.NewDatabaseHandler(databaseService, serviceManager)
 
 	operationStore, err := store.NewOperationStore(filepath.Join(dataDir, "operations.json"))
@@ -178,6 +205,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go collector.Start(ctx)
+	go monitoringService.Start(ctx)
+	go remoteBackupService.Start(ctx)
+	go functionService.Start(ctx)
 	go cronService.Start(ctx)
 
 	// Start Backup Scheduler
@@ -204,11 +234,21 @@ func main() {
 	// Middleware
 	r.Use(middleware.LoggingMiddleware)
 	r.Use(middleware.RecoveryMiddleware)
+	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.OriginGuard)
 	r.Use(middleware.NewRateLimiter(600, time.Minute).APIOnlyHandler)
 	r.Use(authMiddleware.Handler)
 	r.Use(middleware.PermissionGuard)
-	r.Use(chiMiddleware.Timeout(60 * time.Second))
+	r.Use(func(next http.Handler) http.Handler {
+		timed := chiMiddleware.Timeout(60 * time.Second)(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/servers/") && strings.Contains(r.URL.Path, "/remote-backups/") && strings.HasSuffix(r.URL.Path, "/download") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			timed.ServeHTTP(w, r)
+		})
+	})
 
 	// Static Files (Embedded)
 	staticFS, err := fs.Sub(web.Assets, "static")
@@ -240,6 +280,7 @@ func main() {
 		r.Use(middleware.NewRateLimiter(240, time.Minute).APIHandler)
 		authLimiter := middleware.NewRateLimiter(10, time.Minute)
 
+		r.Post("/function-triggers/{serverID}/{functionID}", functionHandler.Trigger)
 		r.Get("/operations", operationHandler.List)
 		r.Get("/operations/{operationID}", operationHandler.Get)
 		r.Post("/operations/{operationID}/approve", operationHandler.Approve)
@@ -276,6 +317,11 @@ func main() {
 				r.Put("/", serverHandler.UpdateServer)
 				r.With(authMiddleware.RequirePermission("terminal:write")).Get("/terminal", terminalHandler.HandleTerminal)
 				r.With(authMiddleware.RequireServerAccess).Get("/stats/history", statsHandler.GetStatsHistory)
+
+				// Monitoring rules, incident history and webhook delivery.
+				r.Route("/alerts", monitoringHandler.Routes)
+				r.Route("/remote-backups", remoteBackupHandler.Routes)
+				r.Route("/functions", functionHandler.Routes)
 
 				// Cron jobs
 				r.Route("/cron", cronHandler.Routes)
@@ -550,6 +596,7 @@ func main() {
 	<-stop
 
 	log.Println("Shutting down server...")
+	cancel()
 
 	// Shutdown server with timeout
 	// log.Printf format %s has arg cfg.Server.Port of wrong type int

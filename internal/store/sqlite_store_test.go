@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 func writeLegacyJSON(t *testing.T, path string, value interface{}) {

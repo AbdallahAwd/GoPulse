@@ -79,3 +79,36 @@ func TestJWTConfigurationFromDotEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestSafeDefaultsAndInvalidOperationalConfiguration(t *testing.T) {
+	for _, tc := range []struct{ name, key, value string }{
+		{"defaults", "", ""},
+		{"invalid port", "GOPULSE_SERVER_PORT", "65536"},
+		{"invalid session duration", "GOPULSE_AUTH_TOKEN_DURATION", "0s"},
+		{"invalid polling interval", "GOPULSE_MONITORING_POLL_INTERVAL", "-1s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			viper.Reset()
+			defer viper.Reset()
+			t.Chdir(t.TempDir())
+			t.Setenv("GOPULSE_AUTH_JWT_SECRET", "test-configuration-secret-longer-than-32-characters")
+			t.Setenv("GOPULSE_SERVER_HOST", "")
+			if tc.key != "" {
+				t.Setenv(tc.key, tc.value)
+			}
+			cfg, err := Load()
+			if tc.key != "" {
+				if err == nil {
+					t.Fatal("invalid operational configuration accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Server.Host != "127.0.0.1" {
+				t.Fatalf("unsafe default listener: %s", cfg.Server.Host)
+			}
+		})
+	}
+}

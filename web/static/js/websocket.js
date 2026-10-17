@@ -97,6 +97,8 @@ function handleWebSocketMessage(message) {
         
         if (message.data.stats) {
             updateSystemStats(message.data.stats);
+        } else if (message.data.error && currentServerID) {
+            window.App?.UI.markStatsUnavailable();
         }
     } else {
         console.log('Unknown message type:', message.type);

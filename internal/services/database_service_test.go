@@ -3,7 +3,7 @@ package services
 import (
 	"testing"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 func TestMySQLExecCommandUsesRootControlCredential(t *testing.T) {

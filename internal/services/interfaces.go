@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 // StatsProvider defines the interface for collecting system statistics

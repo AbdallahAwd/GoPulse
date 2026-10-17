@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/middleware"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/go-chi/chi/v5"
 )
 

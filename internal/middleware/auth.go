@@ -3,13 +3,14 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -33,20 +34,29 @@ type AuthMiddleware struct {
 	userStore        *store.UserStore
 	agentStore       *store.AgentStore
 	secureCookieHost func(string) bool
+	secureCookies    bool
+	tokenDuration    time.Duration
+}
+
+// SetSessionOptions applies validated configuration to browser sessions.
+func (am *AuthMiddleware) SetSessionOptions(duration time.Duration, secure bool) {
+	am.tokenDuration = duration
+	am.secureCookies = secure
 }
 
 // A configured HTTPS origin uses Secure cookies even when TLS terminates at
 // Nginx. Do not trust arbitrary X-Forwarded-Proto headers from direct clients.
 func (am *AuthMiddleware) SetSecureCookieHost(check func(string) bool) { am.secureCookieHost = check }
 func (am *AuthMiddleware) secureCookie(r *http.Request) bool {
-	return r.TLS != nil || (am.secureCookieHost != nil && am.secureCookieHost(r.Host))
+	return am.secureCookies || r.TLS != nil || (am.secureCookieHost != nil && am.secureCookieHost(r.Host))
 }
 
 // NewAuthMiddleware creates a new auth middleware
 func NewAuthMiddleware(jwtSecret string, userStore *store.UserStore) *AuthMiddleware {
 	return &AuthMiddleware{
-		jwtSecret: jwtSecret,
-		userStore: userStore,
+		jwtSecret:     jwtSecret,
+		userStore:     userStore,
+		tokenDuration: 24 * time.Hour,
 	}
 }
 
@@ -59,6 +69,10 @@ func (am *AuthMiddleware) GetUserStore() *store.UserStore {
 func (am *AuthMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		if r.Method == http.MethodPost && IsFunctionTriggerPath(path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if path == "/.well-known/gopulse-dashboard" && r.Method == http.MethodGet {
 			next.ServeHTTP(w, r)
 			return
@@ -303,6 +317,7 @@ func (am *AuthMiddleware) GenerateToken(username string, duration time.Duration)
 
 // LoginHandler handles login requests, returns JWT in body AND sets a secure browser Cookie
 func (am *AuthMiddleware) LoginHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -340,7 +355,7 @@ func (am *AuthMiddleware) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := am.GenerateToken(req.Username, 24*time.Hour)
+	token, err := am.GenerateToken(req.Username, am.tokenDuration)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
@@ -354,7 +369,7 @@ func (am *AuthMiddleware) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   am.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(24 * time.Hour),
+		Expires:  time.Now().Add(am.tokenDuration),
 	})
 
 	w.Header().Set("Content-Type", "application/json")
@@ -367,6 +382,7 @@ func (am *AuthMiddleware) LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 // RegisterHandler registers the first-time admin user
 func (am *AuthMiddleware) RegisterHandler(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -415,13 +431,17 @@ func (am *AuthMiddleware) RegisterHandler(w http.ResponseWriter, r *http.Request
 		Password: string(hashedBytes),
 	}
 
-	if err := am.userStore.AddUser(user); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := am.userStore.RegisterFirstUser(user); err != nil {
+		if errors.Is(err, store.ErrRegistrationClosed) {
+			http.Error(w, "Registration is locked. Admin account already exists.", http.StatusForbidden)
+			return
+		}
+		http.Error(w, "Failed to create account", http.StatusInternalServerError)
 		return
 	}
 
 	// Generate and auto-login user immediately
-	token, err := am.GenerateToken(req.Username, 24*time.Hour)
+	token, err := am.GenerateToken(req.Username, am.tokenDuration)
 	if err != nil {
 		http.Error(w, "Account created, but automatic login failed", http.StatusInternalServerError)
 		return
@@ -435,7 +455,7 @@ func (am *AuthMiddleware) RegisterHandler(w http.ResponseWriter, r *http.Request
 		HttpOnly: true,
 		Secure:   am.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
-		Expires:  time.Now().Add(24 * time.Hour),
+		Expires:  time.Now().Add(am.tokenDuration),
 	})
 
 	w.Header().Set("Content-Type", "application/json")

@@ -3,8 +3,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/services"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/go-chi/chi/v5"
 	"net/http"
 )

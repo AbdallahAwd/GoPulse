@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )

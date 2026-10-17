@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/remote"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/remote"
 )
 
 // RemoteStatsService handles system statistics collection from a remote server via SSH
@@ -25,36 +25,31 @@ func (s *RemoteStatsService) GetSystemStats(ctx context.Context) (*models.System
 	// Execute commands concurrently or sequentially? Sequentially is safer for SSH session usage
 	// 1. CPU (using top or mpstat if available, falling back to /proc/stat)
 	// Simple parsing of /proc/stat
-	cpuStats, err := s.getRemoteCPUStats()
+	cpuStats, err := s.getRemoteCPUStats(ctx)
 	if err != nil {
-		fmt.Printf("Error getting CPU stats: %v\n", err)
-		// Return empty stats rather than failing completely
-		cpuStats = &models.CPUStats{}
+		return nil, fmt.Errorf("CPU metrics unavailable: %w", err)
 	}
 
 	// 2. Memory (free -b)
-	memStats, err := s.getRemoteMemoryStats()
+	memStats, err := s.getRemoteMemoryStats(ctx)
 	if err != nil {
-		fmt.Printf("Error getting Memory stats: %v\n", err)
-		memStats = &models.MemoryStats{}
+		return nil, fmt.Errorf("memory metrics unavailable: %w", err)
 	}
 
 	// 3. Disk (df -B1)
-	diskStats, err := s.getRemoteDiskStats()
+	diskStats, err := s.getRemoteDiskStats(ctx)
 	if err != nil {
-		fmt.Printf("Error getting Disk stats: %v\n", err)
-		diskStats = []models.DiskStats{}
+		return nil, fmt.Errorf("disk metrics unavailable: %w", err)
 	}
 
 	// 4. Network (/proc/net/dev)
-	netStats, err := s.getRemoteNetworkStats()
+	netStats, err := s.getRemoteNetworkStats(ctx)
 	if err != nil {
-		fmt.Printf("Error getting Network stats: %v\n", err)
-		netStats = &models.NetworkStats{}
+		return nil, fmt.Errorf("network metrics unavailable: %w", err)
 	}
 
 	// 5. Uptime (/proc/uptime)
-	uptimeStr, err := s.client.RunCommand("cat /proc/uptime | awk '{print $1}'")
+	uptimeStr, err := s.client.RunCommandContext(ctx, "cat /proc/uptime | awk '{print $1}'")
 	var uptime uint64
 	if err == nil {
 		val, _ := strconv.ParseFloat(strings.TrimSpace(uptimeStr), 64)
@@ -72,7 +67,7 @@ func (s *RemoteStatsService) GetSystemStats(ctx context.Context) (*models.System
 
 // GetHostInfo returns general host information
 func (s *RemoteStatsService) GetHostInfo(ctx context.Context) (map[string]interface{}, error) {
-	output, err := s.client.RunCommand("hostname && uname -s && uname -r && uname -m && uptime -s")
+	output, err := s.client.RunCommandContext(ctx, "hostname && uname -s && uname -r && uname -m && uptime -s")
 	if err != nil {
 		return nil, err
 	}
@@ -98,42 +93,32 @@ func (s *RemoteStatsService) GetHostInfo(ctx context.Context) (map[string]interf
 	return info, nil
 }
 
-func (s *RemoteStatsService) getRemoteCPUStats() (*models.CPUStats, error) {
-	// Read /proc/stat twice to calculate usage
-	// Implementation simplified: just get load average for now
-	output, err := s.client.RunCommand("cat /proc/loadavg")
+func (s *RemoteStatsService) getRemoteCPUStats(ctx context.Context) (*models.CPUStats, error) {
+	// Read Linux load and CPU counters. Never substitute a healthy zero on failure.
+	output, err := s.client.RunCommandContext(ctx, "cat /proc/loadavg")
 	if err != nil {
 		return nil, err
 	}
 	parts := strings.Fields(output)
 	if len(parts) < 3 {
-		return &models.CPUStats{}, nil
+		return nil, fmt.Errorf("invalid load average output")
 	}
-
-	l1, _ := strconv.ParseFloat(parts[0], 64)
-	l5, _ := strconv.ParseFloat(parts[1], 64)
-	l15, _ := strconv.ParseFloat(parts[2], 64)
-
-	// To get percent, we'd need to sleep. For now, let's try top -bn1 | grep "Cpu(s)"
-	// Or just return load average
-	// TODO: Implement proper CPU percentage calculation by reading /proc/stat twice with delay
-	// For MVP, Load Average is a good enough proxy if we can't reliably get %.
-
-	// actually let's try top batch mode
-	topOut, err := s.client.RunCommand("top -bn1 | grep 'Cpu(s)'")
-	var percent float64
-	if err == nil {
-		// Example: %Cpu(s):  0.3 us,  0.2 sy,  0.0 ni, 99.5 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
-		// 100 - idle = usage
-		parts := strings.Split(topOut, ",")
-		for _, p := range parts {
-			if strings.Contains(p, "id") {
-				idStr := strings.TrimSpace(strings.ReplaceAll(p, "id", ""))
-				idle, _ := strconv.ParseFloat(idStr, 64)
-				percent = 100 - idle
-			}
+	loads := make([]float64, 3)
+	for i := range loads {
+		loads[i], err = strconv.ParseFloat(parts[i], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid load average")
 		}
 	}
+	topOut, err := s.client.RunCommandContext(ctx, "LC_ALL=C top -bn1 | grep 'Cpu(s)'")
+	if err != nil {
+		return nil, err
+	}
+	percent, err := parseRemoteCPUPercent(topOut)
+	if err != nil {
+		return nil, err
+	}
+	l1, l5, l15 := loads[0], loads[1], loads[2]
 
 	return &models.CPUStats{
 		Percent:     percent,
@@ -141,9 +126,9 @@ func (s *RemoteStatsService) getRemoteCPUStats() (*models.CPUStats, error) {
 	}, nil
 }
 
-func (s *RemoteStatsService) getRemoteMemoryStats() (*models.MemoryStats, error) {
+func (s *RemoteStatsService) getRemoteMemoryStats(ctx context.Context) (*models.MemoryStats, error) {
 	// free -b
-	output, err := s.client.RunCommand("free -b")
+	output, err := s.client.RunCommandContext(ctx, "free -b")
 	if err != nil {
 		return nil, err
 	}
@@ -155,10 +140,6 @@ func (s *RemoteStatsService) getRemoteMemoryStats() (*models.MemoryStats, error)
 
 	// Mem:   total   used   free   shared  buff/cache   available
 	fields := strings.Fields(lines[1])
-	if len(fields) < 7 {
-		// Some versions might have fewer fields, try best effort
-		// typically: total used free shared buff/cache available
-	}
 
 	// Parse helper
 	parseUint := func(s string) uint64 {
@@ -166,7 +147,7 @@ func (s *RemoteStatsService) getRemoteMemoryStats() (*models.MemoryStats, error)
 		return v
 	}
 
-	if len(fields) >= 2 {
+	if len(fields) >= 4 {
 		total := parseUint(fields[1])
 		used := parseUint(fields[2])
 		free := parseUint(fields[3])
@@ -174,11 +155,18 @@ func (s *RemoteStatsService) getRemoteMemoryStats() (*models.MemoryStats, error)
 		var available uint64
 		// available is usually the last one, or calculated
 		if len(fields) >= 7 {
-			available = parseUint(fields[6])
+			var parseErr error
+			available, parseErr = strconv.ParseUint(fields[6], 10, 64)
+			if parseErr != nil {
+				return nil, fmt.Errorf("invalid available memory")
+			}
 		} else {
 			available = free // fallback
 		}
 
+		if total == 0 || available > total {
+			return nil, fmt.Errorf("invalid memory totals")
+		}
 		usedPercent := 0.0
 		if total > 0 {
 			usedPercent = (float64(total-available) / float64(total)) * 100
@@ -196,9 +184,9 @@ func (s *RemoteStatsService) getRemoteMemoryStats() (*models.MemoryStats, error)
 	return nil, fmt.Errorf("could not parse memory stats")
 }
 
-func (s *RemoteStatsService) getRemoteDiskStats() ([]models.DiskStats, error) {
+func (s *RemoteStatsService) getRemoteDiskStats(ctx context.Context) ([]models.DiskStats, error) {
 	// df -B1
-	output, err := s.client.RunCommand("df -B1 --output=source,target,fstype,size,used,avail,pcent | tail -n +2")
+	output, err := s.client.RunCommandContext(ctx, "df -B1 -x squashfs -x iso9660 -x udf --output=source,target,fstype,size,used,avail,pcent | tail -n +2")
 	if err != nil {
 		return nil, err
 	}
@@ -208,11 +196,14 @@ func (s *RemoteStatsService) getRemoteDiskStats() ([]models.DiskStats, error) {
 	for _, line := range lines {
 		fields := strings.Fields(line)
 		if len(fields) >= 7 {
-			total, _ := strconv.ParseUint(fields[3], 10, 64)
-			used, _ := strconv.ParseUint(fields[4], 10, 64)
-			avail, _ := strconv.ParseUint(fields[5], 10, 64)
+			total, e1 := strconv.ParseUint(fields[3], 10, 64)
+			used, e2 := strconv.ParseUint(fields[4], 10, 64)
+			avail, e3 := strconv.ParseUint(fields[5], 10, 64)
 			pcentStr := strings.TrimRight(fields[6], "%")
-			pcent, _ := strconv.ParseFloat(pcentStr, 64)
+			pcent, e4 := strconv.ParseFloat(pcentStr, 64)
+			if e1 != nil || e2 != nil || e3 != nil || e4 != nil || total == 0 || pcent < 0 || pcent > 100 {
+				return nil, fmt.Errorf("invalid disk metrics")
+			}
 
 			stats = append(stats, models.DiskStats{
 				Device:      fields[0],
@@ -225,12 +216,15 @@ func (s *RemoteStatsService) getRemoteDiskStats() ([]models.DiskStats, error) {
 			})
 		}
 	}
+	if len(stats) == 0 {
+		return nil, fmt.Errorf("no disk metrics returned")
+	}
 	return stats, nil
 }
 
-func (s *RemoteStatsService) getRemoteNetworkStats() (*models.NetworkStats, error) {
+func (s *RemoteStatsService) getRemoteNetworkStats(ctx context.Context) (*models.NetworkStats, error) {
 	// cat /proc/net/dev
-	output, err := s.client.RunCommand("cat /proc/net/dev")
+	output, err := s.client.RunCommandContext(ctx, "cat /proc/net/dev")
 	if err != nil {
 		return nil, err
 	}
@@ -264,4 +258,17 @@ func (s *RemoteStatsService) getRemoteNetworkStats() (*models.NetworkStats, erro
 		}
 	}
 	return stats, nil
+}
+
+func parseRemoteCPUPercent(output string) (float64, error) {
+	for _, part := range strings.Split(strings.TrimSpace(output), ",") {
+		fields := strings.Fields(part)
+		if len(fields) >= 2 && fields[len(fields)-1] == "id" {
+			idle, err := strconv.ParseFloat(fields[len(fields)-2], 64)
+			if err == nil && idle >= 0 && idle <= 100 {
+				return 100 - idle, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("CPU idle percentage not present")
 }

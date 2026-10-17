@@ -30,21 +30,26 @@ App.Charts = {
     async fetchData() {
         if (this.loading || (App.Navigation && App.Navigation.current !== 'overview')) return;
         this.loading = true;
+        const requestedRange = this.currentRange;
         try {
             const res = await App.API.get(`/stats/history?range=${this.currentRange}&server_id=${App.config.SERVER_ID}`);
-            if (res.success && res.data) {
+            if (res.success && res.data && requestedRange === this.currentRange) {
                 this.renderCharts(res.data);
+                const feedback = document.getElementById('history-feedback');
+                if (feedback) feedback.textContent = res.data.length ? 'Saved metric summaries · 30-day retention · gaps indicate missing readings.' : 'No saved readings in this range yet. History appears after metrics are collected.';
             }
         } catch (error) {
+            const feedback = document.getElementById('history-feedback');
+            if (feedback) feedback.textContent = 'Unable to load metric history. Try refreshing.';
             console.error('Failed to load performance history:', error);
-        } finally { this.loading = false; }
+        } finally { this.loading = false; if (requestedRange !== this.currentRange) this.fetchData(); }
     },
 
     setRange(range) {
         this.currentRange = range;
         
         // Update range buttons UI
-        ['1h', '6h', '24h'].forEach(r => {
+        ['1h', '6h', '24h', '7d', '30d'].forEach(r => {
             const btn = document.getElementById(`btn-chart-${r}`);
             if (btn) {
                 if (r === range) {
@@ -82,23 +87,37 @@ App.Charts = {
         return gradient;
     },
 
+    prepareData(data) {
+        const result = [];
+        const step = Math.floor(({ '1h':60, '6h':360, '24h':1440, '7d':10080, '30d':43200 }[this.currentRange] || 1440) / 1000) + 1;
+        for (const point of data) {
+            const previous = result[result.length - 1];
+            if (previous && new Date(point.timestamp) - new Date(previous.timestamp) > step * 90000) {
+                result.push({ timestamp:new Date(new Date(previous.timestamp).getTime() + step * 60000).toISOString(), unavailable:true });
+            }
+            result.push(point);
+        }
+        return result;
+    },
+
     renderCharts(data) {
+        data = this.prepareData(data);
         const labels = data.map(d => {
             const date = new Date(d.timestamp);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return ['7d','30d'].includes(this.currentRange) ? date.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         });
 
-        const cpuData = data.map(d => d.cpu_percent);
-        const memData = data.map(d => d.mem_percent);
-        const diskData = data.map(d => d.disk_percent);
+        const cpuData = data.map(d => d.unavailable ? null : d.cpu_percent);
+        const memData = data.map(d => d.unavailable ? null : d.mem_percent);
+        const diskData = data.map(d => d.unavailable ? null : d.disk_percent);
 
         // Calculate Network Speed (Rx & Tx) in KB/s from cumulative bytes
         let rxSpeeds = [];
         let txSpeeds = [];
         for (let i = 0; i < data.length; i++) {
-            if (i === 0) {
-                rxSpeeds.push(0);
-                txSpeeds.push(0);
+            if (i === 0 || data[i].unavailable || data[i-1].unavailable) {
+                rxSpeeds.push(null);
+                txSpeeds.push(null);
             } else {
                 const tDiff = (new Date(data[i].timestamp) - new Date(data[i-1].timestamp)) / 1000;
                 if (tDiff > 0) {
@@ -117,6 +136,7 @@ App.Charts = {
         // Shared chart options for consistent premium style
         const baseOptions = {
             responsive: true,
+            spanGaps: false,
             maintainAspectRatio: false,
             plugins: {
                 legend: { display: false },

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/go-chi/chi/v5"
 )
 

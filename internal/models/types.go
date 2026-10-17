@@ -310,6 +310,7 @@ type ProjectIntegration struct {
 
 // StatsSnapshot represents a point-in-time system stats summary for history tracking
 type StatsSnapshot struct {
+	Unavailable bool      `json:"unavailable,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
 	CPUPercent  float64   `json:"cpu_percent"`
 	MemPercent  float64   `json:"mem_percent"`

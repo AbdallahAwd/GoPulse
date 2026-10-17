@@ -52,10 +52,10 @@ type FirewallSchedule struct {
 	ID           string    `json:"id"`
 	ServerID     string    `json:"server_id"`
 	RuleData     string    `json:"rule_data"`   // JSON representation of FirewallRule to add/edit/delete
-	ActionType   string    `json:"action_type"`  // "add", "delete", "enable", "disable"
+	ActionType   string    `json:"action_type"` // "add", "delete", "enable", "disable"
 	ScheduledAt  time.Time `json:"scheduled_at"`
 	Executed     bool      `json:"executed"`
-	Status       string    `json:"status"`        // "pending", "success", "failed"
+	Status       string    `json:"status"` // "pending", "success", "failed"
 	ErrorMessage string    `json:"error_message"`
 	CreatedAt    time.Time `json:"created_at"`
 }

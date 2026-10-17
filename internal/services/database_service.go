@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 )
 
 // jsonUnmarshal is an alias to avoid import confusion
@@ -624,6 +624,11 @@ func (s *DatabaseService) RestartDatabase(ctx context.Context, id string) error 
 
 // DeleteDatabase removes a database container and metadata, optionally purging volumes
 func (s *DatabaseService) DeleteDatabase(ctx context.Context, id string, deleteVolume bool) error {
+	unlock := store.LockDatabaseLifecycle(id)
+	defer unlock()
+	if err := s.store.CheckRemoteBackupDeletion(id); err != nil {
+		return err
+	}
 	db, err := s.store.GetDatabase(id)
 	if err != nil {
 		return err

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 // DatabaseStore handles storage and retrieval of database configurations.

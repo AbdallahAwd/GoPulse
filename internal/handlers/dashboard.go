@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/middleware"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -136,6 +136,8 @@ func (h *DashboardHandler) Users(w http.ResponseWriter, r *http.Request) {
 func (h *DashboardHandler) render(w http.ResponseWriter, r *http.Request, view string, data map[string]interface{}) error {
 	data["CanManageUsers"] = middleware.HasPermission(r, "user:manage")
 	data["CanManageServers"] = middleware.HasPermission(r, "server:write")
+	data["CanWriteFunctions"] = middleware.HasPermission(r, "server:write") && middleware.HasPermission(r, "docker:write")
+	data["CanWriteRemoteBackups"] = middleware.HasPermission(r, "server:write") && middleware.HasPermission(r, "database:write")
 	data["CanWriteCron"] = middleware.HasPermission(r, "cron:write")
 	data["CanWriteProjects"] = middleware.HasPermission(r, "projects:write")
 	data["CanWriteDatabases"] = middleware.HasPermission(r, "database:write")
@@ -155,6 +157,9 @@ func (h *DashboardHandler) render(w http.ResponseWriter, r *http.Request, view s
 		{"databases", "Databases", "fa-database", "Resources", false},
 		{"domains", "Domains and TLS", "fa-globe", "Resources", true},
 		{"load-balancers", "Load balancers", "fa-network-wired", "Resources", true},
+		{"alerts", "Alerts", "fa-bell", "Resources", false},
+		{"functions", "Functions", "fa-bolt", "Resources", false},
+		{"remote-backups", "Remote Backups", "fa-cloud-arrow-up", "Resources", false},
 		{"processes", "Processes", "fa-list", "Server tools", false},
 		{"docker", "Docker", "fa-box", "Server tools", false},
 		{"cron", "Cron jobs", "fa-clock", "Server tools", false},
@@ -170,7 +175,7 @@ func (h *DashboardHandler) render(w http.ResponseWriter, r *http.Request, view s
 		{"agents", "Agents", "/agents", "fa-robot"},
 		{"settings", "Settings", "/settings", "fa-gear"},
 	}
-	tmpl, err := template.ParseFS(h.assets, "templates/base.html", "templates/"+view)
+	tmpl, err := template.ParseFS(h.assets, "templates/base.html", "templates/"+view, "templates/monitoring.html", "templates/remote_backups.html", "templates/functions.html")
 	if err != nil {
 		return err
 	}

@@ -1,10 +1,16 @@
 # GoPulse - VPS Management Dashboard
 
-A monolithic VPS management dashboard built in Go, with a single binary and embedded frontend assets. See the verification report for deployment prerequisites and tested limitations.
+![GoPulse — self-hosted VPS management, built in Go. Connected servers on a charcoal background with lime accents.](docs/assets/readme-banner.png)
+
+A monolithic VPS management dashboard built in Go, with a single binary and embedded frontend assets. Linux is the deployment target; macOS is supported for development. Read the [open-source readiness report](docs/open-source-readiness.md) for verification results and remaining publication blockers.
 
 ## Features
 
-- 📊 **Real-time System Monitoring**: CPU, RAM, Disk, Network stats with WebSocket updates
+- ⚡ **Serverless Functions**: Create, deploy, and run Python or JavaScript handlers with manual, HTTP, and cron triggers, immutable versions, logs, and container resource limits. See [setup and limits](docs/functions.md).
+
+- 📊 **System Monitoring and History**: Live CPU, RAM, disk, and network metrics with WebSocket updates and persistent 30-day history
+- 🔔 **Alerts and Webhooks**: Server-scoped usage and availability rules, maintenance silencing, incident history, and signed webhook delivery with durable retries. See [monitoring](docs/monitoring.md).
+- 🔐 **Remote Backups**: Encrypted database backups to another server over SSH/SFTP, timezone-aware schedules, retention, recovery-key export, and automatic isolated restore tests. See [setup and recovery](docs/remote-backups.md).
 - 🔄 **Process Management**: List, search, and kill processes; manage systemd services
 - 🐳 **Docker Integration**: Manage containers, view stats, stream logs
 - 🗄️ **Database Management**: Existing relational/document engines plus private Qdrant deployment, collection management, diagnostics and snapshots
@@ -12,24 +18,25 @@ A monolithic VPS management dashboard built in Go, with a single binary and embe
 - 🤖 **MCP Integration**: Structured tools, scoped tokens, durable operations, audit and dashboard approvals
 - 🔐 **Authentication and RBAC**: JWT sessions, current user permissions, scoped server access, and trusted SSH host keys
 - ⚡ **High Performance**: Concurrent monitoring with goroutines and in-memory caching
-- 📦 **Single Binary**: All assets embedded - no external dependencies
+- 📦 **Single Binary**: Go templates and local assets embedded; browser libraries currently require CDN access
 - 💾 **Export/Import Migration**: Pack up all configurations (servers, projects, databases, domains, users) into a single JSON file and restore with automatic SSH key serialization
 - 🚀 **Durable GitHub CI/CD**: HMAC-verified, idempotent webhook deliveries with queued deployment history and GitHub Actions CI-first support
 
 ## Tech Stack
 
-- **Backend**: Go 1.24+
+- **Backend**: Go (version declared in `go.mod`)
 - **Router**: Chi
 - **Frontend**: HTML5 + Tailwind CSS + Vanilla JavaScript
 - **WebSockets**: Gorilla WebSocket
 - **System Metrics**: gopsutil
-- **Docker SDK**: Official Docker client for Go
+- **Docker SDK**: Official Docker Engine Go client (`github.com/moby/moby/client`)
 
 ## Quick Start
 
 ### Prerequisites
 
-- Go 1.24 or higher
+- Go version declared in `go.mod` or newer; use a patched toolchain
+- Node.js 22+ (development only, for frontend tests)
 - Docker (optional, for container management)
 - MongoDB (optional, for database monitoring)
 - PostgreSQL (optional, for database monitoring)
@@ -38,7 +45,7 @@ A monolithic VPS management dashboard built in Go, with a single binary and embe
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/AbdallahAwd/GoPulse.git
 cd GoPulse
 ```
 
@@ -63,7 +70,7 @@ Save the secret securely for subsequent starts. Configure trusted SSH fingerprin
 
 The dashboard will be available at `http://localhost:8080`
 
-Create the first administrator through the registration screen on an empty store. There is no default login. Use HTTPS for remote access.
+Create the first administrator through the registration screen on an empty store. There is no default login. Use HTTPS for remote access. With a separately managed TLS proxy, set `GOPULSE_AUTH_SECURE_COOKIES=true`; configure `GOPULSE_GITHUB_CALLBACK_URL` explicitly when using GitHub OAuth.
 
 ### Configuration
 
@@ -71,7 +78,7 @@ Create a `config.yaml` file in the application directory:
 
 ```yaml
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1"
   port: 8080
   read_timeout: "15s"
   write_timeout: "15s"
@@ -115,49 +122,36 @@ See [the infrastructure guide](docs/infrastructure-management.md) for Qdrant set
 
 ## Usage
 
-### API Endpoints
+### API endpoints
 
-#### Authentication
-- `POST /auth/login` - Get JWT token
+Authenticate with the HttpOnly session cookie or `Authorization: Bearer TOKEN`.
+Permissions and assigned-server scope apply to API calls. Resource paths use
+`/api/servers/{serverID}`; a server ID in an example is a placeholder.
 
-#### System Stats
-- `GET /api/stats` - Get current system statistics
-- `GET /api/stats/ws` - WebSocket endpoint for real-time updates
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/api/auth/register` | Create the first administrator on an empty instance |
+| POST | `/api/auth/login` | Authenticate and receive a session/token |
+| GET | `/api/servers` | List assigned servers |
+| GET | `/api/servers/inventory` | Scoped fleet/resource inventory |
+| GET | `/api/servers/{serverID}/processes` | List processes |
+| DELETE | `/api/servers/{serverID}/processes/{pid}` | Kill a process |
+| POST | `/api/servers/{serverID}/services/{name}/restart` | Restart a service |
+| GET | `/api/servers/{serverID}/containers` | List containers |
+| GET | `/api/servers/{serverID}/containers/{id}/logs` | Read container logs |
+| POST | `/api/servers/{serverID}/containers/{id}/start` | Start a container |
+| GET | `/api/servers/{serverID}/databases` | List databases without credentials |
+| GET | `/api/servers/{serverID}/databases/{dbID}/credentials` | Read credentials; requires `database:write` |
+| GET | `/api/servers/{serverID}/projects` | List applications; secret fields require `projects:write` |
+| GET | `/api/servers/{serverID}/projects/{id}/deployments` | Read deployment history |
+| POST | `/api/mcp` | MCP transport with scoped tool authorization |
+| GET | `/api/export-import/export` | Download sensitive configuration backup; admin only |
+| POST | `/api/export-import/import` | Import configuration; admin only |
+| POST | `/api/webhooks/github/{projectID}` | Public webhook authenticated with project HMAC |
 
-#### Process Management
-- `GET /api/processes` - List all processes
-- `GET /api/processes?q={query}` - Search processes
-- `GET /api/processes/{pid}` - Get process details
-- `DELETE /api/processes/{pid}` - Kill a process
-- `GET /api/services/{name}/status` - Get service status
-- `POST /api/services/{name}/restart` - Restart a service
-
-#### Docker Management
-- `GET /api/containers` - List containers
-- `GET /api/containers/{id}/stats` - Get container stats
-- `GET /api/containers/{id}/logs` - Get container logs
-- `POST /api/containers/{id}/start` - Start container
-- `POST /api/containers/{id}/stop` - Stop container
-- `POST /api/containers/{id}/restart` - Restart container
-
-#### Database Management
-- `GET /api/databases/mongodb/health` - Check MongoDB health
-- `GET /api/databases/postgresql/health` - Check PostgreSQL health
-- `POST /api/databases/mongodb/restart` - Restart MongoDB
-- `POST /api/databases/postgresql/restart` - Restart PostgreSQL
-- `GET /api/databases/{service}/logs` - Get database logs
-
-#### Export/Import (Admin Only)
-- `GET /api/export-import/export` - Export full dashboard data as a downloadable JSON backup
-- `GET /api/export-import/export/preview` - Preview record counts for backup estimation
-- `POST /api/export-import/import` - Import dashboard configuration backup (supports skip/overwrite resolution modes)
-
-#### GitHub CI/CD
-- `POST /api/webhooks/github/{projectID}` - Public HMAC-authenticated GitHub push/ping receiver
-- `GET /api/servers/{serverID}/projects/{projectID}/deployments` - List durable deployment attempts
-- `GET /api/servers/{serverID}/projects/{projectID}/deployments/{deploymentID}` - Read one deployment status
-
-See [`docs/cicd.md`](docs/cicd.md) for the recommended GitHub Actions workflow and the native webhook alternative.
+`cmd/server/main.go` is the authoritative route registry. See [CI/CD](docs/cicd.md),
+[agent support](docs/agent-support.md), [cron jobs](docs/cron-jobs.md), and
+[infrastructure management](docs/infrastructure-management.md) for feature details.
 
 ## Development
 
@@ -176,7 +170,10 @@ Skip the first command if `.env` already exists. GoPulse loads `.env` from the w
 
 ```bash
 make test
-node --test web/tests/infrastructure.test.cjs
+make test-ui
+make test-race
+# Full local gate (format, vet, tests, production build):
+make check
 ```
 
 ### Build for production
@@ -194,6 +191,8 @@ make docker
 # Run container
 make docker-run
 ```
+
+The container requires `.env` with a persistent `GOPULSE_AUTH_JWT_SECRET`, stores state in the `gopulse-data` volume, and publishes only on `127.0.0.1:8080`. Use an SSH tunnel for initial setup and HTTPS for remote access. Supply a read-only verified known_hosts file at `/home/gopulse/.ssh/known_hosts` for SSH access. The container runs as UID 10001; bind-mounted state and key files must be readable by that user. This example is for remote host management: metrics describe the container, and local systemd/Nginx administration needs a native Linux installation. Docker socket access requires explicit host permissions and carries host-administrator privileges.
 
 ## UI improvement plan
 
@@ -229,11 +228,11 @@ GoPulse/
 
 ## Performance and security
 
-Metrics use the existing in-memory collector cache. Fleet capacity and latency have not been benchmarked; earlier numerical performance claims were not supported by this verification run.
+Live metrics use the collector cache; history uses SQLite minute summaries retained for 30 days. Alerts evaluate collection results and persist state and webhook deliveries. See [monitoring](docs/monitoring.md) for evaluation, recovery, permissions, and receiver setup. Fleet capacity and latency have not been benchmarked; earlier numerical performance claims were not supported by this verification run.
 
-Requests enforce current RBAC and server scope. SSH uses strict known_hosts verification. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. The shared IP limit is 100 requests/minute; MCP also limits each user to 60 requests/minute.
+Requests enforce current RBAC and server scope. SSH uses strict known_hosts verification. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. API traffic has a 600-request/minute IP ceiling and a 240-request/minute user budget; MCP also limits each user to 60 requests/minute.
 
-Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Committed OAuth credentials were removed; rotate the exposed GitHub secret and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
+Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Historical commits contain credentials; see [SECURITY.md](SECURITY.md) for the publication requirements and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
 
 ## Troubleshooting
 
@@ -247,11 +246,7 @@ Some operations require elevated privileges:
 - Docker socket access may need user to be in `docker` group
 
 ### Database logs not accessible
-Ensure the application has read permissions for log files:
-```bash
-sudo chmod +r /var/log/mongodb/mongod.log
-sudo chmod +r /var/log/postgresql/postgresql.log
-```
+Grant the service account read access through an appropriate log-reading group or ACL. Avoid making database logs world-readable; they can contain sensitive queries and connection details.
 
 ## License
 
@@ -259,10 +254,7 @@ MIT License - see LICENSE file for details
 
 ## Contributing
 
-Contributions are welcome! Please submit pull requests with:
-- Clear description of changes
-- Tests for new functionality
-- Updated documentation
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, contribution licensing and review expectations. Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
 
 ## Support
 
@@ -276,3 +268,11 @@ Page HTML and embedded JS/CSS are served independently of API quotas. API traffi
 The server fleet uses one scoped `/api/servers/inventory` snapshot with local resource counts. Opening database inventory or details does not probe every remote engine. The connection-check button performs an authenticated live probe (`?refresh=true`) with a 15-second deadline; transport failures retain the last known state and report the actual verification error. Copying a complete database URI explicitly requests credentials through a `database:write`-protected, non-cacheable endpoint. Inventory responses continue to omit secrets.
 
 Air watches `.js` and `.css` alongside Go/templates because these assets are embedded in the server binary. Restart the development watcher after changing its configuration. Startup checks existing application runtimes before attempting automatic starts, so healthy PM2 processes are not recreated merely because the dashboard restarts.
+
+## Open-source maintenance
+
+`make security` checks reachable Go vulnerabilities; `make secrets` checks the working tree and all Git history. CI tests Go and frontend behavior, runs the race detector, builds Linux binaries with dependency license notices, and builds the container. Dependency updates are proposed weekly by Dependabot.
+
+The deployment workflow is manual and uses the `production` environment; forks do not deploy on push. Repository owners should enable private vulnerability reporting and secret scanning where available, protect the default branch with required CI checks, and configure environment reviewers before enabling deployment.
+
+The MIT license covers GoPulse's original source. Redistributed Go dependencies and remotely loaded frontend libraries retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -13,8 +13,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/google/uuid"
 )
 

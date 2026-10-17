@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/amaa/gopulse/internal/middleware"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -106,6 +106,14 @@ func (h *ServerHandler) RemoveServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.store.CheckFunctionDeletion(id); err != nil {
+		respondError(w, http.StatusConflict, err.Error(), nil)
+		return
+	}
+	if err := h.store.CheckRemoteBackupDeletion(id); err != nil {
+		respondError(w, http.StatusConflict, "Remote backup plans reference this server; pause and remove them before removing the server.", nil)
+		return
+	}
 	if err := h.store.RemoveServer(id); err != nil {
 		http.Error(w, "Failed to remove server: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -149,7 +157,7 @@ func (h *ServerHandler) UploadKey(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Create keys directory
-	keysDir := filepath.Join(os.Getenv("HOME"), ".gopulse", "keys")
+	keysDir := filepath.Join(store.DataDirectory(), "keys")
 	if err := os.MkdirAll(keysDir, 0700); err != nil {
 		http.Error(w, "Failed to create keys directory: "+err.Error(), http.StatusInternalServerError)
 		return

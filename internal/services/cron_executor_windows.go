@@ -5,7 +5,7 @@ package services
 import (
 	"context"
 	"fmt"
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 func executeLocalCron(context.Context, models.CronJob, *cronOutput) (*int, bool, error) {

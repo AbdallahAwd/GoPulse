@@ -1,0 +1,41 @@
+{{define "remote-backups-panel"}}
+<section id="remote-backups-tab" class="tab-content hidden" data-can-write="{{.CanWriteRemoteBackups}}">
+    <div class="console-section-heading"><div><h2>Remote Backups</h2><p>Send encrypted database backups to another server and verify that they can be restored.</p></div><div class="monitor-actions"><button id="rb-refresh" class="console-button secondary">Refresh</button>{{if .CanWriteRemoteBackups}}<button id="rb-create" class="console-button"><i class="fas fa-plus" aria-hidden="true"></i>Create backup plan</button>{{end}}</div></div>
+    <p id="rb-error" class="workspace-alert" role="alert"></p>
+    <div id="rb-summary" class="monitor-summary" aria-live="polite"></div>
+    <div id="rb-plans" class="monitor-rules" aria-live="polite"><p class="console-subtle">Loading backup plans…</p></div>
+    <p class="console-subtle mt-4">Supports PostgreSQL, MySQL, MongoDB, Redis, and SQLite. The destination needs SSH/SFTP and a writable directory. GoPulse must be running for schedules to execute.</p>
+    <section id="rb-detail" class="hidden mt-8" aria-label="Remote backup history">
+        <div class="console-section-heading"><div><h2 id="rb-detail-title">Saved backups</h2><p id="rb-detail-subtitle"></p></div><button id="rb-detail-close" class="console-button secondary">Close details</button></div>
+        <p class="rb-recovery-note"><i class="fas fa-key" aria-hidden="true"></i>Download the recovery key and keep it separately from the backup server. Losing the key makes encrypted backups unrecoverable. <a id="rb-detail-key" class="rb-key-link" {{if not .CanWriteRemoteBackups}}hidden{{end}}>Download recovery key</a></p>
+        <p id="rb-detail-error" class="workspace-alert" role="alert"></p>
+        <div class="monitor-table-scroll" role="region" tabindex="0" aria-label="Encrypted backups"><table class="monitor-table"><thead><tr><th>Created</th><th>Encrypted size</th><th>Restore test</th><th>Actions</th></tr></thead><tbody id="rb-artifacts"></tbody></table></div>
+        <div class="console-section-heading mt-8"><div><h3>Execution history</h3><p>Latest 100 backup and restore-test attempts.</p></div></div>
+        <div class="monitor-table-scroll" role="region" tabindex="0" aria-label="Remote backup executions"><table class="monitor-table"><thead><tr><th>Started</th><th>Task</th><th>Status</th><th>Details</th></tr></thead><tbody id="rb-runs"></tbody></table></div>
+    </section>
+</section>
+<dialog id="rb-editor" class="cron-dialog" aria-labelledby="rb-editor-title">
+    <form id="rb-form" class="cron-dialog-layout">
+        <header class="cron-dialog-header"><div><h2 id="rb-editor-title">Create backup plan</h2><p>Protect a database on {{.ServerName}}.</p></div><button id="rb-editor-close" class="cron-close" type="button" aria-label="Close backup editor"><i class="fas fa-xmark" aria-hidden="true"></i></button></header>
+        <div class="cron-dialog-body">
+            <p id="rb-form-error" class="workspace-alert" role="alert"></p>
+            <label class="cron-field" for="rb-name">Plan name<input id="rb-name" required maxlength="100" placeholder="Production database to backup server"></label>
+            <label class="cron-field" for="rb-database">Source database<select id="rb-database" required></select><span class="cron-field-hint">Source and destination are fixed after creation. Create another plan to change them.</span></label>
+            <label class="cron-field" for="rb-destination">Destination server<select id="rb-destination" required></select></label>
+            <label class="cron-field" for="rb-directory">Destination directory<input id="rb-directory" required maxlength="1024" value="/srv/gopulse-backups" placeholder="/srv/gopulse-backups"><span class="cron-field-hint">Use an absolute directory writable by the destination SSH account. GoPulse does not change ownership of existing directories.</span></label>
+            <div class="cron-form-grid"><label class="cron-field" for="rb-frequency">Schedule<select id="rb-frequency"><option value="daily">Daily</option><option value="hourly">Hourly</option><option value="weekly">Weekly</option><option value="custom">Custom cron</option></select></label><label id="rb-time-field" class="cron-field" for="rb-time">Run at<input id="rb-time" type="time" value="02:00"></label></div>
+            <label id="rb-weekday-field" class="cron-field hidden" for="rb-weekday">Weekday<select id="rb-weekday"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label>
+            <label class="cron-field" for="rb-timezone">Timezone<input id="rb-timezone" required maxlength="100" placeholder="UTC"><span class="cron-field-hint">Use an IANA timezone, such as UTC or Africa/Cairo.</span></label>
+            <label class="cron-field" for="rb-schedule">Cron expression<input id="rb-schedule" required maxlength="120" value="0 2 * * *"><span class="cron-field-hint">Minute · Hour · Day of month · Month · Day of week. Editing this selects a custom schedule.</span></label>
+            <p id="rb-preview" class="cron-field-hint" aria-live="polite"></p>
+            <div class="cron-form-grid"><label class="cron-field" for="rb-retention">Retention in days<input id="rb-retention" type="number" min="1" max="3650" value="30" required></label><label class="cron-field" for="rb-keep">Minimum recent copies<input id="rb-keep" type="number" min="1" max="100" value="3" required></label></div>
+            <p class="cron-field-hint">Expired copies are removed after a successful backup. The latest copy that passed a restore test is always protected.</p>
+            <label class="cron-enable"><input id="rb-auto-test" type="checkbox" checked><span>Automatically test every new backup<small>Download and decrypt the uploaded copy, then restore it into isolated scratch storage on the source server. Production data is left untouched.</small></span></label>
+            <details class="cron-advanced-schedule"><summary>Resource limits</summary><div class="cron-form-grid mt-4"><label class="cron-field" for="rb-timeout">Execution timeout (seconds)<input id="rb-timeout" type="number" min="120" max="7200" value="3600" required></label><label class="cron-field" for="rb-size">Maximum dump size (GiB)<input id="rb-size" type="number" min="1" max="1024" value="10" required></label></div><label class="cron-field" for="rb-memory">Restore-test memory (MiB)<input id="rb-memory" type="number" min="128" max="16384" value="1024" required><span class="cron-field-hint">Container tests use one CPU, this memory limit, no external network, and temporary storage.</span></label></details>
+            <label class="cron-enable"><input id="rb-enabled" type="checkbox"><span>Enable scheduled backups<small>You can run a paused plan manually to verify the destination before enabling its schedule.</small></span></label>
+            <p class="rb-recovery-note">A dedicated encryption key is created for this plan. Download it after saving and keep a separate safe copy.</p>
+        </div>
+        <footer class="cron-dialog-footer"><button id="rb-editor-cancel" type="button" class="console-button secondary">Cancel</button><button id="rb-save" type="submit" class="console-button">Save backup plan</button></footer>
+    </form>
+</dialog>
+{{end}}

@@ -1,0 +1,13 @@
+title = "GoPulse secret scanning"
+
+[extend]
+useDefault = true
+
+# A public, deterministic signing key used only in isolated MCP test fixtures.
+# Both the exact value and fixture path must match; real keys remain findings.
+[[allowlists]]
+description = "Deterministic MCP test signing key"
+condition = "AND"
+paths = ['internal/handlers/mcp_handler_test\.go$']
+regexTarget = "secret"
+regexes = ['^0123456789abcdef0123456789abcdef$']

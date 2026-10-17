@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/amaa/gopulse/internal/middleware"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/monitor"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/monitor"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 )
@@ -78,25 +78,17 @@ func (h *StatsHandler) GetStatsHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rangeStr := r.URL.Query().Get("range")
-	var duration time.Duration
-	switch rangeStr {
-	case "1h":
-		duration = 1 * time.Hour
-	case "6h":
-		duration = 6 * time.Hour
-	case "24h", "":
-		duration = 24 * time.Hour
-	default:
-		d, err := time.ParseDuration(rangeStr)
-		if err != nil {
-			duration = 24 * time.Hour
-		} else {
-			duration = d
-		}
+	ranges := map[string]time.Duration{"": 24 * time.Hour, "1h": time.Hour, "6h": 6 * time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
+	duration, ok := ranges[r.URL.Query().Get("range")]
+	if !ok {
+		respondError(w, 400, "Range must be 1h, 6h, 24h, 7d or 30d", nil)
+		return
 	}
-
-	snapshots := h.collector.GetHistory(serverID, duration)
+	snapshots, err := h.collector.QueryHistory(serverID, duration)
+	if err != nil {
+		respondError(w, 500, "Metrics history is unavailable", nil)
+		return
+	}
 	if snapshots == nil {
 		snapshots = []models.StatsSnapshot{}
 	}

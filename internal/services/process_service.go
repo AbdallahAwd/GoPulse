@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/shirou/gopsutil/v3/process"
 )
 

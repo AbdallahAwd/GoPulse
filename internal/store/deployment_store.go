@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
 )
 
 var ErrDeploymentAlreadyExists = errors.New("deployment delivery already exists")

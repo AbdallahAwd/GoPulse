@@ -2,7 +2,7 @@
 # Copy this file to config.yaml and modify as needed
 
 server:
-  host: "0.0.0.0"
+  host: "127.0.0.1" # Use a reverse proxy for remote HTTPS access.
   port: 8080
   read_timeout: "15s"
   write_timeout: "15s"
@@ -13,12 +13,15 @@ auth:
   jwt_secret: "" # Set GOPULSE_AUTH_JWT_SECRET to a random value of at least 32 characters.
   # The first registered account becomes admin; no default login is created.
   token_duration: "24h"
+  # Enable when serving HTTPS through a separately managed TLS reverse proxy.
+  # Keep false for plain HTTP localhost development.
+  secure_cookies: false
 
 github:
   client_id: "" # Set GOPULSE_GITHUB_CLIENT_ID for your own OAuth application.
   client_secret: "" # Set GOPULSE_GITHUB_CLIENT_SECRET; never commit it.
   # Must exactly match the Authorization callback URL in the GitHub OAuth App.
-  # Leave empty to derive it from the current request host.
+  # Configure explicitly behind a proxy; forwarded headers are not trusted.
   callback_url: "http://localhost:8080/auth/github/callback"
 
 monitoring:

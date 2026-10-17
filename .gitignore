@@ -24,10 +24,43 @@ go.work
 Thumbs.db
 
 # Config (but keep example)
-#config.yaml
+config.yaml
+config.local.*
 .env
 .env.*
 !.env.example
 
 # Air (live reload tool)
 tmp/
+
+# Runtime state, backups, credentials, and audit output
+.gopulse/
+data/
+backups/
+keys/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.log
+gitleaks-report.*
+dist/
+third_party_licenses/
+
+# Private infrastructure screenshots (retain local copies; replace with synthetic demos)
+/docs/ui-previews/database-recovered.png
+/docs/ui-previews/modern-agent-connection.png
+/docs/ui-previews/modern-applications.png
+/docs/ui-previews/modern-database-backups.png
+/docs/ui-previews/modern-database-inventory.png
+/docs/ui-previews/modern-database-management-explorer.png
+/docs/ui-previews/modern-database-management-overview.png
+/docs/ui-previews/modern-database-management-query.png
+/docs/ui-previews/modern-database-settings.png
+/docs/ui-previews/modern-database-users.png
+/docs/ui-previews/modern-docker-containers.png
+/docs/ui-previews/modern-docker-images.png
+/docs/ui-previews/modern-docker-volumes.png

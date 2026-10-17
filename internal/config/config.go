@@ -41,8 +41,7 @@ type ServerConfig struct {
 type AuthConfig struct {
 	JWTSecret     string
 	TokenDuration time.Duration
-	AdminUsername string
-	AdminPassword string
+	SecureCookies bool
 }
 
 // MonitoringConfig holds monitoring configuration
@@ -77,15 +76,14 @@ func Load() (*Config, error) {
 	}
 
 	// Set defaults
-	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("server.host", "127.0.0.1")
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("server.read_timeout", "15s")
 	viper.SetDefault("server.write_timeout", "15s")
 	viper.SetDefault("server.idle_timeout", "60s")
 
 	viper.SetDefault("auth.token_duration", "24h")
-	viper.SetDefault("auth.admin_username", "admin")
-	viper.SetDefault("auth.admin_password", "changeme")
+	viper.SetDefault("auth.secure_cookies", false)
 
 	viper.SetDefault("monitoring.poll_interval", "5s")
 	viper.SetDefault("monitoring.enable_websocket", true)
@@ -133,6 +131,15 @@ func Load() (*Config, error) {
 	if len(jwtSecret) < 32 || strings.Contains(jwtSecret, "change-in-production") {
 		return nil, fmt.Errorf("JWT secret must contain at least 32 characters and must not use the development default")
 	}
+	if viper.GetDuration("auth.token_duration") <= 0 {
+		return nil, fmt.Errorf("auth.token_duration must be positive")
+	}
+	if viper.GetDuration("monitoring.poll_interval") <= 0 {
+		return nil, fmt.Errorf("monitoring.poll_interval must be positive")
+	}
+	if port := viper.GetInt("server.port"); port < 1 || port > 65535 {
+		return nil, fmt.Errorf("server.port must be between 1 and 65535")
+	}
 	config := &Config{
 		Server: ServerConfig{
 			Host:         viper.GetString("server.host"),
@@ -144,8 +151,7 @@ func Load() (*Config, error) {
 		Auth: AuthConfig{
 			JWTSecret:     jwtSecret,
 			TokenDuration: viper.GetDuration("auth.token_duration"),
-			AdminUsername: viper.GetString("auth.admin_username"),
-			AdminPassword: viper.GetString("auth.admin_password"),
+			SecureCookies: viper.GetBool("auth.secure_cookies"),
 		},
 		Monitoring: MonitoringConfig{
 			PollInterval:    viper.GetDuration("monitoring.poll_interval"),

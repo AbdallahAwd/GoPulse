@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
-	"github.com/amaa/gopulse/web"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/web"
 	"github.com/go-chi/chi/v5"
 )
 

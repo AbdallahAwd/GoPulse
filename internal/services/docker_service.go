@@ -9,13 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 )
 
 // DockerService handles Docker operations
@@ -25,9 +21,9 @@ type DockerService struct {
 
 // NewDockerService creates a new DockerService
 func NewDockerService(host, version string) (*DockerService, error) {
-	cli, err := client.NewClientWithOpts(
+	cli, err := client.New(
 		client.WithHost(host),
-		client.WithVersion(version),
+		client.WithAPIVersion(version),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Docker client: %w", err)
@@ -37,7 +33,8 @@ func NewDockerService(host, version string) (*DockerService, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := cli.Ping(ctx); err != nil {
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
+		cli.Close()
 		return nil, fmt.Errorf("failed to connect to Docker: %w", err)
 	}
 
@@ -46,7 +43,7 @@ func NewDockerService(host, version string) (*DockerService, error) {
 
 // ListContainers returns all containers
 func (s *DockerService) ListContainers(ctx context.Context) ([]models.ContainerInfo, error) {
-	containers, err := s.client.ContainerList(ctx, container.ListOptions{
+	containers, err := s.client.ContainerList(ctx, client.ContainerListOptions{
 		All: true,
 	})
 	if err != nil {
@@ -54,7 +51,7 @@ func (s *DockerService) ListContainers(ctx context.Context) ([]models.ContainerI
 	}
 
 	var result []models.ContainerInfo
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		ports := make([]string, 0)
 		for _, port := range c.Ports {
 			if port.PublicPort > 0 {
@@ -65,14 +62,14 @@ func (s *DockerService) ListContainers(ctx context.Context) ([]models.ContainerI
 		name := ""
 		if len(c.Names) > 0 {
 			// Remove leading / from container name
-			name = c.Names[0][1:]
+			name = strings.TrimPrefix(c.Names[0], "/")
 		}
 
 		result = append(result, models.ContainerInfo{
-			ID:      c.ID[:12], // Short ID
+			ID:      c.ID[:min(12, len(c.ID))], // Short ID; tolerate malformed/short daemon IDs.
 			Name:    name,
 			Image:   c.Image,
-			State:   c.State,
+			State:   string(c.State),
 			Status:  c.Status,
 			Ports:   ports,
 			Created: c.Created,
@@ -101,7 +98,7 @@ func (s *DockerService) GetContainer(ctx context.Context, containerID string) (*
 
 // StartContainer starts a container
 func (s *DockerService) StartContainer(ctx context.Context, containerID string) error {
-	if err := s.client.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if _, err := s.client.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("failed to start container: %w", err)
 	}
 	return nil
@@ -110,7 +107,7 @@ func (s *DockerService) StartContainer(ctx context.Context, containerID string) 
 // StopContainer stops a container
 func (s *DockerService) StopContainer(ctx context.Context, containerID string) error {
 	timeout := 10 // seconds
-	if err := s.client.ContainerStop(ctx, containerID, container.StopOptions{
+	if _, err := s.client.ContainerStop(ctx, containerID, client.ContainerStopOptions{
 		Timeout: &timeout,
 	}); err != nil {
 		return fmt.Errorf("failed to stop container: %w", err)
@@ -121,7 +118,7 @@ func (s *DockerService) StopContainer(ctx context.Context, containerID string) e
 // RestartContainer restarts a container
 func (s *DockerService) RestartContainer(ctx context.Context, containerID string) error {
 	timeout := 10 // seconds
-	if err := s.client.ContainerRestart(ctx, containerID, container.StopOptions{
+	if _, err := s.client.ContainerRestart(ctx, containerID, client.ContainerRestartOptions{
 		Timeout: &timeout,
 	}); err != nil {
 		return fmt.Errorf("failed to restart container: %w", err)
@@ -145,7 +142,7 @@ func (s *DockerService) GetContainerStats(ctx context.Context, containerID strin
 
 // GetContainerLogs returns container logs
 func (s *DockerService) GetContainerLogs(ctx context.Context, containerID string) ([]models.LogEntry, error) {
-	options := container.LogsOptions{
+	options := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Tail:       "100",
@@ -159,13 +156,13 @@ func (s *DockerService) GetContainerLogs(ctx context.Context, containerID string
 	defer logsReader.Close()
 
 	// Inspect the container to see if TTY was enabled
-	insp, err := s.client.ContainerInspect(ctx, containerID)
+	insp, err := s.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect container: %w", err)
 	}
 
 	var output []byte
-	if insp.Config.Tty {
+	if insp.Container.Config != nil && insp.Container.Config.Tty {
 		output, err = io.ReadAll(logsReader)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read logs: %w", err)
@@ -214,7 +211,7 @@ func (s *DockerService) GetContainerLogs(ctx context.Context, containerID string
 
 // RemoveContainer removes a container
 func (s *DockerService) RemoveContainer(ctx context.Context, containerID string) error {
-	if err := s.client.ContainerRemove(ctx, containerID, container.RemoveOptions{
+	if _, err := s.client.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
 		Force: false,
 	}); err != nil {
 		return fmt.Errorf("failed to remove container: %w", err)
@@ -224,19 +221,19 @@ func (s *DockerService) RemoveContainer(ctx context.Context, containerID string)
 
 // ListImages returns all images
 func (s *DockerService) ListImages(ctx context.Context) ([]models.ImageInfo, error) {
-	images, err := s.client.ImageList(ctx, image.ListOptions{All: true})
+	images, err := s.client.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list images: %w", err)
 	}
 
 	var result []models.ImageInfo
-	for _, img := range images {
+	for _, img := range images.Items {
 		result = append(result, models.ImageInfo{
 			ID:          strings.TrimPrefix(img.ID, "sha256:"),
 			RepoTags:    img.RepoTags,
 			Size:        img.Size,
 			Created:     img.Created,
-			VirtualSize: img.VirtualSize,
+			VirtualSize: img.Size, // Engine no longer reports deprecated VirtualSize.
 		})
 	}
 	return result, nil
@@ -244,12 +241,12 @@ func (s *DockerService) ListImages(ctx context.Context) ([]models.ImageInfo, err
 
 // PullImage pulls an image
 func (s *DockerService) PullImage(ctx context.Context, imageName string) (io.ReadCloser, error) {
-	return s.client.ImagePull(ctx, imageName, image.PullOptions{})
+	return s.client.ImagePull(ctx, imageName, client.ImagePullOptions{})
 }
 
 // RemoveImage removes an image
 func (s *DockerService) RemoveImage(ctx context.Context, id string) error {
-	_, err := s.client.ImageRemove(ctx, id, image.RemoveOptions{
+	_, err := s.client.ImageRemove(ctx, id, client.ImageRemoveOptions{
 		Force:         false,
 		PruneChildren: true,
 	})
@@ -261,13 +258,13 @@ func (s *DockerService) RemoveImage(ctx context.Context, id string) error {
 
 // ListVolumes returns all volumes
 func (s *DockerService) ListVolumes(ctx context.Context) ([]models.VolumeInfo, error) {
-	volumes, err := s.client.VolumeList(ctx, volume.ListOptions{})
+	volumes, err := s.client.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list volumes: %w", err)
 	}
 
 	var result []models.VolumeInfo
-	for _, v := range volumes.Volumes {
+	for _, v := range volumes.Items {
 		result = append(result, models.VolumeInfo{
 			Name:       v.Name,
 			Driver:     v.Driver,
@@ -280,7 +277,7 @@ func (s *DockerService) ListVolumes(ctx context.Context) ([]models.VolumeInfo, e
 
 // RemoveVolume removes a volume
 func (s *DockerService) RemoveVolume(ctx context.Context, name string) error {
-	if err := s.client.VolumeRemove(ctx, name, true); err != nil {
+	if _, err := s.client.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true}); err != nil {
 		return fmt.Errorf("failed to remove volume: %w", err)
 	}
 	return nil
@@ -288,13 +285,13 @@ func (s *DockerService) RemoveVolume(ctx context.Context, name string) error {
 
 // ListNetworks returns all networks
 func (s *DockerService) ListNetworks(ctx context.Context) ([]models.NetworkInfo, error) {
-	networks, err := s.client.NetworkList(ctx, network.ListOptions{})
+	networks, err := s.client.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list networks: %w", err)
 	}
 
 	var result []models.NetworkInfo
-	for _, n := range networks {
+	for _, n := range networks.Items {
 		result = append(result, models.NetworkInfo{
 			ID:         n.ID,
 			Name:       n.Name,
@@ -309,7 +306,7 @@ func (s *DockerService) ListNetworks(ctx context.Context) ([]models.NetworkInfo,
 
 // RemoveNetwork removes a network
 func (s *DockerService) RemoveNetwork(ctx context.Context, id string) error {
-	if err := s.client.NetworkRemove(ctx, id); err != nil {
+	if _, err := s.client.NetworkRemove(ctx, id, client.NetworkRemoveOptions{}); err != nil {
 		return fmt.Errorf("failed to remove network: %w", err)
 	}
 	return nil

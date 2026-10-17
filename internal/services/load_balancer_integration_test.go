@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 	"fmt"
-	"github.com/amaa/gopulse/internal/models"
-	"github.com/amaa/gopulse/internal/store"
+	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"io"
 	"net"
 	"net/http"
