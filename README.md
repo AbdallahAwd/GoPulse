@@ -15,7 +15,7 @@ A monolithic VPS management dashboard built in Go, with a single binary and embe
 - 🐳 **Docker Integration**: Manage containers, view stats, stream logs
 - 🗄️ **Database Management**: Existing relational/document engines plus private Qdrant deployment, collection management, diagnostics and snapshots
 - ⚖️ **Nginx Load Balancers**: Guided setup, validated deployment, rollback, backend health and safe editing
-- 🤖 **MCP Integration**: Structured tools, scoped tokens, durable operations, audit and dashboard approvals
+- 🤖 **MCP Integration**: Structured tools, [selected serverless functions](docs/mcp-functions.md) with JSON results, scoped tokens, durable operations, audit and dashboard approvals
 - 🔐 **Authentication and RBAC**: JWT sessions, current user permissions, scoped server access, and trusted SSH host keys
 - ⚡ **High Performance**: Concurrent monitoring with goroutines and in-memory caching
 - 📦 **Single Binary**: Go templates and local assets embedded; browser libraries currently require CDN access

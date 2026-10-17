@@ -36,6 +36,11 @@ func (c *SSHClient) RunFunctionContext(ctx context.Context, command string, inpu
 	session.Stdin = input
 	session.Stdout = output
 	session.Stderr = output
+	// Keep stderr console traffic out of stdout's framed return value. The
+	// destination still shares the same bounded, concurrency-safe log sink.
+	if streams, ok := output.(interface{ Stderr() io.Writer }); ok {
+		session.Stderr = streams.Stderr()
+	}
 	err = session.Run(command)
 	if ctx.Err() != nil {
 		return ctx.Err()

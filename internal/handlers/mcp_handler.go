@@ -32,6 +32,7 @@ type MCPHandler struct {
 	Manager       *services.ServiceManager
 	Collector     *monitor.Collector
 	Operations    *services.Operations
+	Functions     *services.FunctionService
 	mu            sync.Mutex
 	rates         map[string]mcpRate
 }
@@ -48,6 +49,7 @@ type mcpTool struct {
 	risk             string
 	extraPermissions []string
 	api              *mcpAPI
+	function         *models.Function
 }
 
 func tool(name, description, permission, risk string, fields map[string]interface{}, required ...string) mcpTool {
@@ -184,6 +186,24 @@ func (h *MCPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return h.invoke(ctx, r, selected, arguments), nil
 		})
 	}
+	definitions, err := h.functionTools(r)
+	if err != nil {
+		http.Error(w, "Function catalog unavailable", 503)
+		return
+	}
+	for _, definition := range definitions {
+		selected := definition
+		destructive, open := true, false
+		server.AddTool(&mcp.Tool{Name: selected.Name, Description: selected.Description, InputSchema: selected.InputSchema, Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive, OpenWorldHint: &open}}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			arguments := map[string]interface{}{}
+			decoder := json.NewDecoder(bytes.NewReader(request.Params.Arguments))
+			decoder.UseNumber()
+			if decoder.Decode(&arguments) != nil {
+				return mcpFailure("Invalid tool arguments"), nil
+			}
+			return h.invoke(ctx, r, selected, arguments), nil
+		})
+	}
 	mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true}).ServeHTTP(w, r)
 }
 
@@ -213,6 +233,9 @@ func (h *MCPHandler) invoke(ctx context.Context, r *http.Request, selected mcpTo
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	server, _ := arguments["server_id"].(string)
+	if selected.function != nil {
+		server = selected.function.ServerID
+	}
 	audit := func(outcome, id string) error {
 		return h.Operations.AuditIdentity(operationOwner(r), mcpCredentialID(r), selected.Name, server, outcome, id)
 	}
@@ -260,6 +283,9 @@ func (h *MCPHandler) invoke(ctx context.Context, r *http.Request, selected mcpTo
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}, StructuredContent: output}
 }
 func (h *MCPHandler) execute(ctx context.Context, r *http.Request, t mcpTool, a map[string]interface{}) (interface{}, error) {
+	if t.function != nil {
+		return h.executeFunction(r, t, a)
+	}
 	if t.api != nil {
 		return h.executeAPI(ctx, r, t, a)
 	}
@@ -317,6 +343,15 @@ func (h *MCPHandler) execute(ctx context.Context, r *http.Request, t mcpTool, a 
 		op, err := h.Operations.Get(str("operation_id"))
 		if err != nil || !canAccessOperation(r, op) || (op.AgentCredentialID != "" && (middleware.AgentCredential(r) == nil || middleware.AgentCredential(r).ID != op.AgentCredentialID)) {
 			return nil, fmt.Errorf("operation not found")
+		}
+		if strings.HasPrefix(op.Kind, "function_") {
+			id, valid := functionOperationID(op.Kind)
+			if !valid {
+				return nil, fmt.Errorf("function result access denied")
+			}
+			if err := h.checkFunctionAccess(r, op.ServerID, id, ""); err != nil {
+				return nil, fmt.Errorf("function result access denied")
+			}
 		}
 		return op, nil
 	case "create_qdrant_collection":

@@ -256,6 +256,7 @@ func (s *FunctionService) execute(ctx context.Context, cancel context.CancelFunc
 			r.Error += functionCleanupPending
 		}
 		r.Logs, r.LogsTruncated = logs.Snapshot()
+		r.Result = logs.Result()
 		r.FinishedAt = time.Now().UTC()
 		r.DurationMS = r.FinishedAt.Sub(r.StartedAt).Milliseconds()
 		if err := s.Store.UpdateRun(r); err != nil {

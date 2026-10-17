@@ -89,3 +89,7 @@ Production history reads SQLite `metric_minutes` through `MonitoringStore`; the 
 ## Serverless Functions
 
 `FunctionService` owns immutable deployment snapshots, eight execution workers (four per managed server), user/RBAC rechecks, cron triggers, bounded live logs, and durable cleanup. `SSHFunctionBackend` passes source/event only through stdin to allowlisted, pinned Docker images. Keep functions non-root, network-disabled, read-only, mount-free, and resource-limited. Function bearer tokens are hash-only and authenticate only the exact POST trigger endpoint; never broaden the auth exemption. Pending cleanup must block executions and deletion and survive history pruning. The supported control plane is one GoPulse process. See `docs/functions.md`; real Docker tests are explicit opt-in.
+
+## MCP function gateway
+
+Reuse `/api/mcp` and the official MCP SDK; never add a public function management auth exemption. Only explicitly selected, deployed, unpaused functions may appear as dynamic tools. Require an opaque scoped agent credential, both server:write/docker:write, current owner authorization and server scope. Use the durable operations approval/idempotency/audit flow, pin the accepted version, and recheck exposure, deployment, scopes and credential before execution and result delivery. Revocation cancels running MCP invocations on the next one-second authorization check. Store bounded JSON returns independently of the console log limit; output is untrusted. See `docs/mcp-functions.md`.

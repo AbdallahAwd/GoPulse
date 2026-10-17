@@ -107,6 +107,9 @@ func TestFunctionsRealSSHWithLanguageAndDockerCommandFixtures(t *testing.T) {
 					t.Fatal(r)
 				}
 			}
+			if !strings.Contains(string(r.Result), `"answer":42`) && !strings.Contains(string(r.Result), `"answer": 42`) {
+				t.Fatal("structured SSH result missing", string(r.Result))
+			}
 			spec.Code = "not valid code !!!"
 			if _, e = s.Save("a", f.ID, "owner", spec); e != nil {
 				t.Fatal(e)

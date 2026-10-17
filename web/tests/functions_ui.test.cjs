@@ -40,3 +40,12 @@ test('HTTP token survives polling and clears on navigation, including late respo
 test('save failure preserves editor and releases busy state',async()=>{
  const h=harness();await h.ui.load();h.ui.openEditor(h.fn);h.App.API.put=async()=>{throw Error('Validation failed');};await h.ui.save();assert.equal(h.el('fn-editor').open,true);assert.equal(h.el('fn-form-error').textContent,'Validation failed');assert.equal(h.ui.busy,false);assert.equal(h.el('fn-save').disabled,false);
 });
+test('MCP selection shows stable connection details and uses immediate scoped switch',async()=>{
+ const h=harness();await h.ui.load();h.ui.selected=h.fn.id;await h.ui.details();assert.equal(h.el('fn-mcp-url').value,'https://gopulse.invalid/api/mcp');assert.equal(h.el('fn-mcp-tool').value,'function_functiona');assert.equal(h.el('fn-mcp-toggle').textContent,'Expose to MCP');await h.ui.action('mcp',h.fn.id);assert.equal(h.writes[0].endpoint,'/functions/function-a/mcp');assert.equal(h.writes[0].body.enabled,true);h.fn.mcp_enabled=true;await h.ui.details();assert.equal(h.el('fn-mcp-toggle').textContent,'Remove from MCP');await h.ui.action('mcp',h.fn.id);assert.equal(h.writes[1].body.enabled,false);
+});
+test('MCP selection respects confirmation, viewer access and deployed state',async()=>{
+ const h=harness();await h.ui.load();h.confirm(false);await h.ui.action('mcp',h.fn.id);assert.equal(h.writes.length,0);h.allow(false);h.confirm(true);await h.ui.action('mcp',h.fn.id);assert.equal(h.writes.length,0);h.allow(true);h.fn.deployed=null;h.ui.selected=h.fn.id;await h.ui.details();assert.equal(h.el('fn-mcp-toggle').disabled,true);
+});
+test('structured results render as text including null and HTML-like values',async()=>{
+ const h=harness();await h.ui.load();h.ui.selected=h.fn.id;await h.ui.details();h.run.result={answer:42,text:'<script>evil()</script>'};h.ui.renderLogs();assert.match(h.el('fn-result').textContent,/"answer": 42/);assert.match(h.el('fn-result').textContent,/<script>/);assert.equal(h.el('fn-result').innerHTML,'');h.run.result=null;h.ui.renderLogs();assert.equal(h.el('fn-result').textContent,'null');delete h.run.result;h.ui.renderLogs();assert.equal(h.el('fn-result').textContent,'No return value available.');
+});
