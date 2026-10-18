@@ -2,9 +2,10 @@
 
 ## Release status and supported platforms
 
-No versioned release has been published yet. Use the source-build instructions in
-the [README](../README.md) until a reviewed prerelease appears on
-[GitHub Releases](https://github.com/AbdallahAwd/GoPulse/releases).
+The first evaluation prerelease is `v0.1.0-alpha.1`. Download Linux binaries and
+checksums from [GitHub Releases](https://github.com/AbdallahAwd/GoPulse/releases),
+or build from source using the [README](../README.md). Alpha releases are for
+evaluation and do not carry a production-readiness guarantee.
 
 Release archives target Linux `amd64` (x86-64) and `arm64` (AArch64), with CGO
 disabled. macOS is supported for source development; Windows is not a deployment
@@ -117,5 +118,6 @@ CI also smoke-tests the amd64 archive against isolated state before uploading it
 
 The combined secret scan remains a blocking check. Source and retained branch
 history pass after the 2026-10-18 cleanup, but the scanner cannot verify whether
-previously exposed credentials have been revoked. Keep releases as drafts until
-the owner verifies rotation and reviews the other release requirements above.
+previously exposed credentials have been revoked. The owner confirmed rotation
+and invalidation of both old values on 2026-10-18. Keep future releases as drafts
+until their verification results and the other release requirements are reviewed.

@@ -16,16 +16,16 @@ passes both source and history scopes in a fresh verification clone. Every
 reachable object in the preview was also checked for the two exact old values.
 Scanner regression checks pass. No real-credential allowlist or baseline was added.
 
-**Rotation remains unverified.** The owner must invalidate the exposed OAuth and
-JWT signing secrets and update affected deployments before publishing a reviewed
-release. Old clones, forks, cached objects and GitHub-managed PR refs may retain
+The owner subsequently confirmed on 2026-10-18 that both exposed secrets were
+rotated and the old values invalidated. That is an owner confirmation, not an
+independent provider-side audit. Old clones, forks, cached objects and GitHub-managed PR refs may retain
 the original history; normal branch pushes cannot purge those copies. Contributors
 must use the cleaned history and avoid merging old commits back into the project.
 
 The earlier reviews below record their original state and validation results.
 Their statements that branch history still contains the three scanner findings
-were superseded by this cleanup; the credential-rotation and operational limits
-remain applicable.
+were superseded by this cleanup and the owner's rotation confirmation. The
+operational limits remain applicable to the evaluation prerelease.
 
 ## Earlier follow-up: 2026-10-18 (before history cleanup)
 

@@ -18,8 +18,9 @@ an encrypted remote backup. You operate the control plane and the servers it man
 [Get started](#quick-start) · [Documentation](#documentation) · [Releases](https://github.com/AbdallahAwd/GoPulse/releases) · [Contribute](CONTRIBUTING.md) · [Roadmap](ROADMAP.md)
 
 **Status:** early development. Linux is the deployment target; macOS supports
-development. Versioned releases are being introduced; build from source until
-the first reviewed prerelease is available. The [readiness report](docs/open-source-readiness.md)
+development. The first evaluation prerelease is `v0.1.0-alpha.1`; see
+[GitHub Releases](https://github.com/AbdallahAwd/GoPulse/releases) for Linux downloads.
+The [readiness report](docs/open-source-readiness.md)
 tracks historical credential remediation and verification limits. This project
 does not yet carry a production-readiness or availability guarantee.
 
@@ -264,7 +265,7 @@ Live metrics use the collector cache; history uses SQLite minute summaries retai
 
 Requests enforce current RBAC and server scope. SSH uses strict known_hosts verification. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. API traffic has a 600-request/minute IP ceiling and a 240-request/minute user budget; MCP also limits each user to 60 requests/minute.
 
-Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Previously exposed credentials were removed from branch history; revocation/rotation remains unverified. See [SECURITY.md](SECURITY.md) for the release requirements and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
+Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Previously exposed credentials were removed from branch history, and the owner confirmed rotation and invalidation of the old values. See [SECURITY.md](SECURITY.md) and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
 
 ## Troubleshooting
 
@@ -310,7 +311,7 @@ and tags. Findings identify the file and line with credential values redacted.
 `make secrets-source` and `make secrets-history` diagnose each scope separately;
 neither replaces the combined release gate. Source and retained branch history
 scan clean after the 2026-10-18 cleanup. No real credential baseline is used;
-provider-side revocation and rotation still require owner verification.
+the owner confirmed that the old exposed credentials have been invalidated.
 
 CI tests Go and frontend behavior, runs the race detector, builds Linux amd64/arm64
 archives with checksums and dependency licenses, and tests container startup.

@@ -2,9 +2,13 @@
 
 User-visible changes are recorded here. Version tags follow Semantic Versioning;
 alpha, beta and release-candidate versions are explicitly marked as prereleases.
-No versioned release has been published yet.
 
 ## Unreleased
+
+## v0.1.0-alpha.1 — 2026-10-18
+
+First evaluation prerelease. Linux is the deployment target; no production
+readiness, fleet capacity or availability guarantee has been established.
 
 ### Added
 
@@ -25,9 +29,10 @@ No versioned release has been published yet.
   placeholder is narrowly allowlisted; real credentials remain blocking findings.
 - Removed two exposed credential values from all ten retained remote branches;
   source and full-history scans now pass. Existing contributors must migrate to
-  the rewritten history. Provider-side revocation/rotation remains unverified.
+  the rewritten history. The owner confirmed rotation and invalidation of the
+  old exposed values on 2026-10-18.
 
-### Initial feature set awaiting a reviewed release
+### Included workflows
 
 - Server workspaces, SSH-based management, Docker, database administration,
   domains/TLS, load balancers and scheduled jobs.
@@ -36,10 +41,9 @@ No versioned release has been published yet.
 - Persistent monitoring, alerts and encrypted remote database backups.
 - Scoped MCP access, structured function results, audit and approval flows.
 
-### Known release blockers
+### Known limitations
 
-- Previously exposed credentials require verified owner revocation/rotation.
-  GitHub-managed PR refs, forks, caches and old clones need separate cleanup;
-  rewritten branch history does not invalidate copied credentials.
+- GitHub-managed PR refs, forks, caches and old clones may retain original
+  objects and need separate cleanup; contributors must use the rewritten history.
 - Remote integrations need broader disposable-host verification; no fleet
   capacity or availability guarantee has been established.

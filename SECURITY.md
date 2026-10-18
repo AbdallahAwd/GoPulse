@@ -53,11 +53,11 @@ branch history on 2026-10-18. All ten remote branches were rewritten, and `main`
 includes the scanner and release-tooling fixes. Source and full-history scans pass
 without suppressing real credentials. See the [readiness report](docs/open-source-readiness.md).
 
-**Credential rotation has not been verified.** Treat the previously exposed values
-as compromised. The owner must revoke/rotate the OAuth client secret and every
-reused JWT signing secret, update affected deployments and invalidate affected
-sessions before publishing a reviewed release. History cleanup cannot invalidate
-copied credentials. GitHub-managed pull-request refs, cached views, forks and old
+On 2026-10-18, the owner confirmed that both the exposed OAuth client secret and
+JWT signing secret were rotated and the old values invalidated. This confirmation
+comes from the owner; source scanning cannot independently verify provider state.
+Deployments must use the replacement secrets. History cleanup alone cannot
+invalidate copied credentials. GitHub-managed pull-request refs, cached views, forks and old
 clones may still retain original objects; coordinate their cleanup separately.
 Existing contributors should clone the cleaned repository again or carefully
 migrate their work without merging the old history back into it.
