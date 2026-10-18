@@ -2,7 +2,32 @@
 
 Review date: 2026-10-17. Starting revision: `7d9b0e9`.
 
-## Follow-up: 2026-10-18
+## History cleanup applied: 2026-10-18
+
+The owner authorized the tested cleanup. All ten GitHub branches were updated
+atomically with exact per-branch leases. `main` now includes the release tooling
+and scanner fixes from PR #9. Two distinct exposed values (the JWT signing secret
+and a GitHub OAuth client secret appearing in two files) were removed from file
+contents and commit/tag messages throughout the mirrored history. Current branch
+tip contents were preserved; `main` intentionally advanced to the reviewed PR.
+
+The full-history scanner passes in the rewritten mirror and `make secrets`
+passes both source and history scopes in a fresh verification clone. Every
+reachable object in the preview was also checked for the two exact old values.
+Scanner regression checks pass. No real-credential allowlist or baseline was added.
+
+**Rotation remains unverified.** The owner must invalidate the exposed OAuth and
+JWT signing secrets and update affected deployments before publishing a reviewed
+release. Old clones, forks, cached objects and GitHub-managed PR refs may retain
+the original history; normal branch pushes cannot purge those copies. Contributors
+must use the cleaned history and avoid merging old commits back into the project.
+
+The earlier reviews below record their original state and validation results.
+Their statements that branch history still contains the three scanner findings
+were superseded by this cleanup; the credential-rotation and operational limits
+remain applicable.
+
+## Earlier follow-up: 2026-10-18 (before history cleanup)
 
 The repository is now public. The findings below remain a remediation record;
 source changes cannot verify provider-side credential revocation. The latest

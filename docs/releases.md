@@ -115,6 +115,7 @@ CI also smoke-tests the amd64 archive against isolated state before uploading it
    Publish the draft only when those checks are complete. Versions/tags must not
    be reused for different source; fix mistakes in a new version.
 
-The current history scan intentionally remains blocking until real historical
-credential findings are remediated. The documentation-placeholder fix does not
-establish that previously exposed credentials are safe.
+The combined secret scan remains a blocking check. Source and retained branch
+history pass after the 2026-10-18 cleanup, but the scanner cannot verify whether
+previously exposed credentials have been revoked. Keep releases as drafts until
+the owner verifies rotation and reviews the other release requirements above.

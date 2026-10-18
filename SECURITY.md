@@ -48,16 +48,19 @@ security advisories. Read the [release guide](docs/releases.md) before upgrades.
 
 ## Historical credential exposure and release gate
 
-The Git history contains previously committed GitHub OAuth credentials. Removing
-values from the current tree does not remove old commits. The owner must revoke
-or rotate exposed credentials and decide whether to rewrite the affected history
-or publish a clean snapshot before distributing a reviewed release. Coordinate any
-history rewrite with collaborators; never use a scanner baseline to hide an
-unrevoked credential. See the [readiness report](docs/open-source-readiness.md).
+Previously committed JWT and GitHub OAuth secrets were removed from the retained
+branch history on 2026-10-18. All ten remote branches were rewritten, and `main`
+includes the scanner and release-tooling fixes. Source and full-history scans pass
+without suppressing real credentials. See the [readiness report](docs/open-source-readiness.md).
 
-The repository is now public; credential rotation has not been verified. Treat
-previously committed values as compromised. Removing them from the current tree
-does not remediate earlier exposure or invalidate credentials already copied.
+**Credential rotation has not been verified.** Treat the previously exposed values
+as compromised. The owner must revoke/rotate the OAuth client secret and every
+reused JWT signing secret, update affected deployments and invalidate affected
+sessions before publishing a reviewed release. History cleanup cannot invalidate
+copied credentials. GitHub-managed pull-request refs, cached views, forks and old
+clones may still retain original objects; coordinate their cleanup separately.
+Existing contributors should clone the cleaned repository again or carefully
+migrate their work without merging the old history back into it.
 
 `make secrets` checks publishable source and all locally available branches and
 tags. CI uses a full-history checkout and keeps both scopes blocking. The only

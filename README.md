@@ -264,7 +264,7 @@ Live metrics use the collector cache; history uses SQLite minute summaries retai
 
 Requests enforce current RBAC and server scope. SSH uses strict known_hosts verification. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. API traffic has a 600-request/minute IP ceiling and a 240-request/minute user budget; MCP also limits each user to 60 requests/minute.
 
-Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Historical commits contain credentials; see [SECURITY.md](SECURITY.md) for the publication requirements and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
+Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Previously exposed credentials were removed from branch history; revocation/rotation remains unverified. See [SECURITY.md](SECURITY.md) for the release requirements and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
 
 ## Troubleshooting
 
@@ -308,8 +308,9 @@ Air watches `.js` and `.css` alongside Go/templates because these assets are emb
 publishable working tree and all locally available Git history, including branches
 and tags. Findings identify the file and line with credential values redacted.
 `make secrets-source` and `make secrets-history` diagnose each scope separately;
-neither replaces the combined release gate. Historical real credentials still
-block that gate until owner remediation. No real credential baseline is used.
+neither replaces the combined release gate. Source and retained branch history
+scan clean after the 2026-10-18 cleanup. No real credential baseline is used;
+provider-side revocation and rotation still require owner verification.
 
 CI tests Go and frontend behavior, runs the race detector, builds Linux amd64/arm64
 archives with checksums and dependency licenses, and tests container startup.
