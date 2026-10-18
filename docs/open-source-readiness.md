@@ -16,6 +16,14 @@ passes both source and history scopes in a fresh verification clone. Every
 reachable object in the preview was also checked for the two exact old values.
 Scanner regression checks pass. No real-credential allowlist or baseline was added.
 
+A subsequent cleanup also removed the old tracked `config.yaml` and all thirteen
+previously flagged infrastructure screenshots from retained branch history.
+Every current branch tip file tree was preserved, and the cleanup used atomic
+updates with exact branch leases. Those private assets remain excluded from
+source and release archives. GitHub secret scanning, push protection, Dependabot
+security updates and private vulnerability reporting are enabled. OpenTelemetry
+was upgraded to 1.45.0 to resolve the newly surfaced dependency alert.
+
 The owner subsequently confirmed on 2026-10-18 that both exposed secrets were
 rotated and the old values invalidated. That is an owner confirmation, not an
 independent provider-side audit. Old clones, forks, cached objects and GitHub-managed PR refs may retain

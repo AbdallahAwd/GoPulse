@@ -31,6 +31,8 @@ readiness, fleet capacity or availability guarantee has been established.
   source and full-history scans now pass. Existing contributors must migrate to
   the rewritten history. The owner confirmed rotation and invalidation of the
   old exposed values on 2026-10-18.
+- Removed the old local configuration and thirteen flagged infrastructure
+  screenshots from retained history while preserving current branch contents.
 
 ### Included workflows
 
