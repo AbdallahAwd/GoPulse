@@ -5,6 +5,9 @@ alpha, beta and release-candidate versions are explicitly marked as prereleases.
 
 ## Unreleased
 
+- Create release drafts only through explicit maintainer dispatch. Publishing a
+  manually created draft can emit a tag push; it must not start a duplicate build.
+
 ## v0.1.0-alpha.1 — 2026-10-18
 
 First evaluation prerelease. Linux is the deployment target; no production

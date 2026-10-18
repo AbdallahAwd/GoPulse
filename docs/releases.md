@@ -102,10 +102,12 @@ CI also smoke-tests the amd64 archive against isolated state before uploading it
 3. Verify Linux/container startup in CI and applicable integrations on disposable
    hosts. Review dependency licenses and update this changelog with migration
    notes and known limitations. Start with a prerelease while the project matures.
-4. Merge the reviewed commit. Either push an annotated version tag or dispatch
-   the **Release** workflow on that commit with an explicit version. Accepted
-   forms are `vMAJOR.MINOR.PATCH` and `vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N`.
-   Existing tags must point to the selected commit.
+4. Merge the reviewed commit, then run the **Release** workflow manually from
+   GitHub Actions on the intended branch or tag with an explicit version.
+   Accepted forms are `vMAJOR.MINOR.PATCH` and
+   `vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N`. Existing tags must point to the selected
+   commit. Pushing a tag alone does not create a draft; this avoids a duplicate
+   build when publishing a draft creates its tag.
 5. The workflow verifies the code and full history, builds both Linux archives,
    verifies checksums and native version output, then creates a **draft** release.
    It marks prerelease versions accordingly and generates change notes. Only
