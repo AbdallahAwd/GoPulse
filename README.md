@@ -317,7 +317,7 @@ CI tests Go and frontend behavior, runs the race detector, builds Linux amd64/ar
 archives with checksums and dependency licenses, and tests container startup.
 The [release workflow](https://github.com/AbdallahAwd/GoPulse/blob/main/.github/workflows/release.yml) adds version metadata and
 creates a GitHub Release draft after its checks pass. Read the
-[release guide](docs/releases.md) before tagging a version. Dependabot proposes
+[release guide](docs/releases.md) before manually starting a release. Dependabot proposes
 weekly dependency updates.
 
 The deployment workflow is manual and uses the `production` environment; forks do not deploy on push. Repository owners should enable private vulnerability reporting and secret scanning where available, protect the default branch with required CI checks, and configure environment reviewers before enabling deployment.

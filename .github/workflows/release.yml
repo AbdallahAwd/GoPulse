@@ -1,8 +1,8 @@
 name: Release
 
 on:
-  push:
-    tags: ['v*']
+  # Publishing a manually created draft can emit a tag push. Create drafts only
+  # on explicit maintainer dispatch so publication cannot start a duplicate build.
   workflow_dispatch:
     inputs:
       version:
