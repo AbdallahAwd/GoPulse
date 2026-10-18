@@ -76,7 +76,7 @@ To ensure migrated backups do not break because of local file dependencies:
 
 ## Contributor verification
 
-Run `make check` and `make test-race`. `make security` scans reachable Go vulnerabilities; `make secrets` scans tracked source and all Git history. See `CONTRIBUTING.md` for setup and `SECURITY.md` for deployment boundaries and historical credential exposure. Keep local configuration, runtime state, private keys and real infrastructure screenshots out of Git. The canonical module path is `github.com/AbdallahAwd/GoPulse`, matching the repository clone URL.
+Run `make check`, `make test-race` and `make test-tooling`. `make security` scans reachable Go vulnerabilities; `make secrets` scans publishable source and all locally available Git history. Both remain blocking in CI/releases. See `CONTRIBUTING.md` for setup, `docs/releases.md` for versioning and packaging, and `SECURITY.md` for deployment boundaries and historical credential exposure. Keep local configuration, runtime state, private keys and real infrastructure screenshots out of Git. The canonical module path is `github.com/AbdallahAwd/GoPulse`, matching the repository clone URL.
 
 ## Monitoring and alert delivery
 

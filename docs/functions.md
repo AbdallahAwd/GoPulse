@@ -31,7 +31,7 @@ A trigger request returns **202 Accepted** with an invocation ID, not the functi
 
 ```sh
 curl --request POST 'https://YOUR-GOPULSE/api/function-triggers/SERVER_ID/FUNCTION_ID' \
-  --header 'Authorization: Bearer YOUR_FUNCTION_TOKEN' \
+  --header "Authorization: Bearer ${GOPULSE_FUNCTION_TOKEN:?Set your function token}" \
   --header 'Content-Type: application/json' \
   --data '{"name":"World"}'
 ```

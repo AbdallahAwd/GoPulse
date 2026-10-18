@@ -11,3 +11,13 @@ condition = "AND"
 paths = ['internal/handlers/mcp_handler_test\.go$']
 regexTarget = "secret"
 regexes = ['^0123456789abcdef0123456789abcdef$']
+
+# Literal documentation placeholder in older revisions, never a usable token.
+# Scope to this exact value, file and detector; do not suppress real credentials.
+[[allowlists]]
+description = "Historical function trigger documentation placeholder"
+targetRules = ["curl-auth-header"]
+condition = "AND"
+paths = ['(^|/)docs/functions\.md$']
+regexTarget = "secret"
+regexes = ['^YOUR_FUNCTION_TOKEN$']

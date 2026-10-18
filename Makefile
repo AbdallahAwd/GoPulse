@@ -1,10 +1,12 @@
-.PHONY: build build-prod run dev deps test test-ui test-race check vet fmt-check test-coverage clean docker docker-run install fmt lint security secrets licenses help
+.PHONY: build build-prod package run dev deps test test-ui test-tooling test-race check vet fmt-check test-coverage clean docker docker-run install fmt lint security secrets secrets-source secrets-history gitleaks licenses help
 
 # Build variables
 BINARY_NAME=gopulse
 BUILD_DIR=bin
 MAIN_PATH=./cmd/server
 TOOLS_DIR=$(CURDIR)/bin/tools
+VERSION ?= dev
+ARCH ?= amd64
 
 # Build the application
 build:
@@ -19,6 +21,10 @@ build-prod:
 	@mkdir -p $(BUILD_DIR)
 	@go build -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
 	@echo "Production build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Build a versioned Linux archive, bundled licenses and SHA-256 checksum.
+package:
+	@bash scripts/package-release.sh "$(VERSION)" "$(ARCH)"
 
 # Run the application
 run:
@@ -42,6 +48,9 @@ test:
 test-ui:
 	@node --test web/tests/*.test.cjs
 
+test-tooling: gitleaks
+	@GITLEAKS=$(TOOLS_DIR)/gitleaks bash scripts/tests/check-secrets.sh
+
 test-race:
 	@go test -race ./...
 
@@ -58,10 +67,18 @@ security:
 	@GOBIN=$(TOOLS_DIR) go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 	@$(TOOLS_DIR)/govulncheck ./...
 
-secrets:
+gitleaks:
 	@mkdir -p $(TOOLS_DIR)
 	@GOBIN=$(TOOLS_DIR) go install github.com/zricethezav/gitleaks/v8@v8.30.0
+
+secrets: gitleaks
 	@GITLEAKS=$(TOOLS_DIR)/gitleaks bash scripts/check-secrets.sh
+
+secrets-source: gitleaks
+	@GITLEAKS=$(TOOLS_DIR)/gitleaks bash scripts/check-secrets.sh source
+
+secrets-history: gitleaks
+	@GITLEAKS=$(TOOLS_DIR)/gitleaks bash scripts/check-secrets.sh history
 
 licenses:
 	@mkdir -p $(TOOLS_DIR)
@@ -116,6 +133,7 @@ help:
 	@echo "Available targets:"
 	@echo "  build          - Build the application"
 	@echo "  build-prod     - Build optimized production binary"
+	@echo "  package        - Linux release archive (VERSION=v0.1.0-alpha.1 ARCH=amd64)"
 	@echo "  run            - Run the application"
 	@echo "  dev            - Run with hot reload (requires air)"
 	@echo "  deps           - Install dependencies"
@@ -129,6 +147,9 @@ help:
 	@echo "  lint           - Check formatting and run go vet"
 	@echo "  check          - Format, vet, Go/JS tests and production build"
 	@echo "  test-race      - Run Go tests with the race detector"
+	@echo "  test-tooling   - Verify secret-scanner boundaries and redaction"
 	@echo "  security       - Scan reachable Go vulnerabilities"
 	@echo "  secrets        - Scan working tree and all Git history"
+	@echo "  secrets-source - Diagnose publishable source only (not the release gate)"
+	@echo "  secrets-history - Diagnose all locally available Git history"
 	@echo "  licenses       - Collect dependency license notices"

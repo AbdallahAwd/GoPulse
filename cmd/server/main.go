@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log"
@@ -25,7 +26,21 @@ import (
 	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
+// Set by the release build. Source builds remain identifiable as development builds.
+var (
+	version = "dev"
+	commit  = "unknown"
+	builtAt = "unknown"
+)
+
 func main() {
+	showVersion := flag.Bool("version", false, "Print version and build information")
+	flag.Parse()
+	if *showVersion {
+		fmt.Printf("GoPulse %s (commit %s, built %s)\n", version, commit, builtAt)
+		return
+	}
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {

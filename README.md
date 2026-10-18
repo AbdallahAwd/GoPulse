@@ -1,26 +1,55 @@
-# GoPulse - VPS Management Dashboard
+# GoPulse
+
+[![CI](https://github.com/AbdallahAwd/GoPulse/actions/workflows/ci.yml/badge.svg)](https://github.com/AbdallahAwd/GoPulse/actions/workflows/ci.yml)
+[![Release workflow](https://github.com/AbdallahAwd/GoPulse/actions/workflows/release.yml/badge.svg)](https://github.com/AbdallahAwd/GoPulse/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-limegreen.svg)](LICENSE)
+
+**Your servers. Your control.**
+
+A self-hosted control panel for deployments, functions, databases, and monitoring.
+Built in Go. Shipped as one binary.
 
 ![GoPulse — self-hosted VPS management, built in Go. Connected servers on a charcoal background with lime accents.](docs/assets/readme-banner.png)
 
-A monolithic VPS management dashboard built in Go, with a single binary and embedded frontend assets. Linux is the deployment target; macOS is supported for development. Read the [open-source readiness report](docs/open-source-readiness.md) for verification results and remaining publication blockers.
+GoPulse brings everyday infrastructure work into one dashboard: connect a Linux
+server, deploy an application, inspect its logs, schedule a function, or configure
+an encrypted remote backup. You operate the control plane and the servers it manages.
 
-## Features
+[Get started](#quick-start) · [Documentation](#documentation) · [Releases](https://github.com/AbdallahAwd/GoPulse/releases) · [Contribute](CONTRIBUTING.md) · [Roadmap](ROADMAP.md)
 
-- ⚡ **Serverless Functions**: Create, deploy, and run Python or JavaScript handlers with manual, HTTP, and cron triggers, immutable versions, logs, and container resource limits. See [setup and limits](docs/functions.md).
+**Status:** early development. Linux is the deployment target; macOS supports
+development. Versioned releases are being introduced; build from source until
+the first reviewed prerelease is available. The [readiness report](docs/open-source-readiness.md)
+tracks historical credential remediation and verification limits. This project
+does not yet carry a production-readiness or availability guarantee.
 
-- 📊 **System Monitoring and History**: Live CPU, RAM, disk, and network metrics with WebSocket updates and persistent 30-day history
-- 🔔 **Alerts and Webhooks**: Server-scoped usage and availability rules, maintenance silencing, incident history, and signed webhook delivery with durable retries. See [monitoring](docs/monitoring.md).
-- 🔐 **Remote Backups**: Encrypted database backups to another server over SSH/SFTP, timezone-aware schedules, retention, recovery-key export, and automatic isolated restore tests. See [setup and recovery](docs/remote-backups.md).
-- 🔄 **Process Management**: List, search, and kill processes; manage systemd services
-- 🐳 **Docker Integration**: Manage containers, view stats, stream logs
-- 🗄️ **Database Management**: Existing relational/document engines plus private Qdrant deployment, collection management, diagnostics and snapshots
-- ⚖️ **Nginx Load Balancers**: Guided setup, validated deployment, rollback, backend health and safe editing
-- 🤖 **MCP Integration**: Structured tools, [selected serverless functions](docs/mcp-functions.md) with JSON results, scoped tokens, durable operations, audit and dashboard approvals
-- 🔐 **Authentication and RBAC**: JWT sessions, current user permissions, scoped server access, and trusted SSH host keys
-- ⚡ **High Performance**: Concurrent monitoring with goroutines and in-memory caching
-- 📦 **Single Binary**: Go templates and local assets embedded; browser libraries currently require CDN access
-- 💾 **Export/Import Migration**: Pack up all configurations (servers, projects, databases, domains, users) into a single JSON file and restore with automatic SSH key serialization
-- 🚀 **Durable GitHub CI/CD**: HMAC-verified, idempotent webhook deliveries with queued deployment history and GitHub Actions CI-first support
+## What you can do
+
+| Workflow | Included capabilities |
+| --- | --- |
+| Deploy applications | GitHub integration, HMAC-verified webhooks, deployment queue and history, logs |
+| Run functions | Python and JavaScript, manual/HTTP/cron triggers, immutable versions, resource-limited containers |
+| Manage infrastructure | Docker containers, processes, systemd services, databases, domains/TLS, Nginx load balancers |
+| Monitor and respond | Live metrics, 30-day history, server-scoped alerts, incident history, signed webhook retries |
+| Back up databases | Encrypted remote backups over SSH/SFTP, schedules, retention, recovery keys, isolated restore tests |
+| Connect AI tools | MCP, scoped credentials, structured function results, audit trails and approvals for disruptive operations |
+
+JWT sessions, RBAC and assigned-server scope govern dashboard/API operations.
+SSH connections require verified host keys. Templates and local assets are
+embedded in the binary; browser libraries currently load from CDNs.
+
+## Documentation
+
+| Guide | Start here for |
+| --- | --- |
+| [Installation, releases and upgrades](docs/releases.md) | Download verification, version policy, state backups and rollback |
+| [Application CI/CD](docs/cicd.md) | GitHub integration and queued deployments |
+| [Functions](docs/functions.md) | Runtime setup, HTTP/cron triggers and execution limits |
+| [Monitoring](docs/monitoring.md) | History, alert rules and webhook receivers |
+| [Remote backups](docs/remote-backups.md) | Encryption, recovery and restore testing |
+| [Infrastructure](docs/infrastructure-management.md) | Databases, Qdrant, load balancers and permissions |
+| [AI agents](docs/agent-support.md) / [MCP functions](docs/mcp-functions.md) | Client setup, scoped operations and function exposure |
+| [Security policy](SECURITY.md) | Deployment boundaries and private vulnerability reporting |
 
 ## Tech Stack
 
@@ -32,6 +61,9 @@ A monolithic VPS management dashboard built in Go, with a single binary and embe
 - **Docker SDK**: Official Docker Engine Go client (`github.com/moby/moby/client`)
 
 ## Quick Start
+
+Start on localhost with an empty state directory. GoPulse is an administrative
+control plane: complete first-account setup before exposing it to a network.
 
 ### Prerequisites
 
@@ -224,7 +256,7 @@ GoPulse/
 2. **Background Workers**: Goroutines for concurrent system monitoring
 3. **Thread-safe Caching**: RWMutex for stats cache access
 4. **Middleware Chain**: Composable middleware for cross-cutting concerns
-5. **Clean Architecture**: Separation of concerns (handlers → services → data)
+5. **Modular Services**: Separation of concerns (handlers → services → stores)
 
 ## Performance and security
 
@@ -258,7 +290,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, contribution licen
 
 ## Support
 
-For issues and questions, please open an issue on GitHub.
+See [SUPPORT.md](SUPPORT.md) for bug reports, setup questions and security reports.
+Contributions follow the [code of conduct](CODE_OF_CONDUCT.md).
 
 
 ### Dashboard request and database checks
@@ -271,7 +304,19 @@ Air watches `.js` and `.css` alongside Go/templates because these assets are emb
 
 ## Open-source maintenance
 
-`make security` checks reachable Go vulnerabilities; `make secrets` checks the working tree and all Git history. CI tests Go and frontend behavior, runs the race detector, builds Linux binaries with dependency license notices, and builds the container. Dependency updates are proposed weekly by Dependabot.
+`make security` checks reachable Go vulnerabilities; `make secrets` checks the
+publishable working tree and all locally available Git history, including branches
+and tags. Findings identify the file and line with credential values redacted.
+`make secrets-source` and `make secrets-history` diagnose each scope separately;
+neither replaces the combined release gate. Historical real credentials still
+block that gate until owner remediation. No real credential baseline is used.
+
+CI tests Go and frontend behavior, runs the race detector, builds Linux amd64/arm64
+archives with checksums and dependency licenses, and tests container startup.
+The [release workflow](.github/workflows/release.yml) adds version metadata and
+creates a GitHub Release draft after its checks pass. Read the
+[release guide](docs/releases.md) before tagging a version. Dependabot proposes
+weekly dependency updates.
 
 The deployment workflow is manual and uses the `production` environment; forks do not deploy on push. Repository owners should enable private vulnerability reporting and secret scanning where available, protect the default branch with required CI checks, and configure environment reviewers before enabling deployment.
 

@@ -2,6 +2,29 @@
 
 Review date: 2026-10-17. Starting revision: `7d9b0e9`.
 
+## Follow-up: 2026-10-18
+
+The repository is now public. The findings below remain a remediation record;
+source changes cannot verify provider-side credential revocation. The latest
+hosted main-branch CI run at `5234200` passed Linux/macOS tests, both Linux binary
+builds and container startup; its security job failed in `make secrets`.
+
+Reproduction identified a documentation false positive: the literal
+`YOUR_FUNCTION_TOKEN` in `docs/functions.md`. The example now uses an environment
+variable, and only that exact historical placeholder/path/detector is allowlisted.
+Three real historical credential entries remain blocking. The scanner now runs
+both scopes even after a failure and prints redacted file/line details. Regression
+checks exercise allowed fixtures, ignored local files, new files, redaction and
+credentials removed from source but retained in history.
+
+Release tooling now packages versioned Linux amd64/arm64 binaries, checksums,
+configuration examples, tracked documentation and license notices. The GitHub
+workflow verifies the code and full history before creating a release draft.
+There is no real-credential baseline, history rewrite or verified rotation in
+this follow-up. See [the release guide](releases.md) for the remaining steps.
+
+The original review below describes its own checks and publication-time state.
+
 ## Decision
 
 The repository has been prepared for external contributors and repeatable
