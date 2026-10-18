@@ -30,7 +30,8 @@ GOBIN="$PWD/bin/tools" go install github.com/google/go-licenses/v2@v2.0.1
 CGO_ENABLED=0 GOOS=linux GOARCH="$arch" GOROOT="$(go env GOROOT)" \
   bin/tools/go-licenses save ./cmd/server --save_path="$stage/$name/third_party_licenses" \
   --ignore=github.com/AbdallahAwd/GoPulse
-cp LICENSE README.md SECURITY.md CHANGELOG.md THIRD_PARTY_NOTICES.md config.example.yaml .env.example "$stage/$name/"
+cp LICENSE README.md SECURITY.md CHANGELOG.md CONTRIBUTING.md ROADMAP.md SUPPORT.md \
+  CODE_OF_CONDUCT.md THIRD_PARTY_NOTICES.md config.example.yaml .env.example "$stage/$name/"
 cp "$(go env GOROOT)/LICENSE" "$stage/$name/GO_LICENSE"
 
 # Copy only tracked documentation, never ignored private screenshots or local state.

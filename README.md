@@ -313,7 +313,7 @@ block that gate until owner remediation. No real credential baseline is used.
 
 CI tests Go and frontend behavior, runs the race detector, builds Linux amd64/arm64
 archives with checksums and dependency licenses, and tests container startup.
-The [release workflow](.github/workflows/release.yml) adds version metadata and
+The [release workflow](https://github.com/AbdallahAwd/GoPulse/blob/main/.github/workflows/release.yml) adds version metadata and
 creates a GitHub Release draft after its checks pass. Read the
 [release guide](docs/releases.md) before tagging a version. Dependabot proposes
 weekly dependency updates.
