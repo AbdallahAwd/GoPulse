@@ -49,6 +49,7 @@ keys/
 gitleaks-report.*
 dist/
 third_party_licenses/
+output/
 
 # Private infrastructure screenshots (retain local copies; replace with synthetic demos)
 /docs/ui-previews/database-recovered.png

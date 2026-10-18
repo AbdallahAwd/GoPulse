@@ -39,7 +39,20 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
-  security:
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make security
+
+  secrets:
+    name: Source and full-history secret scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -50,7 +63,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - run: make security
+      - run: make test-tooling
       - run: make secrets
 
   container:
@@ -98,27 +111,22 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Build Linux binary
+      - name: Build development release archive
+        run: make package VERSION=dev ARCH=${{ matrix.arch }}
+      - name: Verify archive checksum and native startup
         env:
-          CGO_ENABLED: '0'
-          GOOS: linux
-          GOARCH: ${{ matrix.arch }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          mkdir -p dist
-          go build -trimpath -ldflags='-s -w' -o dist/gopulse ./cmd/server
-      - name: Collect dependency licenses
-        run: make licenses
-      - name: Package binary and license notices
-        run: |
-          cp LICENSE README.md config.example.yaml dist/
-          cp "$(go env GOROOT)/LICENSE" dist/GO_LICENSE
-          cp -R third_party_licenses dist/
-          tar -czf gopulse-linux-${{ matrix.arch }}.tar.gz -C dist .
-          sha256sum gopulse-linux-${{ matrix.arch }}.tar.gz > gopulse-linux-${{ matrix.arch }}.tar.gz.sha256
+          set -euo pipefail
+          (cd dist && sha256sum --check "gopulse_dev_linux_${ARCH}.tar.gz.sha256")
+          if [ "$ARCH" = amd64 ]; then
+            tar -xzf "dist/gopulse_dev_linux_${ARCH}.tar.gz" -C dist
+            bash scripts/smoke-binary.sh "dist/gopulse_dev_linux_${ARCH}/gopulse" dev
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gopulse-linux-${{ matrix.arch }}
           path: |
-            gopulse-linux-${{ matrix.arch }}.tar.gz
-            gopulse-linux-${{ matrix.arch }}.tar.gz.sha256
+            dist/gopulse_dev_linux_${{ matrix.arch }}.tar.gz
+            dist/gopulse_dev_linux_${{ matrix.arch }}.tar.gz.sha256
           retention-days: 14

@@ -11,8 +11,9 @@ when enabled. If the private form is unavailable, open an issue requesting a
 private reporting channel without exploit details or sensitive data. Do not
 post credentials, exports, host addresses or unredacted logs in public issues.
 Include affected commits, impact and a minimal reproduction using dummy data.
-There is no promised response SLA or maintained release support matrix yet;
-use the latest reviewed revision and monitor security advisories.
+There is no promised response SLA or maintained stable release support branch
+yet. Early prereleases are for evaluation; use reviewed revisions and monitor
+security advisories. Read the [release guide](docs/releases.md) before upgrades.
 
 ## Deployment boundary
 
@@ -45,11 +46,21 @@ use the latest reviewed revision and monitor security advisories.
 - Do not run multiple GoPulse instances against one state directory. Schedulers,
   deployment workers and in-memory SSH/metrics state assume one active process.
 
-## Before publishing this repository
+## Historical credential exposure and release gate
 
 The Git history contains previously committed GitHub OAuth credentials. Removing
 values from the current tree does not remove old commits. The owner must revoke
 or rotate exposed credentials and decide whether to rewrite the affected history
-or publish a clean snapshot before making the repository public. Coordinate any
+or publish a clean snapshot before distributing a reviewed release. Coordinate any
 history rewrite with collaborators; never use a scanner baseline to hide an
 unrevoked credential. See the [readiness report](docs/open-source-readiness.md).
+
+The repository is now public; credential rotation has not been verified. Treat
+previously committed values as compromised. Removing them from the current tree
+does not remediate earlier exposure or invalidate credentials already copied.
+
+`make secrets` checks publishable source and all locally available branches and
+tags. CI uses a full-history checkout and keeps both scopes blocking. The only
+allowlists cover an exact deterministic test fixture and an exact historical
+documentation placeholder; real historical findings are not suppressed. The
+release workflow cannot create a draft until this combined check passes.

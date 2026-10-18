@@ -25,9 +25,20 @@ checks. Never point tests at a production host.
 
 ## Before submitting a pull request
 
-Run `make check` and `make test-race`. Run `make security` with a current patched
+Run `make check`, `make test-race` and `make test-tooling`. Run `make security` with a current patched
 Go toolchain and `make secrets` before sharing commits. Tools installed by these
 last two commands are placed in ignored `bin/tools`.
+
+`make secrets` runs both publishable-source and full local-history scans, with
+redacted findings. Use a full-history clone, including relevant branches and tags.
+The current historical credential findings are tracked in the
+[readiness report](docs/open-source-readiness.md); do not bypass them or add real
+credentials to an allowlist. `make secrets-source` is available for diagnosis.
+
+For a first contribution, look for a reproducible bug, improve a setup example,
+or add a focused regression test. State what you intend to change in the issue
+so others can avoid duplicating work. See the [roadmap](ROADMAP.md) for priorities
+and [release guide](docs/releases.md) for artifact and version conventions.
 
 Keep handlers, services and stores separate. Preserve RBAC, server ownership,
 strict SSH host verification and MCP approval boundaries. Add regression tests
@@ -43,3 +54,4 @@ code and assets you have permission to license; identify third-party sources and
 retain their license notices. Maintainers review and merge changes; opening a PR
 does not guarantee acceptance. Treat contributors respectfully, focus criticism
 on the work, and do not publish private credentials or personal information.
+The [code of conduct](CODE_OF_CONDUCT.md) applies to project participation.
