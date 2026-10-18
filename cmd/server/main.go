@@ -4,13 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -22,8 +20,6 @@ import (
 	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/AbdallahAwd/GoPulse/web"
-	"github.com/go-chi/chi/v5"
-	chiMiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
 // Set by the release build. Source builds remain identifiable as development builds.
@@ -243,352 +239,40 @@ func main() {
 
 	mcpHandler := &handlers.MCPHandler{Servers: serverStore, Databases: databaseService, LoadBalancers: loadBalancerService, Manager: serviceManager, Collector: collector, Operations: operations, Auth: authMiddleware, Functions: functionService}
 
-	// Setup Router
-	r := chi.NewRouter()
+	fileHandler := handlers.NewFileHandler(serviceManager)
+	agentHandler := &handlers.AgentHandler{Store: agentStore, Servers: serverStore, MCP: mcpHandler, PublicURL: dashboardDomainService.PublicURL}
 
-	// Middleware
-	r.Use(middleware.LoggingMiddleware)
-	r.Use(middleware.RecoveryMiddleware)
-	r.Use(middleware.SecurityHeaders)
-	r.Use(middleware.OriginGuard)
-	r.Use(middleware.NewRateLimiter(600, time.Minute).APIOnlyHandler)
-	r.Use(authMiddleware.Handler)
-	r.Use(middleware.PermissionGuard)
-	r.Use(func(next http.Handler) http.Handler {
-		timed := chiMiddleware.Timeout(60 * time.Second)(next)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/servers/") && strings.Contains(r.URL.Path, "/remote-backups/") && strings.HasSuffix(r.URL.Path, "/download") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			timed.ServeHTTP(w, r)
-		})
+	r, err := newRouter(routerDependencies{
+		Auth:              authMiddleware,
+		Dashboard:         dashboardHandler,
+		Server:            serverHandler,
+		Process:           processHandler,
+		Docker:            dockerHandler,
+		Stats:             statsHandler,
+		Monitoring:        monitoringHandler,
+		System:            systemHandler,
+		Terminal:          terminalHandler,
+		Cron:              cronHandler,
+		Project:           projectHandler,
+		Webhook:           webhookHandler,
+		GitHub:            githubHandler,
+		Domain:            domainHandler,
+		Database:          databaseHandler,
+		RemoteBackup:      remoteBackupHandler,
+		Function:          functionHandler,
+		Operation:         operationHandler,
+		Qdrant:            qdrantHandler,
+		DashboardSettings: dashboardSettingsHandler,
+		LoadBalancer:      loadBalancerHandler,
+		Firewall:          firewallHandler,
+		Export:            exportHandler,
+		MCP:               mcpHandler,
+		Agent:             agentHandler,
+		File:              fileHandler,
 	})
-
-	// Static Files (Embedded)
-	staticFS, err := fs.Sub(web.Assets, "static")
 	if err != nil {
-		log.Fatalf("Failed to create static file system: %v", err)
+		log.Fatalf("Failed to initialize router: %v", err)
 	}
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
-
-	// Web Routes
-	r.Get("/login", dashboardHandler.Login)
-	r.Get("/register", dashboardHandler.Register)
-	r.Get("/logout", authMiddleware.LogoutHandler)
-	r.Get("/", dashboardHandler.Index)
-	r.Get("/servers", dashboardHandler.Servers)
-	r.Get("/applications", dashboardHandler.Workspace)
-	r.Get("/databases", dashboardHandler.Workspace)
-	r.Get("/networking", dashboardHandler.Workspace)
-	r.Get("/activity", dashboardHandler.Workspace)
-	r.Get("/settings", dashboardHandler.Workspace)
-	r.Get("/agents", dashboardHandler.Workspace)
-	r.Get(services.DashboardIdentityPath, dashboardSettingsHandler.Identity)
-	r.With(authMiddleware.RequireServerAccess).Get("/servers/{serverID}/dashboard", dashboardHandler.ServerDashboard)
-	r.With(authMiddleware.RequirePermission("user:manage")).Get("/users", dashboardHandler.Users)
-
-	// API Routes
-	r.Route("/api", func(r chi.Router) {
-		// HTML and embedded assets never consume the API budget. A page reload
-		// must be able to recover even when a client has exhausted its API quota.
-		r.Use(middleware.NewRateLimiter(240, time.Minute).APIHandler)
-		authLimiter := middleware.NewRateLimiter(10, time.Minute)
-
-		r.Post("/function-triggers/{serverID}/{functionID}", functionHandler.Trigger)
-		r.Get("/operations", operationHandler.List)
-		r.Get("/operations/{operationID}", operationHandler.Get)
-		r.Post("/operations/{operationID}/approve", operationHandler.Approve)
-		r.Post("/operations/{operationID}/reject", operationHandler.Reject)
-		r.Handle("/mcp", mcpHandler)
-		r.Route("/agents", (&handlers.AgentHandler{Store: agentStore, Servers: serverStore, MCP: mcpHandler, PublicURL: dashboardDomainService.PublicURL}).Routes)
-		r.Route("/settings/dashboard", dashboardSettingsHandler.Routes)
-		r.Post("/agent-token", authMiddleware.AgentTokenHandler)
-		// Auth Endpoints
-		r.With(authLimiter.Handler).Post("/auth/login", authMiddleware.LoginHandler)
-		r.With(authLimiter.Handler).Post("/auth/register", authMiddleware.RegisterHandler)
-		r.Get("/auth/has-users", authMiddleware.CheckUsersHandler)
-
-		// User Management API
-		r.Route("/users", func(r chi.Router) {
-			r.Use(authMiddleware.RequirePermission("user:manage"))
-			r.Get("/", authMiddleware.ListUsersHandler)
-			r.Post("/", authMiddleware.CreateUserHandler)
-			r.Delete("/{id}", authMiddleware.DeleteUserHandler)
-		})
-
-		// Server Management
-		r.Route("/servers", func(r chi.Router) {
-			r.Get("/", serverHandler.ListServers)
-			r.Get("/inventory", serverHandler.Inventory)
-			r.Post("/", serverHandler.AddServer)
-			r.Post("/upload-key", serverHandler.UploadKey)
-
-			// Per-Server Stats & Operations
-			r.Route("/{serverID}", func(r chi.Router) {
-				r.Use(authMiddleware.RequireServerAccess)
-				r.Delete("/", serverHandler.RemoveServer)
-				r.Get("/", serverHandler.GetServer)
-				r.Put("/", serverHandler.UpdateServer)
-				r.With(authMiddleware.RequirePermission("terminal:write")).Get("/terminal", terminalHandler.HandleTerminal)
-				r.With(authMiddleware.RequireServerAccess).Get("/stats/history", statsHandler.GetStatsHistory)
-
-				// Monitoring rules, incident history and webhook delivery.
-				r.Route("/alerts", monitoringHandler.Routes)
-				r.Route("/remote-backups", remoteBackupHandler.Routes)
-				r.Route("/functions", functionHandler.Routes)
-
-				// Cron jobs
-				r.Route("/cron", cronHandler.Routes)
-
-				// Processes
-				r.Route("/processes", func(r chi.Router) {
-					r.Get("/", processHandler.ListProcesses)
-					r.Get("/{pid}", processHandler.GetProcess)
-					r.Delete("/{pid}", processHandler.KillProcess)
-				})
-
-				// files
-				r.Route("/files", func(r chi.Router) {
-					fileHandler := handlers.NewFileHandler(serviceManager)
-					r.Get("/list", fileHandler.ListFiles)
-					r.Get("/content", fileHandler.DownloadFile)
-					r.Post("/save", fileHandler.SaveFile)
-					r.Post("/upload", fileHandler.UploadFile)
-					r.Post("/action", fileHandler.PerformAction)
-					r.Post("/exec", fileHandler.ExecuteCommand)
-				})
-
-				// Services (Systemd)
-				r.Route("/services", func(r chi.Router) {
-					r.Post("/{name}/restart", processHandler.RestartService)
-					r.Get("/{name}/status", processHandler.GetServiceStatus)
-				})
-
-				// Docker
-				r.Route("/containers", func(r chi.Router) {
-					r.Get("/", dockerHandler.ListContainers)
-					r.Get("/{id}", dockerHandler.GetContainer)
-					r.Get("/{id}/stats", dockerHandler.GetContainerStats)
-					r.Get("/{id}/logs", dockerHandler.GetContainerLogs)
-					r.Post("/{id}/start", dockerHandler.StartContainer)
-					r.Post("/{id}/stop", dockerHandler.StopContainer)
-					r.Post("/{id}/restart", dockerHandler.RestartContainer)
-					r.Delete("/{id}", dockerHandler.RemoveContainer)
-				})
-
-				// Images
-				r.Route("/images", func(r chi.Router) {
-					r.Get("/", dockerHandler.ListImages)
-					r.Post("/pull", dockerHandler.PullImage)
-					r.Post("/run", dockerHandler.RunImage) // Added RunImage route
-					r.Delete("/{id}", dockerHandler.RemoveImage)
-					r.Post("/build", dockerHandler.BuildImage) // Added BuildImage route
-				})
-
-				// Volumes
-				r.Route("/volumes", func(r chi.Router) {
-					r.Get("/", dockerHandler.ListVolumes)
-					r.Delete("/{name}", dockerHandler.RemoveVolume)
-				})
-
-				// Networks
-				r.Route("/networks", func(r chi.Router) {
-					r.Get("/", dockerHandler.ListNetworks)
-					r.Delete("/{id}", dockerHandler.RemoveNetwork)
-				})
-
-				// Compose
-				r.Route("/compose", func(r chi.Router) {
-					r.Post("/build", dockerHandler.BuildCompose)
-				})
-
-				// Projects
-				r.Route("/projects", func(r chi.Router) {
-					r.Get("/", projectHandler.ListProjects)
-					r.Post("/", projectHandler.CreateProject)
-					r.Post("/upload", projectHandler.UploadProject)
-
-					r.Route("/{id}", func(r chi.Router) {
-						r.Use(projectHandler.RequireOwnership)
-						r.Get("/", projectHandler.GetProject)
-						r.Put("/", projectHandler.UpdateProject) // Added Update route
-						r.Post("/setup", projectHandler.SetupProject)
-						r.Get("/detect", projectHandler.DetectStrategy)
-						r.Post("/build", projectHandler.BuildProject)
-						r.Post("/start", projectHandler.StartProject) // Fixed method name reference
-						r.Post("/stop", projectHandler.StopProject)
-						r.Post("/redeploy", projectHandler.RedeployProject)
-						r.Get("/deployments", projectHandler.ListDeployments)
-						r.Get("/deployments/{deploymentID}", projectHandler.GetDeployment)
-						r.Delete("/", projectHandler.DeleteProject)
-						r.Post("/webhook/enable", projectHandler.EnableWebhook)
-						r.Post("/webhook/disable", projectHandler.DisableWebhook)
-						r.Get("/env", projectHandler.GetEnvVars)
-						r.Put("/env", projectHandler.UpdateEnvVars)
-						r.Get("/ops/releases", projectHandler.GetReleases)
-						r.Get("/ops/logs", projectHandler.GetLogs)
-						r.Get("/ops/health", projectHandler.GetHealth)
-						r.Get("/ops/automation", projectHandler.GetAutomation)
-						r.Put("/ops/automation", projectHandler.UpdateAutomation)
-						r.Get("/ops/integrations", projectHandler.GetIntegrations)
-					})
-				})
-
-				// Remote System Operations
-				r.Route("/system", func(r chi.Router) {
-					r.Post("/restart", systemHandler.RestartRemote)
-					r.Post("/shutdown", systemHandler.ShutdownRemote)
-					r.Get("/check/{software}", systemHandler.CheckSoftware)
-					r.Post("/install/{software}", systemHandler.InstallSoftware)
-
-					// Linux User Management Endpoints
-					r.Get("/users", systemHandler.ListLinuxUsers)
-					r.Post("/users", systemHandler.CreateLinuxUser)
-					r.Delete("/users/{username}", systemHandler.DeleteLinuxUser)
-				})
-
-				// Domains
-				r.Route("/domains", func(r chi.Router) {
-					r.Get("/", domainHandler.ListDomains)
-					r.Post("/", domainHandler.AddDomain)
-					r.Delete("/{id}", domainHandler.RemoveDomain)
-					r.Get("/nginx/status", domainHandler.NginxStatus)
-				})
-
-				// Load Balancers
-				r.Route("/load-balancers", func(r chi.Router) {
-					owned := r.With(loadBalancerHandler.RequireOwnership)
-					owned.Get("/", loadBalancerHandler.ListLoadBalancers)
-					owned.Post("/", loadBalancerHandler.AddLoadBalancer)
-					owned.Get("/{id}", loadBalancerHandler.GetLoadBalancer)
-					owned.Get("/{id}/logs", loadBalancerHandler.GetLogs)
-					owned.Put("/{id}", loadBalancerHandler.UpdateLoadBalancer)
-					owned.Post("/{id}/deploy", loadBalancerHandler.Retry)
-					owned.Delete("/{id}", loadBalancerHandler.RemoveLoadBalancer)
-					owned.Post("/{id}/backends", loadBalancerHandler.AddBackend)
-					owned.Delete("/{id}/backends/{backendID}", loadBalancerHandler.RemoveBackend)
-				})
-
-				// Databases
-				r.Route("/databases", func(r chi.Router) {
-					owned := r.With(databaseHandler.RequireOwnership)
-					owned.Post("/qdrant/install", qdrantHandler.Install)
-					owned.Get("/{dbID}/qdrant/collections", qdrantHandler.Collections)
-					owned.Post("/{dbID}/qdrant/collections", qdrantHandler.CreateCollection)
-					owned.Get("/{dbID}/qdrant/collections/{collection}", qdrantHandler.Collection)
-					owned.Delete("/{dbID}/qdrant/collections/{collection}", qdrantHandler.DeleteCollection)
-					owned.Get("/{dbID}/qdrant/diagnostics", qdrantHandler.Diagnostics)
-					owned.Get("/{dbID}/qdrant/config", qdrantHandler.Configuration)
-					owned.Get("/{dbID}/qdrant/collections/{collection}/snapshots", qdrantHandler.Snapshots)
-					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots", qdrantHandler.Snapshots)
-					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots/restore", qdrantHandler.RestoreSnapshot)
-					owned.Get("/", databaseHandler.ListDatabases)
-					owned.Post("/", databaseHandler.ProvisionDatabase)
-					owned.Get("/{dbID}", databaseHandler.GetDatabase)
-					owned.With(authMiddleware.RequirePermission("database:write")).Get("/{dbID}/credentials", databaseHandler.Credentials)
-					owned.Post("/{dbID}/start", databaseHandler.StartDatabase)
-					owned.Post("/{dbID}/stop", databaseHandler.StopDatabase)
-					owned.Post("/{dbID}/restart", databaseHandler.RestartDatabase)
-					owned.Delete("/{dbID}", databaseHandler.DeleteDatabase)
-					owned.Post("/{dbID}/query", databaseHandler.ExecuteQuery)
-					owned.Post("/{dbID}/backup", databaseHandler.CreateBackup)
-					owned.Get("/{dbID}/backups", databaseHandler.ListBackups)
-					owned.Post("/{dbID}/backups/restore", databaseHandler.RestoreBackup)
-					owned.Post("/{dbID}/backups/import", databaseHandler.ImportBackup)
-					owned.Get("/{dbID}/backups/download", databaseHandler.DownloadBackup)
-					owned.Get("/{dbID}/auto-backup", databaseHandler.GetAutoBackupConfig)
-					owned.Put("/{dbID}/auto-backup", databaseHandler.SetAutoBackupConfig)
-					owned.Get("/{dbID}/telemetry", databaseHandler.GetDatabaseTelemetry)
-
-					// User management endpoints
-					owned.Get("/{dbID}/users", databaseHandler.ListDatabaseUsers)
-					owned.Post("/{dbID}/users", databaseHandler.CreateDatabaseUser)
-					owned.Delete("/{dbID}/users/{username}", databaseHandler.DeleteDatabaseUser)
-
-					// Explorer endpoints
-					owned.Get("/{dbID}/schemas", databaseHandler.ListSchemas)
-					owned.Post("/{dbID}/schemas", databaseHandler.CreateSchema)
-					owned.Delete("/{dbID}/schemas/{schema}", databaseHandler.DeleteSchema)
-					owned.Get("/{dbID}/schemas/{schema}/tables", databaseHandler.ListTables)
-					owned.Post("/{dbID}/schemas/{schema}/tables", databaseHandler.CreateTable)
-					owned.Delete("/{dbID}/schemas/{schema}/tables/{table}", databaseHandler.DeleteTable)
-					owned.Get("/{dbID}/schemas/{schema}/tables/{table}/columns", databaseHandler.DescribeTable)
-					owned.Get("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.BrowseTableData)
-					owned.Post("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.InsertRow)
-					owned.Put("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.UpdateRow)
-					owned.Delete("/{dbID}/schemas/{schema}/tables/{table}/rows", databaseHandler.DeleteRow)
-				})
-
-				// Firewall
-				r.Route("/firewall", func(r chi.Router) {
-					r.Get("/", firewallHandler.GetFirewall)
-					r.Post("/enable", firewallHandler.EnableFirewall)
-					r.Post("/disable", firewallHandler.DisableFirewall)
-					r.Post("/reload", firewallHandler.ReloadFirewall)
-					r.Post("/reset", firewallHandler.ResetFirewall)
-					r.Post("/policies", firewallHandler.ChangePolicies)
-					r.Post("/install", firewallHandler.InstallUFW)
-					r.Post("/rules", firewallHandler.AddRule)
-					r.Put("/rules/{ruleId}", firewallHandler.UpdateRule)
-					r.Delete("/rules/{ruleId}", firewallHandler.DeleteRule)
-					r.Post("/rules/bulk", firewallHandler.BulkAction)
-					r.Get("/backups", firewallHandler.ListBackups)
-					r.Post("/backups", firewallHandler.CreateBackup)
-					r.Post("/backups/{backupId}/restore", firewallHandler.RestoreBackup)
-					r.Delete("/backups/{backupId}", firewallHandler.DeleteBackup)
-					r.Get("/schedules", firewallHandler.ListSchedules)
-					r.Post("/schedules", firewallHandler.CreateSchedule)
-					r.Delete("/schedules/{scheduleId}", firewallHandler.CancelSchedule)
-					r.Get("/logs", firewallHandler.GetLogs)
-				})
-
-			})
-		})
-
-		// GitHub API routes
-		r.Route("/github", func(r chi.Router) {
-			r.Get("/login", githubHandler.Login)
-			r.Get("/callback", githubHandler.Callback)
-			r.Get("/repos", githubHandler.ListRepos)
-			r.Post("/clone", githubHandler.CloneRepo)
-			r.Post("/connect", githubHandler.ConnectRepo)
-		})
-
-		// Global Stats WebSocket (broadcasts updates for all servers)
-		r.Get("/stats/ws", statsHandler.WebSocketHandler)
-
-		// System Operations
-		r.Route("/system", func(r chi.Router) {
-			r.Use(authMiddleware.RequirePermission("*")) // These actions control the dashboard host itself.
-			r.Post("/restart", systemHandler.Restart)
-			r.Post("/shutdown", systemHandler.Shutdown)
-		})
-
-		// GitHub Webhook Receiver (CI/CD)
-		r.Post("/webhooks/github/{projectID}", webhookHandler.HandleGitHubWebhook)
-
-		// Global Stats Snapshot
-		r.With(authMiddleware.RequireServerAccess).Get("/stats", statsHandler.GetStats)
-
-		// Global Stats History
-		r.With(authMiddleware.RequireServerAccess).Get("/stats/history", statsHandler.GetStatsHistory)
-
-		// Export/Import (admin only)
-		r.Route("/export-import", func(r chi.Router) {
-			r.Use(authMiddleware.RequirePermission("*"))
-			r.Get("/export", exportHandler.Export)
-			r.Get("/export/preview", exportHandler.ExportPreview)
-			r.Post("/import", exportHandler.Import)
-		})
-
-	})
-
-	mcpHandler.API = r
-
-	// GitHub OAuth callback at top level (matches config.yaml callback_url)
-	r.Get("/auth/github/login", githubHandler.Login)
-	r.Get("/auth/github/callback", githubHandler.Callback)
 
 	// Start Server
 	srv := &http.Server{

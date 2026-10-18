@@ -182,7 +182,7 @@ Permissions and assigned-server scope apply to API calls. Resource paths use
 | POST | `/api/export-import/import` | Import configuration; admin only |
 | POST | `/api/webhooks/github/{projectID}` | Public webhook authenticated with project HMAC |
 
-`cmd/server/main.go` is the authoritative route registry. See [CI/CD](docs/cicd.md),
+`cmd/server/router.go` is the authoritative route registry. See [CI/CD](docs/cicd.md),
 [agent support](docs/agent-support.md), [cron jobs](docs/cron-jobs.md), and
 [infrastructure management](docs/infrastructure-management.md) for feature details.
 
