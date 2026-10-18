@@ -50,7 +50,7 @@ jobs:
       - run: make test-race
       - run: make test-tooling
       - run: make security
-      # Remains blocking until historical credentials are remediated. No baseline.
+      # Both scopes stay blocking; provider-side revocation needs owner review.
       - run: make secrets
       - name: Verify module files are tidy
         run: |

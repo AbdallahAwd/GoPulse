@@ -20,6 +20,9 @@ No versioned release has been published yet.
 - Secret scans report redacted file/line details and run both source and history
   scopes even if the first scope fails. The exact historical documentation
   placeholder is narrowly allowlisted; real credentials remain blocking findings.
+- Removed two exposed credential values from all ten retained remote branches;
+  source and full-history scans now pass. Existing contributors must migrate to
+  the rewritten history. Provider-side revocation/rotation remains unverified.
 
 ### Initial feature set awaiting a reviewed release
 
@@ -32,7 +35,8 @@ No versioned release has been published yet.
 
 ### Known release blockers
 
-- Historical credentials require owner revocation/rotation and coordinated
-  history cleanup. A clean current tree is insufficient.
+- Previously exposed credentials require verified owner revocation/rotation.
+  GitHub-managed PR refs, forks, caches and old clones need separate cleanup;
+  rewritten branch history does not invalidate copied credentials.
 - Remote integrations need broader disposable-host verification; no fleet
   capacity or availability guarantee has been established.
