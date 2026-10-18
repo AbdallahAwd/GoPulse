@@ -66,6 +66,19 @@ jobs:
       - run: make test-tooling
       - run: make secrets
 
+  # Preserve the original check name for repositories that require "security".
+  security:
+    needs: [vulnerabilities, secrets]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require both security checks
+        env:
+          VULNERABILITIES: ${{ needs.vulnerabilities.result }}
+          SECRETS: ${{ needs.secrets.result }}
+        run: test "$VULNERABILITIES" = success && test "$SECRETS" = success
+
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 20
