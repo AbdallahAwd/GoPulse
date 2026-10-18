@@ -15,6 +15,9 @@ No versioned release has been published yet.
 
 ### Fixed
 
+- Upgrade OpenTelemetry to 1.45.0 to address
+  [GHSA-8wmf-6v46-5gfg](https://github.com/advisories/GHSA-8wmf-6v46-5gfg),
+  a diagnostic logging disclosure in earlier SDK versions.
 - Function-trigger documentation uses an environment variable instead of a
   literal token placeholder that triggered Gitleaks.
 - Secret scans report redacted file/line details and run both source and history
