@@ -43,15 +43,16 @@ func TestExportAndImport(t *testing.T) {
 
 	// 1. Setup a password-auth server
 	server1 := models.Server{
-		ID:       "srv-pass",
-		Name:     "Pass Auth VPS",
-		Host:     "1.2.3.4",
-		Port:     22,
-		User:     "root",
-		AuthType: "password",
-		Password: "supersecretpassword",
-		Tags:     []string{"tag1"},
-		IsDbOnly: false,
+		ID:             "srv-pass",
+		Name:           "Pass Auth VPS",
+		Host:           "1.2.3.4",
+		Port:           22,
+		User:           "root",
+		AuthType:       "password",
+		Password:       "supersecretpassword",
+		Tags:           []string{"tag1"},
+		IsDbOnly:       false,
+		TrustedHostKey: "approved-host-public-key",
 	}
 	if err := srcServers.AddServer(server1); err != nil {
 		t.Fatalf("AddServer server1 failed: %v", err)
@@ -190,6 +191,10 @@ func TestExportAndImport(t *testing.T) {
 		t.Fatalf("Could not locate exported servers")
 	}
 
+	if expSrvPass.TrustedHostKey != server1.TrustedHostKey {
+		t.Fatal("export lost approved SSH host key")
+	}
+
 	if expSrvPass.SSHKeyContent != "" {
 		t.Errorf("Password-auth server should not have SSHKeyContent")
 	}
@@ -242,6 +247,11 @@ func TestExportAndImport(t *testing.T) {
 	}
 	if len(report.Errors) > 0 {
 		t.Errorf("Unexpected import errors: %v", report.Errors)
+	}
+
+	importedPass, err := destServers.GetServer("srv-pass")
+	if err != nil || importedPass.TrustedHostKey != server1.TrustedHostKey {
+		t.Fatal("import lost approved SSH host key", err)
 	}
 
 	// Verify imported key-auth server key path and key content

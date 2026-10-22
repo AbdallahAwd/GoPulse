@@ -10,6 +10,7 @@ import (
 
 	"github.com/AbdallahAwd/GoPulse/internal/middleware"
 	"github.com/AbdallahAwd/GoPulse/internal/models"
+	"github.com/AbdallahAwd/GoPulse/internal/remote"
 	"github.com/AbdallahAwd/GoPulse/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -79,9 +80,18 @@ func (h *ServerHandler) AddServer(w http.ResponseWriter, r *http.Request) {
 		server.ID = uuid.New().String()
 	}
 
-	// Set default port if 0
-	if server.Port == 0 {
-		server.Port = 22
+	var err error
+	server.Host, server.Port, err = remote.NormalizeSSHEndpoint(server.Host, server.Port)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	if server.TrustedHostKey != "" {
+		server.TrustedHostKey, err = canonicalHostKey(server.TrustedHostKey)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
 	}
 
 	if err := h.store.AddServer(server); err != nil {
@@ -208,8 +218,26 @@ func (h *ServerHandler) UpdateServer(w http.ResponseWriter, r *http.Request) {
 
 	// Retain existing password if blank in request
 	original, err := h.store.GetServer(id)
-	if err == nil && server.Password == "" {
+	if err != nil {
+		respondError(w, http.StatusNotFound, "Server not found", nil)
+		return
+	}
+	if server.Password == "" {
 		server.Password = original.Password
+	}
+	server.Host, server.Port, err = remote.NormalizeSSHEndpoint(server.Host, server.Port)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+	if server.TrustedHostKey != "" {
+		server.TrustedHostKey, err = canonicalHostKey(server.TrustedHostKey)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error(), nil)
+			return
+		}
+	} else if server.Host == original.Host && server.Port == original.Port {
+		server.TrustedHostKey = original.TrustedHostKey
 	}
 
 	if err := h.store.UpdateServer(server); err != nil {

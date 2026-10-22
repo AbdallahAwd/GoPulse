@@ -78,6 +78,8 @@ App.Fleet = {
         const copy=this.node('button'); copy.type='button';copy.setAttribute('aria-label',`Copy host for ${server.name}`);copy.title='Copy host';copy.append(this.icon('fa-copy'));
         copy.addEventListener('click',event=>copyHost(event,server.host));host.append(copy);identity.append(host);top.append(identity);
         if (document.getElementById('fleet-page').dataset.canWrite==='true') {
+            const verify=this.node('button',undefined,'fleet-delete fleet-verify');verify.type='button';verify.setAttribute('aria-label',`Verify SSH host key for ${server.name}`);verify.title='Verify SSH key';verify.append(this.icon('fa-shield-halved'));
+            verify.addEventListener('click',()=>App.SSHTrust.verifyServer(server,verify));top.append(verify);
             const remove=this.node('button',undefined,'fleet-delete');remove.type='button';remove.setAttribute('aria-label',`Remove ${server.name}`);remove.title='Remove server';remove.append(this.icon('fa-trash-can'));
             remove.addEventListener('click',()=>deleteServer(server.id));top.append(remove);
         }

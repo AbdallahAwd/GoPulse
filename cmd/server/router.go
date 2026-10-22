@@ -126,6 +126,7 @@ func newRouter(deps routerDependencies) (chi.Router, error) {
 			r.Get("/inventory", deps.Server.Inventory)
 			r.Post("/", deps.Server.AddServer)
 			r.Post("/upload-key", deps.Server.UploadKey)
+			r.Post("/ssh-host-key", deps.Server.ProbeSSHHostKey)
 
 			// Per-Server Stats & Operations
 			r.Route("/{serverID}", func(r chi.Router) {
@@ -133,6 +134,8 @@ func newRouter(deps routerDependencies) (chi.Router, error) {
 				r.Delete("/", deps.Server.RemoveServer)
 				r.Get("/", deps.Server.GetServer)
 				r.Put("/", deps.Server.UpdateServer)
+				r.Post("/ssh-host-key", deps.Server.ProbeSSHHostKey)
+				r.Put("/ssh-host-key", deps.Server.TrustSSHHostKey)
 				r.With(deps.Auth.RequirePermission("terminal:write")).Get("/terminal", deps.Terminal.HandleTerminal)
 				r.With(deps.Auth.RequireServerAccess).Get("/stats/history", deps.Stats.GetStatsHistory)
 

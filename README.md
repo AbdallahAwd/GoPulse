@@ -99,7 +99,7 @@ export GOPULSE_SERVER_HOST=127.0.0.1
 ./bin/gopulse
 ```
 
-Save the secret securely for subsequent starts. Configure trusted SSH fingerprints in `GOPULSE_SSH_KNOWN_HOSTS` before using remote management.
+Save the secret securely for subsequent starts. When connecting a server in the dashboard, review its SSH fingerprint and explicitly trust the key. Approved host keys are saved with the server in GoPulse’s SQLite data, so no manual `known_hosts` setup is needed. Verify the fingerprint against your hosting provider console or another trusted source before accepting it.
 
 The dashboard will be available at `http://localhost:8080`
 
@@ -150,6 +150,16 @@ export GOPULSE_SSH_KNOWN_HOSTS="/path/to/verified_known_hosts"
 # Optional isolated state directory:
 export GOPULSE_DATA_DIR="/path/to/dashboard-data"
 ```
+
+### Trusting SSH host keys
+
+1. Choose **Connect server**, enter the SSH address, port, username and credentials, then choose **Review SSH key**.
+2. Compare the displayed SHA-256 fingerprint with a trusted source, such as the target server’s provider console. For an ED25519 host key, the console command is `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`.
+3. Choose **Trust this key** to save the server with that exact public key. Cancel saves neither the server nor its credentials. Discovery performs key exchange without sending login credentials.
+
+For an existing server, use the shield button (**Verify SSH key**) on its card. A change from a previously approved dashboard key shows both fingerprints and requires **Trust replacement key**. Connections reject a changed key before authentication; key rotation requires a new explicit approval. Saved pins are included in configuration exports/imports and persist across restarts in `gopulse.db`. Protect backups as privileged configuration.
+
+`GOPULSE_SSH_KNOWN_HOSTS` (or the process owner’s `~/.ssh/known_hosts`) remains the fallback for servers without a saved pin. A saved pin takes precedence and never falls back on mismatch. If you change a server’s hostname or port through the API, provide a newly verified `trusted_host_key`; an omitted pin is preserved only when the address is unchanged.
 
 See [the infrastructure guide](docs/infrastructure-management.md) for Qdrant setup, load balancer prerequisites, MCP client connection, permissions, migration changes and test evidence. The [initial audit](docs/infrastructure-audit.md) records the defects found before implementation.
 
@@ -225,7 +235,7 @@ make docker
 make docker-run
 ```
 
-The container requires `.env` with a persistent `GOPULSE_AUTH_JWT_SECRET`, stores state in the `gopulse-data` volume, and publishes only on `127.0.0.1:8080`. Use an SSH tunnel for initial setup and HTTPS for remote access. Supply a read-only verified known_hosts file at `/home/gopulse/.ssh/known_hosts` for SSH access. The container runs as UID 10001; bind-mounted state and key files must be readable by that user. This example is for remote host management: metrics describe the container, and local systemd/Nginx administration needs a native Linux installation. Docker socket access requires explicit host permissions and carries host-administrator privileges.
+The container requires `.env` with a persistent `GOPULSE_AUTH_JWT_SECRET`, stores state in the `gopulse-data` volume, and publishes only on `127.0.0.1:8080`. Use an SSH tunnel for initial setup and HTTPS for remote access. Approve each server’s SSH key through the dashboard; those pins persist in the data volume. For servers without a dashboard-approved key, you can instead supply a read-only verified known_hosts file at `/home/gopulse/.ssh/known_hosts`. The container runs as UID 10001; bind-mounted state and key files must be readable by that user. This example is for remote host management: metrics describe the container, and local systemd/Nginx administration needs a native Linux installation. Docker socket access requires explicit host permissions and carries host-administrator privileges.
 
 ## UI improvement plan
 
@@ -263,7 +273,7 @@ GoPulse/
 
 Live metrics use the collector cache; history uses SQLite minute summaries retained for 30 days. Alerts evaluate collection results and persist state and webhook deliveries. See [monitoring](docs/monitoring.md) for evaluation, recovery, permissions, and receiver setup. Fleet capacity and latency have not been benchmarked; earlier numerical performance claims were not supported by this verification run.
 
-Requests enforce current RBAC and server scope. SSH uses strict known_hosts verification. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. API traffic has a 600-request/minute IP ceiling and a 240-request/minute user budget; MCP also limits each user to 60 requests/minute.
+Requests enforce current RBAC and server scope. SSH verifies the server’s explicitly approved key, or uses strict known_hosts verification for servers without a saved pin. MCP adds tool schemas, rate limits, audit and human approval for disruptive actions. API traffic has a 600-request/minute IP ceiling and a 240-request/minute user budget; MCP also limits each user to 60 requests/minute.
 
 Read [the infrastructure guide](docs/infrastructure-management.md) before upgrading: a configured JWT secret and verified SSH host keys are required. Previously exposed credentials were removed from branch history, and the owner confirmed rotation and invalidation of the old values. See [SECURITY.md](SECURITY.md) and supply your own environment configuration. Legacy infrastructure credentials and configuration exports remain sensitive and are not encrypted at rest.
 

@@ -46,21 +46,34 @@ func NewSSHClient(server models.Server) (*SSHClient, error) {
 		authMethod = ssh.Password(server.Password)
 	}
 
-	hostsPath := os.Getenv("GOPULSE_SSH_KNOWN_HOSTS")
-	if hostsPath == "" {
-		hostsPath = filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
-	}
-	verifyHost, err := knownhosts.New(hostsPath)
-	if err != nil {
-		return nil, fmt.Errorf("trusted SSH host keys required (%s): %w", hostsPath, err)
+	var verifyHost ssh.HostKeyCallback
+	var hostKeyAlgorithms []string
+	if server.TrustedHostKey != "" {
+		key, err := ParseHostKey(server.TrustedHostKey)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted SSH host key: %w", err)
+		}
+		verifyHost = ssh.FixedHostKey(key)
+		hostKeyAlgorithms = pinnedHostKeyAlgorithms(key)
+	} else {
+		hostsPath := os.Getenv("GOPULSE_SSH_KNOWN_HOSTS")
+		if hostsPath == "" {
+			hostsPath = filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts")
+		}
+		var err error
+		verifyHost, err = knownhosts.New(hostsPath)
+		if err != nil {
+			return nil, fmt.Errorf("trusted SSH host keys required (%s): %w; verify and trust the key from the dashboard", hostsPath, err)
+		}
 	}
 	config := &ssh.ClientConfig{
 		User: server.User,
 		Auth: []ssh.AuthMethod{
 			authMethod,
 		},
-		HostKeyCallback: verifyHost,
-		Timeout:         5 * time.Second,
+		HostKeyCallback:   verifyHost,
+		HostKeyAlgorithms: hostKeyAlgorithms,
+		Timeout:           5 * time.Second,
 	}
 
 	return &SSHClient{
@@ -68,6 +81,15 @@ func NewSSHClient(server models.Server) (*SSHClient, error) {
 		config: config,
 		sem:    make(chan struct{}, 10), // Allow up to 10 concurrent sessions (SFTP + Exec + Stats)
 	}, nil
+}
+
+// MatchesServer prevents reuse of credentials, addresses or trust that changed
+// after a connection was cached. Server configuration is immutable in a client.
+func (c *SSHClient) MatchesServer(server models.Server) bool {
+	return c.server.Host == server.Host && c.server.Port == server.Port &&
+		c.server.User == server.User && c.server.AuthType == server.AuthType &&
+		c.server.KeyPath == server.KeyPath && c.server.Password == server.Password &&
+		c.server.TrustedHostKey == server.TrustedHostKey
 }
 
 // Connect establishes the SSH connection

@@ -122,7 +122,8 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			key_path TEXT NOT NULL,
 			password TEXT NOT NULL,
 			tags TEXT NOT NULL,
-			is_db_only INTEGER NOT NULL
+			is_db_only INTEGER NOT NULL,
+			trusted_host_key TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
@@ -289,6 +290,14 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to migrate SQLite schema: %w", err)
 		}
+	}
+
+	// Existing installations keep their known_hosts trust until a key is approved.
+	hostKeyRows, hostKeyErr := db.Query("SELECT trusted_host_key FROM servers LIMIT 1")
+	if hostKeyErr == nil {
+		hostKeyRows.Close()
+	} else if _, err := db.Exec("ALTER TABLE servers ADD COLUMN trusted_host_key TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("SSH host key migration: %w", err)
 	}
 
 	// Extend legacy audit rows without rebuilding or dropping their history.

@@ -43,8 +43,9 @@ are optional integrations with their own host requirements.
 
 5. Open `http://localhost:8080` locally, or use an SSH tunnel. Create the first
    administrator before making the listener reachable to other users. There is
-   no default account. Configure independently verified SSH host keys through
-   `GOPULSE_SSH_KNOWN_HOSTS`. Use HTTPS and the secure-cookie setting for remote
+   no default account. Review and explicitly trust independently verified SSH host
+   keys when connecting servers in the dashboard, or configure
+   `GOPULSE_SSH_KNOWN_HOSTS` as a fallback. Use HTTPS and the secure-cookie setting for remote
    access. Read [SECURITY.md](../SECURITY.md) before connecting real infrastructure.
 
 Use a dedicated service account and private persistent state directory. Keep

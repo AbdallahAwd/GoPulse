@@ -38,8 +38,8 @@ func NewServerStore(legacyPath string) (*ServerStore, error) {
 func insertServerTx(tx *sql.Tx, server models.Server) error {
 	_, err := tx.Exec(
 		`INSERT OR IGNORE INTO servers (
-			id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, name, host, port, user, auth_type, key_path, password, tags, is_db_only, trusted_host_key
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		server.ID,
 		server.Name,
 		server.Host,
@@ -50,6 +50,7 @@ func insertServerTx(tx *sql.Tx, server models.Server) error {
 		server.Password,
 		encodeJSON(server.Tags, "[]"),
 		boolToInt(server.IsDbOnly),
+		server.TrustedHostKey,
 	)
 	return err
 }
@@ -72,6 +73,7 @@ func scanServer(scanner interface {
 		&server.Password,
 		&tagsRaw,
 		&isDbOnly,
+		&server.TrustedHostKey,
 	)
 	if err != nil {
 		return models.Server{}, err
@@ -99,8 +101,8 @@ func (s *ServerStore) AddServer(server models.Server) error {
 
 	_, err := s.db.Exec(
 		`INSERT INTO servers (
-			id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, name, host, port, user, auth_type, key_path, password, tags, is_db_only, trusted_host_key
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		server.ID,
 		server.Name,
 		server.Host,
@@ -111,6 +113,7 @@ func (s *ServerStore) AddServer(server models.Server) error {
 		server.Password,
 		encodeJSON(server.Tags, "[]"),
 		boolToInt(server.IsDbOnly),
+		server.TrustedHostKey,
 	)
 	return err
 }
@@ -137,7 +140,7 @@ func (s *ServerStore) GetServer(id string) (models.Server, error) {
 	defer s.mu.RUnlock()
 
 	row := s.db.QueryRow(
-		`SELECT id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
+		`SELECT id, name, host, port, user, auth_type, key_path, password, tags, is_db_only, trusted_host_key
 		FROM servers WHERE id = ?`,
 		id,
 	)
@@ -154,7 +157,7 @@ func (s *ServerStore) ListServers() []models.Server {
 	defer s.mu.RUnlock()
 
 	rows, err := s.db.Query(
-		`SELECT id, name, host, port, user, auth_type, key_path, password, tags, is_db_only
+		`SELECT id, name, host, port, user, auth_type, key_path, password, tags, is_db_only, trusted_host_key
 		FROM servers ORDER BY rowid`,
 	)
 	if err != nil {
@@ -180,7 +183,7 @@ func (s *ServerStore) UpdateServer(server models.Server) error {
 	result, err := s.db.Exec(
 		`UPDATE servers SET
 			name = ?, host = ?, port = ?, user = ?, auth_type = ?, key_path = ?,
-			password = ?, tags = ?, is_db_only = ?
+			password = ?, tags = ?, is_db_only = ?, trusted_host_key = ?
 		WHERE id = ?`,
 		server.Name,
 		server.Host,
@@ -191,6 +194,7 @@ func (s *ServerStore) UpdateServer(server models.Server) error {
 		server.Password,
 		encodeJSON(server.Tags, "[]"),
 		boolToInt(server.IsDbOnly),
+		server.TrustedHostKey,
 		server.ID,
 	)
 	if err != nil {
@@ -239,4 +243,22 @@ func (s *ServerStore) ResourceCounts() (map[string]ServerResourceCounts, error) 
 		result[id] = counts
 	}
 	return result, rows.Err()
+}
+
+// TrustHostKey changes only the key, and rejects a concurrent endpoint edit.
+func (s *ServerStore) TrustHostKey(id, host string, port int, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	result, err := s.db.Exec(`UPDATE servers SET trusted_host_key = ? WHERE id = ? AND host = ? AND port = ?`, key, id, host, port)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return fmt.Errorf("server address changed; fetch its SSH host key again")
+	}
+	return nil
 }

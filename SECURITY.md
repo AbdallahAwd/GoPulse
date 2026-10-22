@@ -28,9 +28,13 @@ security advisories. Read the [release guide](docs/releases.md) before upgrades.
 - Generate and preserve a random JWT secret of at least 32 characters. Rotating
   it invalidates sessions. Browser logout clears the cookie; a copied JWT can
   remain valid until expiry unless its user is deleted or the secret is rotated.
-- SSH requires verified known_hosts entries via `GOPULSE_SSH_KNOWN_HOSTS` or the
-  default SSH known_hosts file. Verify fingerprints independently; `ssh-keyscan`
-  alone does not authenticate a host.
+- SSH requires an explicitly approved per-server host key or verified known_hosts
+  entries via `GOPULSE_SSH_KNOWN_HOSTS` / the default SSH known_hosts file. The
+  dashboard discovers keys without login credentials, displays SHA-256 fingerprints,
+  and saves the exact key only after an operator trusts it. Verify fingerprints
+  independently through a trusted channel; discovery alone does not authenticate
+  a host. Saved pins take precedence, fail closed on mismatch, and travel with
+  configuration backups. Server write access is required to discover or trust keys.
 - Run with the least host and SSH privileges your workflows require. Docker
   socket access grants extensive host control. The example container runs as
   an unprivileged user and does not mount the Docker socket or host filesystem.
