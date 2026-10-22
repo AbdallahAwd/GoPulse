@@ -126,6 +126,7 @@ func newRouter(deps routerDependencies) (chi.Router, error) {
 			r.Get("/inventory", deps.Server.Inventory)
 			r.Post("/", deps.Server.AddServer)
 			r.Post("/upload-key", deps.Server.UploadKey)
+			r.Post("/ssh-host-key", deps.Server.ProbeSSHHostKey)
 
 			// Per-Server Stats & Operations
 			r.Route("/{serverID}", func(r chi.Router) {
@@ -133,6 +134,8 @@ func newRouter(deps routerDependencies) (chi.Router, error) {
 				r.Delete("/", deps.Server.RemoveServer)
 				r.Get("/", deps.Server.GetServer)
 				r.Put("/", deps.Server.UpdateServer)
+				r.Post("/ssh-host-key", deps.Server.ProbeSSHHostKey)
+				r.Put("/ssh-host-key", deps.Server.TrustSSHHostKey)
 				r.With(deps.Auth.RequirePermission("terminal:write")).Get("/terminal", deps.Terminal.HandleTerminal)
 				r.With(deps.Auth.RequireServerAccess).Get("/stats/history", deps.Stats.GetStatsHistory)
 
@@ -282,6 +285,7 @@ func newRouter(deps routerDependencies) (chi.Router, error) {
 					owned.Delete("/{dbID}/qdrant/collections/{collection}", deps.Qdrant.DeleteCollection)
 					owned.Get("/{dbID}/qdrant/diagnostics", deps.Qdrant.Diagnostics)
 					owned.Get("/{dbID}/qdrant/config", deps.Qdrant.Configuration)
+					owned.Put("/{dbID}/qdrant/network", deps.Qdrant.ConfigureNetwork)
 					owned.Get("/{dbID}/qdrant/collections/{collection}/snapshots", deps.Qdrant.Snapshots)
 					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots", deps.Qdrant.Snapshots)
 					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots/restore", deps.Qdrant.RestoreSnapshot)

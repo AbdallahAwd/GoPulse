@@ -36,7 +36,7 @@ func qdrantFixture(t *testing.T) (*DatabaseService, *fixtureExecutor) {
 	}}
 	return NewDatabaseService(st, &ServiceManager{executor: f}), f
 }
-func TestQdrantInstallationPrivateAndVerified(t *testing.T) {
+func TestQdrantInstallationExternalAndVerified(t *testing.T) {
 	s, f := qdrantFixture(t)
 	db, err := s.InstallQdrant(context.Background(), "srv", "vectors", "", models.QdrantConfig{}, func(string) {})
 	if err != nil {
@@ -46,17 +46,14 @@ func TestQdrantInstallationPrivateAndVerified(t *testing.T) {
 		t.Fatalf("unexpected state: %+v", db)
 	}
 	commands := strings.Join(f.commands, "\n")
-	for _, part := range []string{"127.0.0.1:6333:6333", "/qdrant/storage", "/qdrant/snapshots", "production.yaml:ro", "0o600", "urllib.request"} {
+	for _, part := range []string{"0.0.0.0:6333:6333", "0.0.0.0:6334:6334", "http://127.0.0.1:6333/collections", "/qdrant/storage", "/qdrant/snapshots", "production.yaml:ro", "0o600", "urllib.request"} {
 		if !strings.Contains(commands, part) {
 			t.Errorf("missing %s", part)
 		}
 	}
-	if strings.Contains(commands, "0.0.0.0:6333:") {
-		t.Fatal("public bind")
-	}
 }
 func TestQdrantValidation(t *testing.T) {
-	for _, cfg := range []models.QdrantConfig{{BindAddress: "0.0.0.0"}, {BindAddress: "8.8.8.8"}, {Version: "latest"}, {StoragePath: "/var/lib/gopulse/databases/../evil"}, {HostPort: 80}} {
+	for _, cfg := range []models.QdrantConfig{{BindAddress: "host;command"}, {BindAddress: "224.0.0.1"}, {BindAddress: "::"}, {Version: "latest"}, {StoragePath: "/var/lib/gopulse/databases/../evil"}, {HostPort: 80}, {GRPCPort: 6333}, {GRPCPort: 80}} {
 		if ValidateQdrantConfig(&cfg) == nil {
 			t.Fatalf("accepted %+v", cfg)
 		}

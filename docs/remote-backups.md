@@ -8,9 +8,9 @@ before enabling its schedule.
 ## Setup and supported data
 
 - Add the source and destination through GoPulse's existing server inventory.
-  Both need working SSH access with verified host keys. Configure
-  `GOPULSE_SSH_KNOWN_HOSTS` or the dashboard account's `~/.ssh/known_hosts` using
-  independently verified fingerprints. The destination needs SFTP and a writable
+  Both need working SSH access with verified host keys. Approve their keys
+  through the dashboard after independently verifying the fingerprints, or
+  configure `GOPULSE_SSH_KNOWN_HOSTS` / the dashboard account's `~/.ssh/known_hosts`. The destination needs SFTP and a writable
   absolute directory, for example `/srv/gopulse-backups`.
 - The source needs Linux, Bash, GNU `timeout`, and its native database tools.
   PostgreSQL, MySQL, MongoDB and Redis use the tools inside their existing

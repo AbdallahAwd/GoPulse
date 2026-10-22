@@ -722,7 +722,7 @@
     </div>
 
     <!-- Databases Tab -->
-    <div id="databases-tab" class="tab-content hidden space-y-6">
+    <div id="databases-tab" class="tab-content hidden space-y-6" data-can-write="{{.CanWriteDatabases}}">
         <!-- List View -->
         <div id="db-list-view" class="space-y-6">
             <div class="db-inventory-heading">
@@ -812,6 +812,8 @@
         </div>
 
         <!-- Manage View -->
+        <section id="qdrant-manage-view" class="hidden" aria-label="Vector database"></section>
+
         <div id="db-manage-view" class="hidden space-y-6">
             <div class="db-resource-back">
                 <button onclick="App.Databases.showListView()" class="text-gray-400 hover:text-white flex items-center space-x-2 text-sm font-semibold transition-colors">
@@ -1697,12 +1699,13 @@
                 <details id="db-prov-vector-config" class="db-vector-config hidden">
                     <summary>Advanced Qdrant settings</summary>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-                        <label>Private bind address<input id="db-prov-vector-bind" value="127.0.0.1" class="w-full mt-2 p-2.5" placeholder="127.0.0.1"></label>
+                        <label>Bind address<input id="db-prov-vector-bind" value="0.0.0.0" class="w-full mt-2 p-2.5" placeholder="0.0.0.0"></label>
+                        <label>gRPC port<input id="db-prov-vector-grpc" type="number" min="1024" max="65535" value="6334" class="w-full mt-2 p-2.5"></label>
                         <label>Version<input id="db-prov-vector-version" value="v1.19.0" class="w-full mt-2 p-2.5"></label>
                         <label class="sm:col-span-2">Storage directory <span>(optional)</span><input id="db-prov-vector-storage" class="w-full mt-2 p-2.5" placeholder="/var/lib/gopulse/databases/my-qdrant"></label>
                         <label class="sm:col-span-2">API key <span>(optional)</span><input id="db-prov-vector-key" type="password" autocomplete="new-password" class="w-full mt-2 p-2.5" placeholder="Generated securely when left empty"></label>
                     </div>
-                    <p class="mt-3">Qdrant binds to loopback by default. Use a private address for access from other servers; configure network access separately.</p>
+                    <p class="mt-3">External access is enabled on HTTP 6333 and gRPC 6334 by default. Apps must send the API key. Allow the chosen ports in your server and cloud firewalls; use TLS or a trusted network to protect traffic. Set 127.0.0.1 for local access only.</p>
                 </details>
                 <p id="db-prov-error" class="db-provision-error" role="alert"></p>
             </div>

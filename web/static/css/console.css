@@ -89,6 +89,7 @@ body.console { background:var(--console-bg); color:var(--console-text); font-fam
 .fleet-host button:hover { color:var(--console-accent); }
 .fleet-delete { font-size:10px; margin-top:0; padding:5px; }
 .fleet-delete:hover { color:#fca5a5; }
+.fleet-verify:hover { color:var(--console-accent); }
 .fleet-tags { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:18px; min-height:20px; }
 .fleet-tag { font-size:9px; color:#9baf83; background:#242d20; border:1px solid #34412c; border-radius:4px; padding:3px 7px; }
 .fleet-tag.neutral { color:#929aa8; background:#23262c; border-color:#333942; }

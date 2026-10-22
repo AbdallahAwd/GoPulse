@@ -173,6 +173,11 @@
                     id="host" type="text" placeholder="192.168.1.100" required>
             </div>
             <div class="mb-4">
+                <label class="block text-gray-300 text-sm font-bold mb-2" for="ssh-port">SSH Port</label>
+                <input class="w-full bg-gray-700 text-white border border-gray-600 rounded-lg py-2 px-3 focus:outline-none focus:border-blue-500"
+                    id="ssh-port" type="number" min="1" max="65535" value="22" required>
+            </div>
+            <div class="mb-4">
                 <label class="block text-gray-300 text-sm font-bold mb-2" for="user">
                     SSH User
                 </label>
@@ -224,6 +229,7 @@
                     restricted permissions</p>
             </div>
 
+            <p class="text-xs text-gray-400 mb-4">Next, review and trust the server’s SSH fingerprint before saving. Compare it with your hosting provider console.</p>
             <div class="flex items-center justify-end">
                 <button type="button" onclick="closeAddServerModal()"
                     class="mr-4 text-gray-400 hover:text-white font-bold py-2 px-4 rounded-lg">
@@ -231,7 +237,7 @@
                 </button>
                 <button type="submit"
                     class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition duration-300">
-                    Connect
+                    Review SSH key
                 </button>
             </div>
         </form>
@@ -539,79 +545,64 @@
 
     async function handleAddServer(e) {
         e.preventDefault();
-        const btn = e.submitter;
+        const form = document.getElementById('add-server-form');
+        const btn = e.submitter || form.querySelector('button[type="submit"]');
+        if (btn.disabled) return;
         const originalText = btn.innerHTML;
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Adding server...';
-        btn.disabled = true;
-
         const authMethod = document.querySelector('input[name="auth-method"]:checked').value;
-
+        const keyFile = document.getElementById('key-file').files[0];
+        const data = {
+            name: document.getElementById('name').value,
+            host: document.getElementById('host').value.trim(),
+            port: Number(document.getElementById('ssh-port').value),
+            user: document.getElementById('user').value,
+            auth_type: authMethod,
+            password: authMethod === 'password' ? document.getElementById('password').value : '',
+            key_path: ''
+        };
+        const dialog = document.getElementById('add-server-modal');
+        let cancelled = false;
+        const onClose = () => { cancelled = true; };
+        dialog.addEventListener('close', onClose);
+        const fields = Array.from(form.querySelectorAll('input, button[type="submit"]'));
+        fields.forEach(field => { field.disabled = true; });
+        const isCurrent = () => !cancelled && dialog.open;
         try {
-            let keyPath = '';
+            if (authMethod === 'key' && !keyFile) throw new Error('Please select a private key file.');
+            btn.textContent = 'Fetching SSH key…';
+            const trusted = await App.SSHTrust.review('/servers/ssh-host-key', {host: data.host, port: data.port}, isCurrent);
+            if (!trusted) return;
+            // Use the endpoint whose fingerprint was reviewed, including IPv6 normalization.
+            data.host = trusted.host;
+            data.port = trusted.port;
+            data.trusted_host_key = trusted.public_key;
 
-            // If key auth, upload the key file first
             if (authMethod === 'key') {
-                const keyFile = document.getElementById('key-file').files[0];
-                if (!keyFile) {
-                    App.UI.toast('error', 'Please select a private key file.');
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                    return;
-                }
-
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Uploading key...';
+                btn.textContent = 'Uploading key…';
                 const formData = new FormData();
                 formData.append('key', keyFile);
-
-                const uploadRes = await fetch('/api/servers/upload-key', {
-                    method: 'POST',
-                    body: formData
-                });
+                const uploadRes = await fetch('/api/servers/upload-key', {method: 'POST', body: formData});
+                if (!uploadRes.ok) throw new Error(await uploadRes.text() || 'Unable to upload private key.');
                 const uploadResult = await uploadRes.json();
-
-                if (!uploadResult.success) {
-                    App.UI.toast('error', 'Failed to upload key: ' + (uploadResult.error || 'Unknown error'));
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                    return;
-                }
-                keyPath = uploadResult.data.key_path;
+                if (!uploadResult.success) throw new Error(uploadResult.error || 'Unable to upload private key.');
+                data.key_path = uploadResult.data.key_path;
             }
-
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Adding server...';
-
-            const data = {
-                name: document.getElementById('name').value,
-                host: document.getElementById('host').value,
-                port: 22,
-                user: document.getElementById('user').value,
-                auth_type: authMethod,
-                password: authMethod === 'password' ? document.getElementById('password').value : '',
-                key_path: keyPath,
-            };
-
-            const response = await fetch('/api/servers', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            const result = await response.json();
-
-            if (result.success) {
-                closeAddServerModal();
-                loadServers();
-                        document.getElementById('add-server-form').reset();
-                document.getElementById('key-file-name').textContent = 'No file selected';
-                showLocalToast("Server added. Open its workspace to verify SSH access.", "success");
-            } else {
-                App.UI.toast('error', 'Failed to connect: ' + result.error);
-            }
+            if (!isCurrent()) return;
+            btn.textContent = 'Saving server…';
+            const result = await App.API.post('/servers', data);
+            if (!result.success) throw new Error(result.error || 'Unable to save server.');
+            closeAddServerModal();
+            loadServers();
+            form.reset();
+            toggleAuthField('password');
+            updateKeyFileName(document.getElementById('key-file'));
+            showLocalToast('Server added with a trusted SSH host key.', 'success');
         } catch (error) {
-            console.error('Error adding server:', error);
-            App.UI.toast('error', 'An error occurred while connecting to the server.');
+            if (isCurrent()) App.UI.toast('error', error.message);
         } finally {
+            dialog.removeEventListener('close', onClose);
             btn.innerHTML = originalText;
-            btn.disabled = false;
+            fields.forEach(field => { field.disabled = false; });
         }
     }
 

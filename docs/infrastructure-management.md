@@ -23,7 +23,7 @@ The audit found real existing implementations rather than an application made en
 
 ## 2. Requirements and design decisions
 
-Functional requirements delivered: private Qdrant provisioning and management; collection and snapshot workflows; safe Nginx configuration and guided setup; existing engine preservation; operation tracking; authenticated structured AI tools using the same services as the dashboard.
+Functional requirements delivered: API-key authenticated Qdrant provisioning and management; collection and snapshot workflows; safe Nginx configuration and guided setup; existing engine preservation; operation tracking; authenticated structured AI tools using the same services as the dashboard.
 
 Planning assumptions, **not measured capacity**: one dashboard instance, up to 50 managed VPS nodes, up to 10 simultaneous operators, predominantly metrics reads with occasional infrastructure writes. No DAU/MAU, availability SLA or fleet benchmark was supplied. At five-second polling, 50 nodes create roughly 10 collection cycles per second; collection work depends on each provider's remote calls. Scaling to thousands of nodes requires testing and a revised scheduler, not an unsupported capacity claim.
 
@@ -69,7 +69,7 @@ The partial unique index on `operations(resource)` applies while status is `runn
 
 1. Back up the current dashboard data before upgrading. Migrations are additive. A stopped application permits a consistent copy of its database, keys and configuration; copying a live `.db` alone can omit WAL data.
 2. Supply `GOPULSE_AUTH_JWT_SECRET` with at least 32 random characters. The insecure fallback is rejected. Keep it stable across restarts; changing it invalidates existing sessions. The first account created on an empty store becomes admin; there is no active `admin/changeme` bootstrap login.
-3. Supply a trusted OpenSSH known_hosts file through `GOPULSE_SSH_KNOWN_HOSTS`, or use the dashboard process owner's `~/.ssh/known_hosts`. Verify fingerprints through a trusted channel before recording them, including `[host]:port` notation for nonstandard ports. Unknown or changed hosts fail closed. There is no automatic trust-on-first-use toggle.
+3. In **Connect server**, enter the SSH port and choose **Review SSH key**. Verify the displayed SHA-256 fingerprint through a trusted channel, then choose **Trust this key**. Use the **Verify SSH key** shield button on an existing server card to approve its key or review a replacement. Discovery never sends login credentials or saves trust. Approved keys persist per server in SQLite and configuration exports; a mismatch fails closed without falling back to known_hosts. For servers without a saved pin, supply a trusted OpenSSH known_hosts file through `GOPULSE_SSH_KNOWN_HOSTS`, or use the dashboard process owner's `~/.ssh/known_hosts`, including `[host]:port` notation for nonstandard ports. There is no automatic trust-on-first-use toggle.
 4. `GOPULSE_DATA_DIR` overrides the normal `~/.gopulse` store for isolated deployments and tests. New directories are created with mode 0700 and SQLite with mode 0600.
 5. The OAuth secret previously committed in `config.yaml` and `config.example.yaml` must be rotated in GitHub. Configure your replacement with `GOPULSE_GITHUB_CLIENT_ID` and `GOPULSE_GITHUB_CLIENT_SECRET`; both configuration files now contain empty values. Removing a value from the current checkout does not erase Git history.
 6. Put the dashboard behind HTTPS for remote users and MCP clients. Preserve the external Host header. Direct TLS sets Secure cookies; plain HTTP behind a TLS-terminating proxy does not automatically set that flag in the existing deployment model. Do not expose the plain HTTP origin publicly.
@@ -79,13 +79,19 @@ Existing non-Qdrant infrastructure credentials remain in SQLite and administrato
 
 ## 4. Qdrant management
 
+**Manage** opens a dedicated vector database workbench in the server workspace. Overview shows the authenticated collection count and connection status; Collections supports filtering, vector configuration details, creation and confirmed deletion; Connection provides HTTP/gRPC endpoints and explicit key reveal; Snapshots provides collection-specific creation and typed-confirmation restore; Settings contains network access and deployment details; Logs loads remote diagnostics on demand. Resource and tab links survive refresh and browser history. API keys are cleared when switching tabs or leaving the resource. Inventory and other database engines retain their existing views.
+
 Use **Databases → Vector Databases → Qdrant → select VPS → Install and verify**. Advanced settings are collapsed by default. The VPS needs Docker daemon access, Python 3, disk space, image-registry access and noninteractive sudo. This workflow checks prerequisites but does not install Docker or change firewall rules.
 
-Defaults: `qdrant/qdrant:v1.19.0`, host bind `127.0.0.1:6333`, dedicated storage `/var/lib/gopulse/databases/<database-id>`. The image version is pinned and configurable as an explicit `v1.x.y` tag; no automatic upgrade uses `latest`. The pinned [upstream Dockerfile](https://raw.githubusercontent.com/qdrant/qdrant/v1.19.0/Dockerfile) supplies a root-default image compatible with these protected bind mounts. Alternate custom image users/rootless mappings were not tested.
+Defaults: `qdrant/qdrant:v1.19.0`, host bind `0.0.0.0`, HTTP port `6333`, gRPC port `6334`, dedicated storage `/var/lib/gopulse/databases/<database-id>`. The image version is pinned and configurable as an explicit `v1.x.y` tag; no automatic upgrade uses `latest`. The pinned [upstream Dockerfile](https://raw.githubusercontent.com/qdrant/qdrant/v1.19.0/Dockerfile) supplies a root-default image compatible with these protected bind mounts. Alternate custom image users/rootless mappings were not tested.
 
-Installation creates private `storage` and `snapshots` directories, writes a 0600 credential configuration, runs a labeled container with persistent mounts and restart policy, then polls the authenticated collections endpoint before reporting running. Existing storage directories are refused to prevent adopting or purging unrelated data. A generated API key stays on the target VPS; it is absent from SQL, API responses and operation previews. You may supply your own 32–256 character key at setup if an application must already know it. No credential-reveal or rotation endpoint was added.
+Installation creates private `storage` and `snapshots` directories, writes a 0600 credential configuration, runs a labeled container with persistent mounts and restart policy, then polls the authenticated collections endpoint before reporting running. Existing storage directories are refused to prevent adopting or purging unrelated data. A generated API key stays on the target VPS; it is absent from SQL, inventory responses and operation previews. Authorized database managers can explicitly retrieve it from **Manage → Connection → Show API key** or `GET .../databases/{id}/credentials`; that response uses `Cache-Control: no-store`. You may also supply your own 32–256 character key at setup. Key rotation is not included.
 
-Advanced private IPv4 bindings are supported; public and wildcard binds are rejected. Restrict private-network access with your network firewall before choosing that setting. Bind restrictions alone do not prove firewall isolation or encrypted private-network traffic. The workflow publishes HTTP only; it does not expose gRPC or provide Qdrant TLS/distributed-cluster setup.
+New installations publish HTTP and gRPC on all IPv4 interfaces by default, including installations requested through MCP (which still require owner approval). Choose `127.0.0.1` explicitly for local access or another IPv4 address to bind a specific interface. API-key authentication remains required. GoPulse health checks use `127.0.0.1` when the published bind is `0.0.0.0`.
+
+For an existing local-only database, open **Manage → Settings → Network access**, set the bind address to `0.0.0.0`, choose the HTTP/gRPC ports, and apply. The tracked operation stops and retains the previous owned container, starts the replacement with the same storage/snapshots/credential mounts, verifies authenticated health, saves metadata, and removes the stopped previous container. Startup failures restore the previous container. A backup name ending in `-network-backup` after an interrupted operation requires reconciliation before retrying; it is never silently overwritten. Existing instances are not exposed merely by upgrading GoPulse. Legacy HTTP-only settings remain HTTP-only until explicitly changed; `grpc_port: 0` disables gRPC in the network update.
+
+Use the displayed server endpoint (for example `http://YOUR_SERVER_IP:6333`) in an app and send the key in the `api-key` header. The gRPC endpoint normally uses port `6334`. Allow the selected TCP ports in host and cloud firewalls if needed. GoPulse does not alter firewall policy or configure Qdrant TLS; use a trusted network or TLS termination to protect traffic and credentials.
 
 The Manage view provides authenticated status, version, Docker CPU/memory stats, redacted logs, start/stop/restart, collection list/details/create/delete, snapshots and removal. Collection creation validates name, dimensions and distance, handles an already matching collection and verifies it after creation. Status can report starting/unavailable after restart until connectivity returns; success is not assumed from a Docker command's exit alone.
 
@@ -99,8 +105,10 @@ All server routes require authentication, server access and resource ownership; 
 
 | Route (under `/api`) | Behavior |
 |---|---|
-| `POST /servers/{server}/databases/qdrant/install` | `{name,api_key?,config:{version?,bind_address?,host_port?,storage_path?}}`; returns 202 with operation. |
+| `POST /servers/{server}/databases/qdrant/install` | `{name,api_key?,config:{version?,bind_address?,host_port?,grpc_port?,storage_path?}}`; returns 202 with operation. |
 | `GET /servers/{server}/databases/{id}/qdrant/config` | Nonsecret deployment settings. |
+| `PUT /servers/{server}/databases/{id}/qdrant/network` | `{bind_address,host_port,grpc_port}`; returns a tracked operation. Requires `database:write` and server ownership. |
+| `GET /servers/{server}/databases/{id}/credentials` | Explicit Qdrant API-key read for `database:write`; no-store response. |
 | `GET /servers/{server}/databases/{id}/qdrant/diagnostics` | Health, version, resource stats and redacted logs. |
 | `GET/POST .../qdrant/collections` | List or create using `{name,size,distance}`. |
 | `GET/DELETE .../qdrant/collections/{name}` | Details or deletion; deletion requires `?confirm={name}`. |
@@ -159,7 +167,7 @@ Send `notifications/initialized` and include `MCP-Protocol-Version: 2025-06-18` 
 | High write | `install_qdrant`, `restart_service`, `create_load_balancer`, `deploy_configuration` | Matching write permission plus owner approval from the dashboard before execution. |
 | Destructive | None exposed | Database/LB deletion, snapshot restore, firewall changes and arbitrary shell are unavailable through MCP. |
 
-Service tools allow only `nginx`, `postgresql`, `mongod`, `mysql`, `redis-server`; no invented service names or shell command arguments. MCP Qdrant installation forces loopback binding. LB tools use existing authorized servers rather than arbitrary network hosts.
+Service tools allow only `nginx`, `postgresql`, `mongod`, `mysql`, `redis-server`; no invented service names or shell command arguments. MCP Qdrant installation uses the external-access defaults and previews the bind and ports before owner approval. LB tools use existing authorized servers rather than arbitrary network hosts.
 
 High-risk calls return an operation in `awaiting_approval` with a concrete preview and affected target IDs. The human opens **Operations / Approvals** under the same account, reviews the requested action, then approves with a browser cookie session and dedicated approval header. Bearer approval is rejected. Permissions and all target scopes are checked again; approval expires after 15 minutes and cannot be replayed. This is a human approval boundary, not independent two-person approval.
 

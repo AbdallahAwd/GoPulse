@@ -53,6 +53,7 @@ App.Navigation = {
         if (view !== 'alerts') App.Alerts?.deactivate();
         if (view !== 'cron') App.Cron?.deactivate();
         if (view !== 'databases') App.Databases.deactivate();
+        else App.Databases.showListView(false);
         if (view !== 'overview') App.Charts.pause();
         const loaders = {
             'remote-backups': () => App.RemoteBackups.load(),

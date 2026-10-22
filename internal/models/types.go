@@ -143,17 +143,18 @@ type ServiceAction struct {
 
 // Server represents a remote VPS instance
 type Server struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Host          string   `json:"host"`
-	Port          int      `json:"port"`
-	User          string   `json:"user"`
-	AuthType      string   `json:"auth_type"` // "key" or "password"
-	KeyPath       string   `json:"key_path"`
-	Password      string   `json:"password"` // Encrypt if possible, or warn user
-	Tags          []string `json:"tags"`
-	IsDbOnly      bool     `json:"is_db_only"`
-	SSHKeyContent string   `json:"ssh_key_content,omitempty"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Host           string   `json:"host"`
+	Port           int      `json:"port"`
+	User           string   `json:"user"`
+	AuthType       string   `json:"auth_type"` // "key" or "password"
+	KeyPath        string   `json:"key_path"`
+	Password       string   `json:"password"` // Encrypt if possible, or warn user
+	Tags           []string `json:"tags"`
+	IsDbOnly       bool     `json:"is_db_only"`
+	SSHKeyContent  string   `json:"ssh_key_content,omitempty"`
+	TrustedHostKey string   `json:"trusted_host_key,omitempty"` // Explicitly approved SSH public host key.
 }
 
 // ProjectStatus represents the status of a project

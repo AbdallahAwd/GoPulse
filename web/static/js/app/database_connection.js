@@ -14,7 +14,7 @@ App.DatabaseConnection = {
             case 'mongodb': return `mongodb://${user}:${password}@${endpoint}/${name}?authSource=admin`;
             case 'redis': return `redis://:${password}@${endpoint}`;
             case 'sqlite': return `/var/lib/gopulse/databases/${db.id}/sqlite.db`;
-            case 'pocketbase': case 'appwrite': return `http://${endpoint}`;
+            case 'pocketbase': case 'appwrite': case 'qdrant': return `http://${endpoint}`;
             default: return '';
         }
     }

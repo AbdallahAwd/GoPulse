@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"strings"
 	"time"
@@ -112,6 +113,30 @@ func (s *OperationStore) AuditIdentity(owner, agentID, tool, server, outcome, op
 func (s *DatabaseStore) SetQdrantConfig(id string, cfg models.QdrantConfig) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO resource_settings(id,data) VALUES(?,?)`, id, encodeJSON(cfg, "{}"))
 	return err
+}
+
+// CommitQdrantNetwork keeps the inventory port and deployed configuration in sync.
+func (s *DatabaseStore) CommitQdrantNetwork(id string, cfg models.QdrantConfig) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE databases SET host_port=?,status=? WHERE id=? AND type='qdrant'`, cfg.HostPort, string(models.DatabaseStatusRunning), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("Qdrant database no longer exists")
+	}
+	if _, err := tx.Exec(`INSERT OR REPLACE INTO resource_settings(id,data) VALUES(?,?)`, id, encodeJSON(cfg, "{}")); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *DatabaseStore) GetQdrantConfig(id string) (models.QdrantConfig, error) {
 	var raw string

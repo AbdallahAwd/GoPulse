@@ -833,5 +833,14 @@ func (h *DatabaseHandler) Credentials(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if db.Type == "qdrant" {
+		key, err := h.service.QdrantAPIKey(r.Context(), db.ID)
+		if err != nil {
+			respondError(w, http.StatusBadGateway, "Qdrant API key unavailable", err)
+			return
+		}
+		respondJSON(w, http.StatusOK, models.APIResponse{Success: true, Data: map[string]string{"api_key": key}})
+		return
+	}
 	respondJSON(w, http.StatusOK, models.APIResponse{Success: true, Data: map[string]string{"password": db.Password}})
 }

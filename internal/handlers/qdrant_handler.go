@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"github.com/AbdallahAwd/GoPulse/internal/middleware"
 	"github.com/AbdallahAwd/GoPulse/internal/models"
 	"github.com/AbdallahAwd/GoPulse/internal/services"
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,41 @@ import (
 type QdrantHandler struct {
 	Service    *services.DatabaseService
 	Operations *services.Operations
+}
+
+func (h *QdrantHandler) ConfigureNetwork(w http.ResponseWriter, r *http.Request) {
+	if !middleware.HasPermission(r, "database:write") {
+		respondError(w, http.StatusForbidden, "Database management permission required", nil)
+		return
+	}
+	var req struct {
+		BindAddress string `json:"bind_address"`
+		HostPort    int    `json:"host_port"`
+		GRPCPort    int    `json:"grpc_port"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		respondError(w, 400, "Invalid network settings", nil)
+		return
+	}
+	id, server := chi.URLParam(r, "dbID"), chi.URLParam(r, "serverID")
+	cfg, err := h.Service.QdrantConfiguration(id)
+	if err != nil {
+		respondError(w, 404, "Qdrant configuration unavailable", nil)
+		return
+	}
+	cfg.BindAddress, cfg.HostPort, cfg.GRPCPort = req.BindAddress, req.HostPort, req.GRPCPort
+	if err := services.ValidateQdrantConfig(&cfg); err != nil {
+		respondError(w, 400, "Invalid network settings", err)
+		return
+	}
+	op, err := h.Operations.SubmitReview(operationOwner(r), server, "database:"+id, "configure_qdrant_network", "database:write", false, map[string]interface{}{"database_id": id, "bind_address": cfg.BindAddress, "host_port": cfg.HostPort, "grpc_port": cfg.GRPCPort}, nil, func(ctx context.Context, step func(string)) (interface{}, error) {
+		return h.Service.ConfigureQdrantNetwork(ctx, id, cfg.BindAddress, cfg.HostPort, cfg.GRPCPort, step)
+	})
+	if err != nil {
+		respondError(w, 409, "Network change not started", err)
+		return
+	}
+	respondJSON(w, 202, models.APIResponse{Success: true, Data: op})
 }
 
 func (h *QdrantHandler) Install(w http.ResponseWriter, r *http.Request) {

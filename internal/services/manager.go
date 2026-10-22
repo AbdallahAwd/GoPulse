@@ -111,8 +111,12 @@ func (m *ServiceManager) getSSHClient(server models.Server) (*remote.SSHClient, 
 	defer m.mu.Unlock()
 
 	client, ok := m.sshClients[server.ID]
-	if ok {
+	if ok && client.MatchesServer(server) {
 		return client, nil
+	}
+	if ok {
+		client.Close()
+		delete(m.sshClients, server.ID)
 	}
 
 	newClient, err := remote.NewSSHClient(server)

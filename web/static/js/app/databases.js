@@ -24,6 +24,7 @@ App.Databases = (function() {
     }
 
     function deactivate() {
+        App.Qdrant?.deactivate?.();
         ++manageGeneration;
         ++inventoryGeneration;
         if (baasTelemetryInterval) clearInterval(baasTelemetryInterval);
@@ -367,7 +368,8 @@ App.Databases = (function() {
         const typeSelect = App.UI.el('db-prov-type');
         if (typeSelect) typeSelect.value = mode === 'baas' ? 'pocketbase' : mode === 'qdrant' ? 'qdrant' : 'mysql';
         App.UI.el('db-prov-error').textContent = '';
-        App.UI.el('db-prov-vector-bind').value = '127.0.0.1';
+        App.UI.el('db-prov-vector-bind').value = '0.0.0.0';
+        App.UI.el('db-prov-vector-grpc').value = '6334';
         App.UI.el('db-prov-vector-version').value = 'v1.19.0';
         App.UI.el('db-prov-vector-storage').value = '';
         App.UI.el('db-prov-vector-key').value = '';
@@ -427,7 +429,7 @@ App.Databases = (function() {
             mongodb: 'Document storage for flexible application data.',
             redis: 'In-memory key-value storage for caching and fast lookups.',
             sqlite: 'A local database file on this server. No network port or credentials are needed.',
-            qdrant: 'Vector storage for similarity search and AI applications. Access is private by default; an API key is generated securely.',
+            qdrant: 'Vector storage for similarity search and AI applications. External access is enabled by default with API-key authentication.',
             pocketbase: 'A backend service with authentication, data storage, and an admin console.',
             appwrite: 'A backend stack with authentication, databases, storage, and an admin console.'
         };
@@ -539,11 +541,12 @@ App.Databases = (function() {
             const config = {
                 version: App.UI.el('db-prov-vector-version').value.trim(),
                 host_port: port,
+                grpc_port: Number(App.UI.el('db-prov-vector-grpc').value),
                 bind_address: App.UI.el('db-prov-vector-bind').value.trim(),
                 storage_path: App.UI.el('db-prov-vector-storage').value.trim()
             };
-            if (!Number.isInteger(port) || port < 1024 || port > 65535 || !/^v1\.\d{1,2}\.\d{1,2}$/.test(config.version) || !config.bind_address) {
-                App.UI.el('db-prov-error').textContent = 'Choose a port from 1024–65535, an explicit v1.x.y version, and a private bind address.';
+            if (!Number.isInteger(port) || port < 1024 || port > 65535 || !/^v1\.\d{1,2}\.\d{1,2}$/.test(config.version) || !config.bind_address || !Number.isInteger(config.grpc_port) || config.grpc_port < 1024 || config.grpc_port > 65535 || config.grpc_port === port) {
+                App.UI.el('db-prov-error').textContent = 'Choose different HTTP and gRPC ports from 1024–65535, an explicit v1.x.y version, and an IPv4 bind address.';
                 return;
             }
             const button = App.UI.el('db-provision-submit');
@@ -694,7 +697,10 @@ App.Databases = (function() {
         try {
             const res = await App.API.get(`/servers/${App.config.SERVER_ID}/databases/${dbID}`);
             if (generation !== manageGeneration) return;
-            if (res.data?.type === 'qdrant') return App.Qdrant.manage(dbID);
+            if (res.data?.type === 'qdrant') {
+                currentDb = res.data;
+                return App.Qdrant.manage(dbID, res.data);
+            }
             if (!res.success || !res.data) {
                 App.UI.toast('error', 'Failed to load database details.');
                 showListView(false);
