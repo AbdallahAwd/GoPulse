@@ -76,7 +76,8 @@ test('Qdrant uses the selected server and specialized operation endpoint without
     assert.equal(requests[0].url, '/servers/selected-server/databases/qdrant/install');
     assert.equal(requests[0].payload.name, 'Semantic search');
     assert.equal(requests[0].payload.api_key, 'private-test-key');
-    assert.equal(requests[0].payload.config.bind_address, '127.0.0.1');
+    assert.equal(requests[0].payload.config.bind_address, '0.0.0.0');
+    assert.equal(requests[0].payload.config.grpc_port, 6334);
     assert.equal(requests[0].payload.username, undefined);
     assert.deepEqual(tracked, ['op-vector']);
     assert.equal(el('db-prov-vector-key').value, '');

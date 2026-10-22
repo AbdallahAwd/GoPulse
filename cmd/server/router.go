@@ -285,6 +285,7 @@ func newRouter(deps routerDependencies) (chi.Router, error) {
 					owned.Delete("/{dbID}/qdrant/collections/{collection}", deps.Qdrant.DeleteCollection)
 					owned.Get("/{dbID}/qdrant/diagnostics", deps.Qdrant.Diagnostics)
 					owned.Get("/{dbID}/qdrant/config", deps.Qdrant.Configuration)
+					owned.Put("/{dbID}/qdrant/network", deps.Qdrant.ConfigureNetwork)
 					owned.Get("/{dbID}/qdrant/collections/{collection}/snapshots", deps.Qdrant.Snapshots)
 					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots", deps.Qdrant.Snapshots)
 					owned.Post("/{dbID}/qdrant/collections/{collection}/snapshots/restore", deps.Qdrant.RestoreSnapshot)

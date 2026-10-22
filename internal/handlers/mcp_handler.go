@@ -84,7 +84,7 @@ func (h *MCPHandler) tools() []mcpTool {
 		tool("get_load_balancer_status", "Read a load balancer and backend health", "", "read", lb(), "server_id", "load_balancer_id"),
 		tool("get_operation_status", "Read your operation progress or required approval", "", "read", map[string]interface{}{"operation_id": mcpString()}, "operation_id"),
 		tool("create_qdrant_collection", "Create a validated collection", "database:write", "low", collection, "server_id", "database_id", "name", "size", "distance"),
-		tool("install_qdrant", "Request private Qdrant installation", "database:write", "high", install, "server_id", "name"),
+		tool("install_qdrant", "Request externally accessible, API-key authenticated Qdrant installation", "database:write", "high", install, "server_id", "name"),
 		tool("restart_service", "Request service restart", "services:write", "high", service, "server_id", "service"),
 		tool("create_load_balancer", "Request Nginx deployment", "domains:write", "high", create, "server_id", "configuration"),
 		tool("deploy_configuration", "Revalidate and deploy a stored Nginx configuration", "domains:write", "high", lb(), "server_id", "load_balancer_id"),
@@ -360,7 +360,7 @@ func (h *MCPHandler) execute(ctx context.Context, r *http.Request, t mcpTool, a 
 			return h.Databases.CreateQdrantCollection(ctx, dbID, str("name"), int(a["size"].(float64)), str("distance"))
 		})
 	case "install_qdrant":
-		cfg := models.QdrantConfig{Version: str("version")}
+		cfg := models.QdrantConfig{Version: str("version"), GRPCPort: 6334}
 		if err := services.ValidateQdrantConfig(&cfg); err != nil {
 			return nil, err
 		}

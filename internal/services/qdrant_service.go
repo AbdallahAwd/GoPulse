@@ -21,7 +21,7 @@ import (
 var qdrantVersion = regexp.MustCompile(`^v1\.[0-9]{1,2}\.[0-9]{1,2}$`)
 var collectionName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
-// ValidateQdrantConfig restricts binds to loopback or private IPs; public binds are never automatic.
+// ValidateQdrantConfig validates literal IPv4 bindings. New installs allow external clients by default.
 func ValidateQdrantConfig(cfg *models.QdrantConfig) error {
 	if cfg.Version == "" {
 		cfg.Version = "v1.19.0"
@@ -30,20 +30,24 @@ func ValidateQdrantConfig(cfg *models.QdrantConfig) error {
 		return fmt.Errorf("use an explicit Qdrant v1.x.y version")
 	}
 	if cfg.BindAddress == "" {
-		cfg.BindAddress = "127.0.0.1"
+		cfg.BindAddress = "0.0.0.0"
 	}
 	ip := net.ParseIP(cfg.BindAddress)
-	if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
-		return fmt.Errorf("Qdrant bind address must be a loopback or private IPv4 address")
+	if ip == nil || ip.IsMulticast() || cfg.BindAddress == "255.255.255.255" {
+		return fmt.Errorf("Qdrant bind address must be a unicast IPv4 address or 0.0.0.0")
 	}
 	if ip.To4() == nil {
 		return fmt.Errorf("IPv4 bind address required")
 	}
+	cfg.BindAddress = ip.To4().String()
 	if cfg.HostPort == 0 {
 		cfg.HostPort = 6333
 	}
 	if cfg.HostPort < 1024 || cfg.HostPort > 65535 {
 		return fmt.Errorf("Qdrant port must be 1024–65535")
+	}
+	if cfg.GRPCPort != 0 && (cfg.GRPCPort < 1024 || cfg.GRPCPort > 65535 || cfg.GRPCPort == cfg.HostPort) {
+		return fmt.Errorf("Qdrant gRPC port must be 1024–65535 and different from the HTTP port, or 0 to disable")
 	}
 	if cfg.StoragePath != "" {
 		clean := filepath.Clean(cfg.StoragePath)
@@ -55,6 +59,9 @@ func ValidateQdrantConfig(cfg *models.QdrantConfig) error {
 }
 
 func (s *DatabaseService) InstallQdrant(ctx context.Context, serverID, name, apiKey string, cfg models.QdrantConfig, progress func(string)) (result *models.Database, installErr error) {
+	if cfg.GRPCPort == 0 {
+		cfg.GRPCPort = 6334
+	}
 	if err := ValidateQdrantConfig(&cfg); err != nil {
 		return nil, err
 	}
@@ -113,7 +120,7 @@ func (s *DatabaseService) InstallQdrant(ctx context.Context, serverID, name, api
 	if err := run("Save protected API credentials", "sudo -n python3 -c "+shellQuote(script)); err != nil {
 		return nil, err
 	}
-	cmd := fmt.Sprintf("docker run -d --name %s --label gopulse.database=%s --restart unless-stopped -p %s:%d:6333 -v %s:/qdrant/storage -v %s:/qdrant/snapshots -v %s:/qdrant/config/production.yaml:ro qdrant/qdrant:%s", shellQuote(container), shellQuote(id), cfg.BindAddress, cfg.HostPort, shellQuote(cfg.StoragePath+"/storage"), shellQuote(cfg.StoragePath+"/snapshots"), shellQuote(cfg.StoragePath+"/config.yaml"), cfg.Version)
+	cmd := qdrantRunCommand(id, cfg)
 	if err := run("Install Qdrant container", cmd); err != nil {
 		return nil, err
 	}
@@ -171,7 +178,7 @@ cfg=json.load(open(%s))
 data=%s
 req=urllib.request.Request(%s,data=None if data=="null" else data.encode(),method=%s,headers={"api-key":cfg["service"]["api_key"],"Content-Type":"application/json"})
 try:
- with urllib.request.urlopen(req,timeout=10) as r:
+ with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req,timeout=10) as r:
   raw=r.read(1048577)
   if len(raw)>1048576: raise ValueError("response too large")
   value=json.loads(raw)
@@ -181,7 +188,7 @@ except urllib.error.HTTPError as e:
  print("Qdrant HTTP status "+str(e.code)); sys.exit(1)
 except Exception:
  print("Qdrant request failed"); sys.exit(1)
-`, pythonString(cfg.StoragePath+"/config.yaml"), pythonString(string(raw)), pythonString("http://"+net.JoinHostPort(cfg.BindAddress, fmt.Sprint(cfg.HostPort))+path), pythonString(method))
+	`, pythonString(cfg.StoragePath+"/config.yaml"), pythonString(string(raw)), pythonString(qdrantLocalURL(cfg)+path), pythonString(method))
 	out, err := s.manager.Run(ctx, db.ServerID, "sudo -n python3 -c "+shellQuote(script))
 	if err != nil {
 		return nil, fmt.Errorf("Qdrant request failed (check health, credentials and connectivity)")

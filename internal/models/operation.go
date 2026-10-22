@@ -27,4 +27,5 @@ type QdrantConfig struct {
 	BindAddress string `json:"bind_address"`
 	StoragePath string `json:"storage_path"`
 	HostPort    int    `json:"host_port"`
+	GRPCPort    int    `json:"grpc_port,omitempty"` // Zero preserves HTTP-only legacy deployments.
 }
